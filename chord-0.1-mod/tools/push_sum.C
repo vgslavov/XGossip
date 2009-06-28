@@ -1,4 +1,4 @@
-/*	$Id$ */
+/*	$Id: push_sum.C,v 1.1 2009/06/24 13:15:14 vsfgd Exp vsfgd $ */
 
 #include <ctime>
 #include <iostream>
@@ -18,7 +18,7 @@
 
 #define DEBUG 1
 
-//static char rcsid[] = "$Id$";
+//static char rcsid[] = "$Id: push_sum.C,v 1.1 2009/06/24 13:15:14 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -28,7 +28,7 @@ chordID maxID;
 static const char* dhash_sock;
 
 void makeKeyValue(char **, int&, str&, int&, InsertType);
-DHTStatus insertDHT(chordID, char *, int, int = -1, int = MAXRETRIES, chordID = 0);
+DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
 
 DHTStatus insertStatus;
 
@@ -148,7 +148,7 @@ main(int argc, char *argv[])
 	char *value;
 	char *buf;
 	chordID ID;
-	DHTStatus stat;
+	DHTStatus status;
 	time_t rawtime;
 
 	srand(time(NULL));
@@ -167,22 +167,26 @@ main(int argc, char *argv[])
 
 	system("date");
 
-	// TODO: generate random chordID
+	// TODO: generate truly random chordID
 	buf = ctime(&rawtime);
 	ID = compute_hash(buf, strlen(buf));
 
-	makeKeyValue(&value, valLen, GOSSIP);
-	stat = insertDHT(ID, value, valLen, -1, MAXRETRIES);
+	strbuf s;
+	s << ID;
+	str key(s);
+
+	makeKeyValue(&value, valLen, key, i, GOSSIP);
+	status = insertDHT(ID, value, valLen, MAXRETRIES);
 	cleanup(value);
 
-	if (stat != SUCC) fatal("insert FAILed\n");
+	if (status != SUCC) fatal("insert FAILed\n");
 
 	//amain();
 	return 0;
 }
 
 DHTStatus
-insertDHT(chordID ID, char *value, int valLen, int randomNum, int STOPCOUNT, chordID guess)
+insertDHT(chordID ID, char *value, int valLen, int STOPCOUNT, chordID guess)
 {
 	warnx << "Insert operation on key: " << ID << "\n";
 	dataStored += valLen;
