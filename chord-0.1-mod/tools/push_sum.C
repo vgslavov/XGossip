@@ -1,4 +1,4 @@
-/*	$Id: push_sum.C,v 1.2 2009/06/28 17:43:59 vsfgd Exp vsfgd $ */
+/*	$Id: push_sum.C,v 1.3 2009/07/01 14:24:51 vsfgd Exp vsfgd $ */
 
 #include <ctime>
 #include <iostream>
@@ -14,11 +14,11 @@
 
 #include "../utils/utils.h"
 #include "nodeparams.h"
-#include "psi.h"
+#include "push_sum.h"
 
 #define DEBUG 1
 
-//static char rcsid[] = "$Id: push_sum.C,v 1.2 2009/06/28 17:43:59 vsfgd Exp vsfgd $";
+//static char rcsid[] = "$Id: push_sum.C,v 1.3 2009/07/01 14:24:51 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -32,6 +32,12 @@ void makeKeyValue(char **, int&, str&, int&, InsertType);
 DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
 void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 
+chordID randomID(void);
+void startg(void);
+void accept_connection(int);
+void read_gossip(int);
+void usage(void);
+
 DHTStatus insertStatus;
 
 // entries of a node
@@ -39,6 +45,8 @@ vec<str> nodeEntries;
 
 bool insertError;
 bool retrieveError;
+
+static str gsock = "/tmp/g-sock";
 
 // hash table statistics
 int numReads;
@@ -55,8 +63,6 @@ chordID myGuess;
 
 // retrieve TIMEOUT
 const int RTIMEOUT = 20;
-
-void usage(void);
 
 // copied from psi.C
 // Fetch callback for NOAUTH...
@@ -149,21 +155,19 @@ store_cb(dhash_stat status, ptr<insert_info> i)
 int
 main(int argc, char *argv[])
 {
-	int i, fflag, sflag, valLen;
-	double startTime, endTime;
-	struct stat statbuf;
-	char *buf;
+	int i, fflag, lflag, sflag, valLen;
 	char *cmd;
 	char *name;
 	char *value;
+	struct stat statbuf;
 	chordID ID;
 	DHTStatus status;
-	time_t rawtime;
 
-	fflag = sflag = 0;
+	fflag = lflag = sflag = 0;
 	switch(argc) {
 	case 4:
 		sflag = 1;
+		lflag = 1;
 		break;
 	case 5:
 		fflag = 1;
@@ -184,20 +188,13 @@ main(int argc, char *argv[])
 		i = rand() % 100 + 1;
 		warnx << "Inserting value: " << i << "\n";
 
-		// TODO: generate truly random chordID
-		buf = ctime(&rawtime);
-		ID = compute_hash(buf, strlen(buf));
-
+		ID = randomID();
 		strbuf s;
 		s << ID;
 		str key(s);
 
 		makeKeyValue(&value, valLen, key, i, GOSSIP);
-		startTime = getgtod();
 		status = insertDHT(ID, value, valLen, MAXRETRIES);
-		endTime = getgtod();
-		//warnx << "ID used: " << ID << "\n";
-		//std::cout << "Insert time: " << endTime - startTime << " secs" << std::endl;
 		cleanup(value);
 
 		if (status != SUCC) fatal("Insert FAILed\n");
@@ -206,24 +203,22 @@ main(int argc, char *argv[])
 		str junk("");
 		name = argv[3];
 		str2chordID(name, ID);
-		startTime = getgtod();
 		retrieveDHT(ID, RTIMEOUT, junk);
 
 		if (retrieveError) {
 			delete dhash;
 			fatal("Unable to read node ID\n");
 		}
-		endTime = getgtod();
-		//warnx << "ID used: " << ID << "\n";
-		//std::cout << "Retrieve time: " << endTime - startTime << " secs" << std::endl;
 		str a;
 		int b;
 		getKeyValue(nodeEntries[0], a, b);
 		warnx << "KEY: " << a << "\nVALUE: " << b << "\n";
+	} else if (strcmp(cmd, "-l") == 0 && lflag) {
+		startg();		
 	} else
 		usage();
 
-	//amain();
+	amain();
 	return 0;
 }
 
@@ -346,10 +341,77 @@ retrieveDHT(chordID keyID, int MAXWAIT, str& sigdata, chordID guess)
 	//warnx << "# of node entries: " << nodeEntries.size() << "\n";
 }
 
+// TODO: verify randomness
+chordID
+randomID(void)
+{
+	char buf[16];
+	int j;
+	strbuf s;
+	chordID ID;
+
+	srand(time(NULL));
+	for (int i = 0; i < 40; i++) {
+		j = rand() % 16;
+		sprintf(buf, "%x", j);
+		s << buf;
+	}
+	str t(s);
+	str2chordID(t, ID);
+	return ID;
+}
+
+void
+startg(void)
+{
+	unlink(gsock);
+	int fd = unixsocket(gsock);
+	if (fd < 0) fatal << "Error creating GOSSIP socket" << strerror (errno) << "\n";
+
+	make_async(fd);
+
+	if (listen(fd, 5) < 0) {
+		fatal("Error from listen: %m\n");
+		close(fd);
+	}
+	fdcb(fd, selread, wrap(accept_connection, fd));
+}
+
+void
+accept_connection(int lfd)
+{
+	sockaddr_un sun;
+	bzero(&sun, sizeof(sun));
+	socklen_t sunlen = sizeof(sun);
+	// vs "struct sockaddr *"
+	int cs = accept(lfd, reinterpret_cast<sockaddr *> (&sun), &sunlen);
+	if (cs >= 0) warnx << "accepted connection. file descriptor = " << cs << "\n";
+	else if (errno != EAGAIN) fatal << "accept; errno = " << errno << "\n";
+	
+	fdcb(cs, selread, wrap(read_gossip, cs));
+}
+
+void
+read_gossip(int fd)
+{
+	strbuf buf;
+	int n = buf.tosuio()->input(fd);
+
+	if (n < 0) fatal("read\n");
+
+	if (n == 0) {
+		fdcb(fd, selread, 0);
+		close(fd);
+		return;
+	}
+	warnx << "data read: " << buf << "\n";
+}
+
 void
 usage(void)
 {
 	warn << "usage: " << __progname << " socket -f ID [interval]\n";
+	warn << "       " << __progname << " socket -l [interval]\n";
 	warn << "       " << __progname << " socket -s [interval]\n";
 	exit(0);
 }
