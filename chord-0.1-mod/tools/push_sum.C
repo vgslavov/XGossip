@@ -1,11 +1,13 @@
-/*	$Id: push_sum.C,v 1.3 2009/07/01 14:24:51 vsfgd Exp vsfgd $ */
+/*	$Id: push_sum.C,v 1.4 2009/07/06 20:46:46 vsfgd Exp vsfgd $ */
 
+#include <cmath>
 #include <ctime>
 #include <iostream>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <vector>
 
 #include <chord.h>
 #include <dhash_common.h>
@@ -18,7 +20,7 @@
 
 #define DEBUG 1
 
-//static char rcsid[] = "$Id: push_sum.C,v 1.3 2009/07/01 14:24:51 vsfgd Exp vsfgd $";
+//static char rcsid[] = "$Id: push_sum.C,v 1.4 2009/07/06 20:46:46 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -27,8 +29,8 @@ int out;
 chordID maxID;
 static const char* dhash_sock;
 
-void getKeyValue(str&, str&, int&);
-void makeKeyValue(char **, int&, str&, int&, InsertType);
+void getKeyValue(str&, str&, double&, double&);
+void makeKeyValue(char **, int&, str&, double&, double&, InsertType);
 DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
 void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 
@@ -46,7 +48,12 @@ vec<str> nodeEntries;
 bool insertError;
 bool retrieveError;
 
-static str gsock = "/tmp/g-sock";
+str gsock;
+
+vec<double> sum;
+//std::vector<double> sum;
+vec<double> weight;
+//std::vector<double> weight;
 
 // hash table statistics
 int numReads;
@@ -143,11 +150,11 @@ store_cb(dhash_stat status, ptr<insert_info> i)
 		// Trying again
 		//insertError = true;
 	} else if (status != DHASH_OK) {
-		//warnx << "Failed to store key...\n";
+		warnx << "Failed to store key...\n";
 		insertError = true;
 	} else {
 		numWrites++;
-		//warnx << "Key stored successfully...\n";
+		warnx << "Key stored successfully...\n";
 	}
 	out++;
 }
@@ -155,7 +162,8 @@ store_cb(dhash_stat status, ptr<insert_info> i)
 int
 main(int argc, char *argv[])
 {
-	int i, fflag, lflag, sflag, valLen;
+	double s, w;
+	int intval, fflag, lflag, gflag, valLen;
 	char *cmd;
 	char *name;
 	char *value;
@@ -163,14 +171,14 @@ main(int argc, char *argv[])
 	chordID ID;
 	DHTStatus status;
 
-	fflag = lflag = sflag = 0;
+	fflag = lflag = gflag = 0;
 	switch(argc) {
-	case 4:
-		sflag = 1;
+	case 3:
 		lflag = 1;
 		break;
-	case 5:
+	case 4:
 		fflag = 1;
+		gflag = 1;
 		break;
 	default:
 		usage();
@@ -183,22 +191,33 @@ main(int argc, char *argv[])
 	cmd = argv[2];
 	system("date");
 
-	if (strcmp(cmd, "-s") == 0 && sflag) {
+	if (strcmp(cmd, "-g") == 0 && gflag) {
+		intval = atoi(argv[3]);
+		//startg();		
 		srand(time(NULL));
-		i = rand() % 100 + 1;
-		warnx << "Inserting value: " << i << "\n";
+		sum.push_back(rand() % 100 + 1);
+		weight.push_back(1);
 
-		ID = randomID();
-		strbuf s;
-		s << ID;
-		str key(s);
+		while (1) {
+			ID = randomID();
+			strbuf z;
+			z << ID;
+			str key(z);
 
-		makeKeyValue(&value, valLen, key, i, GOSSIP);
-		status = insertDHT(ID, value, valLen, MAXRETRIES);
-		cleanup(value);
+			std::cout << "s_0=" << sum.back() << ", w_0=" << weight.back() << "\n";
+			s = sum.back()/2;
+			w = weight.back()/2;
+			std::cout << "Gossiping (s/2, w/2): (" << s << ", " << w << ")\n";
+			makeKeyValue(&value, valLen, key, s, w, GOSSIP);
+			status = insertDHT(ID, value, valLen, MAXRETRIES);
+			cleanup(value);
 
-		if (status != SUCC) fatal("Insert FAILed\n");
-		else warnx << "Insert SUCCeeded\n";
+			if (status != SUCC) fatal("Insert FAILed\n");
+			else warnx << "Insert SUCCeeded\n";
+			warnx << "waiting " << intval << " seconds...\n";
+			sleep(intval);
+		}
+		//amain();
 	} else if (strcmp(cmd, "-f") == 0 && fflag) {
 		str junk("");
 		name = argv[3];
@@ -209,16 +228,15 @@ main(int argc, char *argv[])
 			delete dhash;
 			fatal("Unable to read node ID\n");
 		}
-		str a;
-		int b;
-		getKeyValue(nodeEntries[0], a, b);
-		warnx << "KEY: " << a << "\nVALUE: " << b << "\n";
+		str k;
+		getKeyValue(nodeEntries[0], k, s, w);
+		std::cout << "KEY: " << k << "\nVALUE (s, w): (" << s << ", " << w << ")\n";
 	} else if (strcmp(cmd, "-l") == 0 && lflag) {
 		startg();		
+		amain();
 	} else
 		usage();
 
-	amain();
 	return 0;
 }
 
@@ -266,6 +284,7 @@ insertDHT(chordID ID, char *value, int valLen, int STOPCOUNT, chordID guess)
 			return insertStatus;
 		}
 		numTries++;
+		warnx << "numTries: " << numTries << "\n";
 		 
 		if (insertError && numTries == STOPCOUNT) {
 			warnx << "Error during INSERT operation...\n";
@@ -368,6 +387,7 @@ startg(void)
 	int fd = unixsocket(gsock);
 	if (fd < 0) fatal << "Error creating GOSSIP socket" << strerror (errno) << "\n";
 
+	// make socket non-blocking
 	make_async(fd);
 
 	if (listen(fd, 5) < 0) {
@@ -375,6 +395,8 @@ startg(void)
 		close(fd);
 	}
 	fdcb(fd, selread, wrap(accept_connection, fd));
+	// here or in main()?
+	//amain();
 }
 
 void
@@ -395,23 +417,51 @@ void
 read_gossip(int fd)
 {
 	strbuf buf;
-	int n = buf.tosuio()->input(fd);
+	str gKey;
+	int n;
+	double s, w;
 
-	if (n < 0) fatal("read\n");
+	n = buf.tosuio()->input(fd);
+	if (n < 0) fatal("read failed\n");
 
 	if (n == 0) {
 		fdcb(fd, selread, 0);
 		close(fd);
+		// what's the difference?
+		// exit(0);
 		return;
 	}
-	warnx << "data read: " << buf << "\n";
+	//warnx << "data read: " << buf << "\n";
+	str gElem(buf);
+	getKeyValue(gElem.cstr(), gKey, s, w);
+
+	//if (!sum.empty() && !weight.empty() && (s == sum.back()) && (w == weight.back())) return;
+
+	std::cout << "read from socket: KEY: " << gKey << ", VALUE (s, w): ("
+		  << s << ", " << w << ")\n";
+
+	if (sum.empty() || weight.empty()) {
+		sum.push_back(s);
+		weight.push_back(w);
+	} else {
+		sum.push_back(sum.back() + s);
+		weight.push_back(weight.back() + w);
+	}
+
+	// check if sum and weight vecs have the same size
+
+	std::cout << "current sum: " << sum.back() << ", current weight: "
+		  << weight.back() << "\n";
+
+	std::cout << "step t=" << sum.size() << ", avg s/w="
+		  << sum.back()/weight.back() << "\n";
 }
 
 void
 usage(void)
 {
-	warn << "usage: " << __progname << " socket -f ID [interval]\n";
-	warn << "       " << __progname << " socket -l [interval]\n";
-	warn << "       " << __progname << " socket -s [interval]\n";
+	warn << "usage: " << __progname << " socket -f{etch} ID\n";
+	warn << "       " << __progname << " socket -g{ossip} [sec]\n";
+	warn << "       " << __progname << " socket -l{isten}\n";
 	exit(0);
 }
