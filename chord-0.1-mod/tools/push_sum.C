@@ -1,4 +1,4 @@
-/*	$Id: push_sum.C,v 1.4 2009/07/06 20:46:46 vsfgd Exp vsfgd $ */
+/*	$Id: push_sum.C,v 1.5 2009/07/08 23:52:19 vsfgd Exp vsfgd $ */
 
 #include <cmath>
 #include <ctime>
@@ -20,7 +20,7 @@
 
 #define DEBUG 1
 
-//static char rcsid[] = "$Id: push_sum.C,v 1.4 2009/07/06 20:46:46 vsfgd Exp vsfgd $";
+//static char rcsid[] = "$Id: push_sum.C,v 1.5 2009/07/08 23:52:19 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -28,6 +28,7 @@ int out;
 
 chordID maxID;
 static const char* dhash_sock;
+static const char* gsock = "/tmp/g-sock";
 
 void getKeyValue(str&, str&, double&, double&);
 void makeKeyValue(char **, int&, str&, double&, double&, InsertType);
@@ -35,7 +36,7 @@ DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
 void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 
 chordID randomID(void);
-void startg(void);
+void listen_gossip(void);
 void accept_connection(int);
 void read_gossip(int);
 void usage(void);
@@ -47,8 +48,6 @@ vec<str> nodeEntries;
 
 bool insertError;
 bool retrieveError;
-
-str gsock;
 
 vec<double> sum;
 //std::vector<double> sum;
@@ -163,37 +162,58 @@ int
 main(int argc, char *argv[])
 {
 	double s, w;
-	int intval, fflag, lflag, gflag, valLen;
-	char *cmd;
+	int ch, intval, fflag, gflag, lflag, valLen;
 	char *name;
 	char *value;
 	struct stat statbuf;
 	chordID ID;
 	DHTStatus status;
 
-	fflag = lflag = gflag = 0;
-	switch(argc) {
-	case 3:
-		lflag = 1;
-		break;
-	case 4:
-		fflag = 1;
-		gflag = 1;
-		break;
-	default:
-		usage();
-	}
+	fflag = gflag = lflag = intval = 0;
+	while ((ch = getopt(argc, argv, "fG:ghi:lS:")) != -1)
+		switch(ch) {
+		case 'f':
+			fflag = 1;
+			break;
+		case 'G':
+			gsock = optarg;
+			break;
+		case 'g':
+			gflag = 1;
+			break;
+		case 'i':
+			intval = atoi(optarg);
+			break;
+		case 'l':
+			lflag = 1;
+			break;
+		case 'S':
+			dhash_sock = optarg;
+			break;
+		case 'h':
+		case '?':
+		default:
+			usage();
+			break;
+		}
+	argc -= optind;
+	argv += optind;
 
-	dhash_sock = argv[1];
+	if (fflag == 0 && gflag == 0 && lflag == 0) usage();
+
+	// check intval bound
+	if (gflag == 1 && intval == 0) usage();
+
 	if (stat(dhash_sock, &statbuf) != 0) fatal("socket does not exist\n");
 	dhash = New dhashclient(dhash_sock);
 
-	cmd = argv[2];
 	system("date");
 
-	if (strcmp(cmd, "-g") == 0 && gflag) {
-		intval = atoi(argv[3]);
-		//startg();		
+	if (gflag == 1) {
+		warnx << "starting to listen...\n";
+		listen_gossip();		
+		warnx << "starting to gossip...\n";
+		sleep(10);
 		srand(time(NULL));
 		sum.push_back(rand() % 100 + 1);
 		weight.push_back(1);
@@ -217,8 +237,7 @@ main(int argc, char *argv[])
 			warnx << "waiting " << intval << " seconds...\n";
 			sleep(intval);
 		}
-		//amain();
-	} else if (strcmp(cmd, "-f") == 0 && fflag) {
+	} else if (fflag == 1) {
 		str junk("");
 		name = argv[3];
 		str2chordID(name, ID);
@@ -231,12 +250,12 @@ main(int argc, char *argv[])
 		str k;
 		getKeyValue(nodeEntries[0], k, s, w);
 		std::cout << "KEY: " << k << "\nVALUE (s, w): (" << s << ", " << w << ")\n";
-	} else if (strcmp(cmd, "-l") == 0 && lflag) {
-		startg();		
-		amain();
+	} else if (lflag == 1) {
+		listen_gossip();		
 	} else
 		usage();
 
+	amain();
 	return 0;
 }
 
@@ -381,7 +400,7 @@ randomID(void)
 }
 
 void
-startg(void)
+listen_gossip(void)
 {
 	unlink(gsock);
 	int fd = unixsocket(gsock);
@@ -395,8 +414,6 @@ startg(void)
 		close(fd);
 	}
 	fdcb(fd, selread, wrap(accept_connection, fd));
-	// here or in main()?
-	//amain();
 }
 
 void
@@ -431,11 +448,8 @@ read_gossip(int fd)
 		// exit(0);
 		return;
 	}
-	//warnx << "data read: " << buf << "\n";
 	str gElem(buf);
 	getKeyValue(gElem.cstr(), gKey, s, w);
-
-	//if (!sum.empty() && !weight.empty() && (s == sum.back()) && (w == weight.back())) return;
 
 	std::cout << "read from socket: KEY: " << gKey << ", VALUE (s, w): ("
 		  << s << ", " << w << ")\n";
@@ -460,8 +474,6 @@ read_gossip(int fd)
 void
 usage(void)
 {
-	warn << "usage: " << __progname << " socket -f{etch} ID\n";
-	warn << "       " << __progname << " socket -g{ossip} [sec]\n";
-	warn << "       " << __progname << " socket -l{isten}\n";
+	warn << "usage: " << __progname << " [-h] [-S dhash-sock] [-G g-sock] [-f | -l | -g [-i interval in sec]]\n";
 	exit(0);
 }
