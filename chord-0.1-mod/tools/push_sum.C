@@ -1,7 +1,8 @@
-/*	$Id: push_sum.C,v 1.5 2009/07/08 23:52:19 vsfgd Exp vsfgd $ */
+/*	$Id: push_sum.C,v 1.6 2009/07/09 16:05:29 vsfgd Exp vsfgd $ */
 
 #include <cmath>
 #include <ctime>
+#include <fstream>
 #include <iostream>
 #include <stdio.h>
 #include <string.h>
@@ -20,7 +21,7 @@
 
 #define DEBUG 1
 
-//static char rcsid[] = "$Id: push_sum.C,v 1.5 2009/07/08 23:52:19 vsfgd Exp vsfgd $";
+//static char rcsid[] = "$Id: push_sum.C,v 1.6 2009/07/09 16:05:29 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -28,7 +29,9 @@ int out;
 
 chordID maxID;
 static const char* dhash_sock;
-static const char* gsock = "/tmp/g-sock";
+static const char* gsock;
+static const char* logfile;
+std::ofstream LogFile;
 
 void getKeyValue(str&, str&, double&, double&);
 void makeKeyValue(char **, int&, str&, double&, double&, InsertType);
@@ -53,6 +56,7 @@ vec<double> sum;
 //std::vector<double> sum;
 vec<double> weight;
 //std::vector<double> weight;
+vec<long int> seq;
 
 // hash table statistics
 int numReads;
@@ -149,11 +153,11 @@ store_cb(dhash_stat status, ptr<insert_info> i)
 		// Trying again
 		//insertError = true;
 	} else if (status != DHASH_OK) {
-		warnx << "Failed to store key...\n";
+		warnx << "failed to store key...\n";
 		insertError = true;
 	} else {
 		numWrites++;
-		warnx << "Key stored successfully...\n";
+		warnx << "key stored successfully...\n";
 	}
 	out++;
 }
@@ -162,20 +166,21 @@ int
 main(int argc, char *argv[])
 {
 	double s, w;
-	int ch, intval, fflag, gflag, lflag, valLen;
+	int ch, intval, fflag, Gflag, gflag, Lflag, lflag, Sflag, valLen;
 	char *name;
 	char *value;
 	struct stat statbuf;
 	chordID ID;
 	DHTStatus status;
 
-	fflag = gflag = lflag = intval = 0;
-	while ((ch = getopt(argc, argv, "fG:ghi:lS:")) != -1)
+	fflag = Gflag = gflag = Lflag = lflag = Sflag = intval = 0;
+	while ((ch = getopt(argc, argv, "fG:ghi:L:lS:")) != -1)
 		switch(ch) {
 		case 'f':
 			fflag = 1;
 			break;
 		case 'G':
+			Gflag = 1;
 			gsock = optarg;
 			break;
 		case 'g':
@@ -184,10 +189,15 @@ main(int argc, char *argv[])
 		case 'i':
 			intval = atoi(optarg);
 			break;
+		case 'L':
+			Lflag = 1;
+			logfile = optarg;
+			break;
 		case 'l':
 			lflag = 1;
 			break;
 		case 'S':
+			Sflag = 1;
 			dhash_sock = optarg;
 			break;
 		case 'h':
@@ -199,10 +209,17 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
+	// required flags
+	if (Gflag == 0 || Sflag == 0 || Lflag == 0) usage();
+
+	// FIXME: make sure only one flag is set at a time
 	if (fflag == 0 && gflag == 0 && lflag == 0) usage();
 
 	// check intval bound
 	if (gflag == 1 && intval == 0) usage();
+
+	// check
+	LogFile.open(logfile);
 
 	if (stat(dhash_sock, &statbuf) != 0) fatal("socket does not exist\n");
 	dhash = New dhashclient(dhash_sock);
@@ -217,6 +234,8 @@ main(int argc, char *argv[])
 		srand(time(NULL));
 		sum.push_back(rand() % 100 + 1);
 		weight.push_back(1);
+		seq.push_back(0);
+		warnx << "\ninitial value: ";
 
 		while (1) {
 			ID = randomID();
@@ -224,18 +243,22 @@ main(int argc, char *argv[])
 			z << ID;
 			str key(z);
 
-			std::cout << "s_0=" << sum.back() << ", w_0=" << weight.back() << "\n";
+			std::cout << "seq = " << seq.back() << ", s = " << sum.back()
+				  << ", w = " << weight.back() << ", avg (s/w) = "
+				  << sum.back()/weight.back() << "\n";
+				  
 			s = sum.back()/2;
 			w = weight.back()/2;
-			std::cout << "Gossiping (s/2, w/2): (" << s << ", " << w << ")\n";
+			std::cout << "gossiping: (s/2, w/2) = (" << s << ", " << w << ")\n";
 			makeKeyValue(&value, valLen, key, s, w, GOSSIP);
 			status = insertDHT(ID, value, valLen, MAXRETRIES);
 			cleanup(value);
 
-			if (status != SUCC) fatal("Insert FAILed\n");
-			else warnx << "Insert SUCCeeded\n";
-			warnx << "waiting " << intval << " seconds...\n";
+			if (status != SUCC) fatal("insert FAILed\n");
+			else warnx << "insert SUCCeeded\n";
+			warnx << "waiting " << intval << " seconds...\n\n";
 			sleep(intval);
+			warnx << "current value: ";
 		}
 	} else if (fflag == 1) {
 		str junk("");
@@ -263,7 +286,7 @@ main(int argc, char *argv[])
 DHTStatus
 insertDHT(chordID ID, char *value, int valLen, int STOPCOUNT, chordID guess)
 {
-	warnx << "Insert operation on key: " << ID << "\n";
+	warnx << "insert operation on key: " << ID << "\n";
 	dataStored += valLen;
 	int numTries = 0;
 		
@@ -297,7 +320,7 @@ insertDHT(chordID ID, char *value, int valLen, int STOPCOUNT, chordID guess)
 
 		while (out == 0) acheck();
 		double endTime = getgtod();    
-		std::cerr << "Key insert time: " << endTime - beginTime << " secs\n";
+		std::cerr << "key insert time: " << endTime - beginTime << " secs\n";
 		// Insert was successful
 		if (!insertError) {
 			return insertStatus;
@@ -424,8 +447,9 @@ accept_connection(int lfd)
 	socklen_t sunlen = sizeof(sun);
 	// vs "struct sockaddr *"
 	int cs = accept(lfd, reinterpret_cast<sockaddr *> (&sun), &sunlen);
-	if (cs >= 0) warnx << "accepted connection. file descriptor = " << cs << "\n";
-	else if (errno != EAGAIN) fatal << "accept; errno = " << errno << "\n";
+	if (cs >= 0) warnx << "\taccepted connection on local socket\n";
+	//if (cs >= 0) warnx << "accepted connection. file descriptor = " << cs << "\n";
+	else if (errno != EAGAIN) fatal << "\taccept; errno = " << errno << "\n";
 	
 	fdcb(cs, selread, wrap(read_gossip, cs));
 }
@@ -451,29 +475,26 @@ read_gossip(int fd)
 	str gElem(buf);
 	getKeyValue(gElem.cstr(), gKey, s, w);
 
-	std::cout << "read from socket: KEY: " << gKey << ", VALUE (s, w): ("
-		  << s << ", " << w << ")\n";
+	warnx << "\tread from socket: KEY = " << gKey << "\n";
+
+	//std::cout << "read from socket: KEY = " << gKey << ", VALUE (s, w) = ("
+	//	  << s << ", " << w << ")\n";
 
 	if (sum.empty() || weight.empty()) {
 		sum.push_back(s);
 		weight.push_back(w);
+		seq.push_back(1);
 	} else {
 		sum.push_back(sum.back() + s);
 		weight.push_back(weight.back() + w);
+		seq.push_back(seq.back() + 1);
 	}
-
-	// check if sum and weight vecs have the same size
-
-	std::cout << "current sum: " << sum.back() << ", current weight: "
-		  << weight.back() << "\n";
-
-	std::cout << "step t=" << sum.size() << ", avg s/w="
-		  << sum.back()/weight.back() << "\n";
+	// check if sum and weight vecs have the same size?
 }
 
 void
 usage(void)
 {
-	warn << "usage: " << __progname << " [-h] [-S dhash-sock] [-G g-sock] [-f | -l | -g [-i interval in sec]]\n";
+	warn << "usage: " << __progname << " [-h] [-S dhash-sock] [-G g-sock] [-L logfile] [-f | -l | -g [-i interval in sec]]\n";
 	exit(0);
 }
