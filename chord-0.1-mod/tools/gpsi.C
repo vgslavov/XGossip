@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.2 2009/08/07 18:27:56 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.3 2009/08/10 06:30:57 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <ctime>
@@ -24,7 +24,7 @@
 #define _DEBUG_
 #define _ELIMINATE_DUP_
 
-//static char rcsid[] = "$Id: gpsi.C,v 1.2 2009/08/07 18:27:56 vsfgd Exp vsfgd $";
+//static char rcsid[] = "$Id: gpsi.C,v 1.3 2009/08/10 06:30:57 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -34,13 +34,10 @@ chordID maxID;
 static const char* dsock;
 static const char* gsock;
 
-//void getKeyValue(str&, str&, double&, double&);
-//void makeKeyValue(char **, int&, str&, double&, double&, InsertType);
-
-//void getKeyValue(const char*, str&, std::vector<POLY>&);
-void getKeyValue(const char*, str&, std::vector<POLY>&, int&);
-//void makeKeyValue(char **, int&, str&, std::vector<POLY>&, InsertType);
-void makeKeyValue(char **, int&, str&, std::vector<POLY>&, int&, InsertType);
+//void getKeyValue(const char*, str&, std::map<std::vector<POLY>, double, CompareSig>&, int&);
+void makeKeyValue(char **, int&, str&, std::map<std::vector<POLY>, double, CompareSig>&, int&, InsertType);
+void getKeyValue(const char*, str&, std::vector<POLY>&, double&, int&);
+void makeKeyValue(char **, int&, str&, std::vector<POLY>&, double&, int&, InsertType);
 DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
 void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 
@@ -48,11 +45,11 @@ chordID randomID(void);
 void listen_gossip(void);
 void accept_connection(int);
 void read_gossip(int);
-int getdir(std::string, std::vector<std::string> &);
-void readsig(std::string);
-bool sig2str(std::vector<POLY>, str &);
-void calcfreq(void);
-void calcfreqO(void);
+int getdir(std::string, std::vector<std::string>&);
+void readsig(std::string, std::vector<std::vector <POLY> >&);
+bool sig2str(std::vector<POLY>, str&);
+void calcfreq(std::vector<std::vector <POLY> >);
+void calcfreqO(std::vector<std::vector <POLY> >);
 void usage(void);
 
 DHTStatus insertStatus;
@@ -64,14 +61,9 @@ vec<str> nodeEntries;
 bool insertError;
 bool retrieveError;
 
-std::vector<std::vector<POLY> > sigList;
-std::map<std::vector<POLY>, int, CompareSig> uniqueSigList;
-
-//vec<double> sum;
-//std::vector<double> sum;
-//vec<double> weight;
-//std::vector<double> weight;
-//vec<long int> seq;
+std::map<std::vector<POLY>, double, CompareSig> uniqueSigList;
+std::vector<int> rxseq;
+std::vector<int> txseq;
 
 // hash table statistics
 int numReads;
@@ -183,8 +175,8 @@ store_cb(dhash_stat status, ptr<insert_info> i)
 int
 main(int argc, char *argv[])
 {
-	double s, w;
-	int ch, intval, fflag, Gflag, gflag, lflag, Sflag, sflag, valLen, freq;
+	int ch, intval, fflag, Gflag, gflag, lflag, Sflag, sflag, valLen;
+	double freq;
 	char *name;
 	char *value;
 	struct stat statbuf;
@@ -192,6 +184,7 @@ main(int argc, char *argv[])
 	DHTStatus status;
 	std::string sigdir;
 	std::vector<std::string> sigfiles;
+	std::vector<std::vector<POLY> > sigList;
 
 	fflag = Gflag = gflag = lflag = Sflag = sflag = intval = 0;
 	while ((ch = getopt(argc, argv, "fG:ghi:lS:s:")) != -1)
@@ -246,11 +239,11 @@ main(int argc, char *argv[])
 	warnx << "reading signatures from files...\n\n";
 	for (unsigned int i = 0; i < sigfiles.size(); i++) {
 		//std::cout << sigfiles[i] << "\n";
-		readsig(sigfiles[i]);
+		readsig(sigfiles[i], sigList);
 	}
 
 	warnx << "calculating frequencies...\n\n";
-	calcfreq();
+	calcfreq(sigList);
 
 	system("date");
 
@@ -258,16 +251,11 @@ main(int argc, char *argv[])
 		warnx << "starting to listen...\n";
 		listen_gossip();		
 		warnx << "starting to gossip...\n";
-		sleep(10);
+		sleep(5);
 
-		/*
-		srand(time(NULL));
-		sum.push_back(rand() % 100 + 1);
-		weight.push_back(1);
-		seq.push_back(0);
-		warnx << "\ninitial value: ";
-		*/
-
+		rxseq.clear();
+		txseq.clear();
+		txseq.push_back(0);
 		while (1) {
 			ID = randomID();
 			strbuf z;
@@ -277,19 +265,23 @@ main(int argc, char *argv[])
 			std::vector<POLY> sig;
 			sig.clear();
 
-			for (std::map<std::vector<POLY>, int >::iterator itr = uniqueSigList.begin();
+			for (std::map<std::vector<POLY>, double >::iterator itr = uniqueSigList.begin();
 			     itr != uniqueSigList.end(); itr++) {
 
-				sig2str(itr->first, buf);
-				warnx << "\ninserting:\nsig: " << buf << "\nfreq: " << itr->second << "\n";
 				sig = itr->first;
-				freq = itr->second;
-				makeKeyValue(&value, valLen, key, sig, freq, GOSSIP);
+				freq = itr->second / 2;
+				sig2str(sig, buf);
+				std::cout << "\ninserting:\n\ttxseq: " << txseq.back() << "\n\tsig: "
+				      << buf << "\n\tfreq/2: " << freq << "\n";
+				//makeKeyValue(&value, valLen, key, sig, freq, txseq.back(), GOSSIP);
+				makeKeyValue(&value, valLen, key, uniqueSigList, txseq.back(), GOSSIP);
 				status = insertDHT(ID, value, valLen, MAXRETRIES);
 				cleanup(value);
 
 				if (status != SUCC) fatal("insert FAILed\n");
 				else warnx << "insert SUCCeeded\n";
+				// should every sig message have a different seq?
+				txseq.push_back(txseq.back() + 1);
 			}
 			warnx << "waiting " << intval << " seconds...\n\n";
 			sleep(intval);
@@ -304,10 +296,8 @@ main(int argc, char *argv[])
 			delete dhash;
 			fatal("Unable to read node ID\n");
 		}
-		str k;
-		getKeyValue(nodeEntries[0], k, s, w);
-		std::cout << "KEY: " << k << "\nVALUE (s, w): (" << s << ", " << w << ")\n";
 	} else if (lflag == 1) {
+		rxseq.clear();
 		listen_gossip();		
 	} else
 		usage();
@@ -481,7 +471,7 @@ accept_connection(int lfd)
 	socklen_t sunlen = sizeof(sun);
 	// vs "struct sockaddr *"
 	int cs = accept(lfd, reinterpret_cast<sockaddr *> (&sun), &sunlen);
-	if (cs >= 0) warnx << "\taccepted connection on local socket\n";
+	if (cs >= 0) warnx << "accepted connection on local socket\n";
 	//if (cs >= 0) warnx << "accepted connection. file descriptor = " << cs << "\n";
 	else if (errno != EAGAIN) fatal << "\taccept; errno = " << errno << "\n";
 	
@@ -492,8 +482,11 @@ void
 read_gossip(int fd)
 {
 	strbuf buf;
-	str key;
-	int n, freq;
+	str key, t;
+	std::vector<POLY> sig;
+	std::vector<std::vector <POLY> > sigList;
+	int n, s;
+	double freq;
 
 	n = buf.tosuio()->input(fd);
 	if (n < 0) fatal("read failed\n");
@@ -506,26 +499,17 @@ read_gossip(int fd)
 		return;
 	}
 	str gElem(buf);
-	str t;
-	std::vector<POLY> sig;
-	getKeyValue(gElem.cstr(), key, sig, freq);
+	getKeyValue(gElem.cstr(), key, sig, freq, s);
 
 	sig2str(sig, t);
-	warnx << "\tread from socket: KEY = " << key << ", VALUE = (" << t << ", " << freq << ")\n";
+	std::cout << "\nreading from socket:\n\trxseq: " << s << "\n\tID: " << key
+	      << "\n\tsig: " << t << "\n\tfreq: " << freq << "\n";
 
-	// TODO: store sig freq
-
-	/*
-	if (sum.empty() || weight.empty()) {
-		sum.push_back(s);
-		weight.push_back(w);
-		seq.push_back(1);
-	} else {
-		sum.push_back(sum.back() + s);
-		weight.push_back(weight.back() + w);
-		seq.push_back(seq.back() + 1);
-	}
-	*/
+	// what about freq?
+	rxseq.push_back(s);
+	sigList.clear();
+	sigList.push_back(sig);
+	calcfreq(sigList);
 }
 
 // based on:
@@ -549,7 +533,7 @@ getdir(std::string dir, std::vector<std::string> &files)
 }
 
 void
-readsig(std::string sigfile)
+readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 {
 	double startTime, finishTime;
 	FILE *sigfp;
@@ -697,27 +681,28 @@ sig2str(std::vector<POLY> sig, str &buf)
 }
 
 void
-calcfreq(void)
+calcfreq(std::vector<std::vector <POLY> > sigList)
 {
 	str buf;
 
 	for (int i = 0; i < (int) sigList.size(); i++) {
-		std::map<std::vector<POLY>, int >::iterator itr = uniqueSigList.find(sigList[i]);
+		std::map<std::vector<POLY>, double >::iterator itr = uniqueSigList.find(sigList[i]);
 		sig2str(sigList[i], buf);
 		if (itr != uniqueSigList.end()) {
 			itr->second += 1;
-			warnx << "sig: " << buf << "\nfreq: " << itr->second << "\n";
+			//warnx << "sig: " << buf << "\nfreq: " << itr->second << "\n";
 		} else {
 			uniqueSigList[sigList[i]] = 1;
-			warnx << "sig: " << buf << "\nfreq: " << uniqueSigList[sigList[i]] << "\n";
+			//warnx << "sig: " << buf << "\nfreq: " << uniqueSigList[sigList[i]] << "\n";
 		}
-		warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n\n";
+		//warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n\n";
 	}
+	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n\n";
 }
 
 // copied from psi.C
 void
-calcfreqO(void)
+calcfreqO(std::vector<std::vector <POLY> > sigList)
 {
 	std::vector<int> group1;
 	std::vector<int> group2;
