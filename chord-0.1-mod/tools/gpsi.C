@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.4 2009/08/19 04:52:35 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.5 2009/10/07 04:19:53 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <ctime>
@@ -24,7 +24,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-//static char rcsid[] = "$Id: gpsi.C,v 1.4 2009/08/19 04:52:35 vsfgd Exp vsfgd $";
+//static char rcsid[] = "$Id: gpsi.C,v 1.5 2009/10/07 04:19:53 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -261,9 +261,9 @@ main(int argc, char *argv[])
 	warnx << ctime(&rawtime);
 
 	if (gflag == 1) {
-		std::cout << "starting to listen...\n";
+		//std::cout << "starting to listen...\n";
 		listen_gossip();		
-		std::cout << "starting to gossip...\n";
+		//std::cout << "starting to gossip...\n";
 		sleep(5);
 
 		rxseq.clear();
@@ -278,7 +278,7 @@ main(int argc, char *argv[])
 			std::vector<POLY> sig;
 			sig.clear();
 
-			warnx << "inserting:\n\ttxseq: " << txseq.back() << "\n";
+			warnx << "inserting:\ntxseq: " << txseq.back() << "\n";
 			//makeKeyValue(&value, valLen, key, uniqueSigList, w, txseq.back(), GOSSIP);
 			makeKeyValue(&value, valLen, key, uniqueSigList, uniqueWeightList, txseq.back(), GOSSIP);
 			status = insertDHT(ID, value, valLen, MAXRETRIES);
@@ -315,7 +315,7 @@ main(int argc, char *argv[])
 DHTStatus
 insertDHT(chordID ID, char *value, int valLen, int STOPCOUNT, chordID guess)
 {
-	warnx << "\tkey: " << ID << "\n";
+	warnx << "key: " << ID << "\n";
 	dataStored += valLen;
 	int numTries = 0;
 		
@@ -511,11 +511,11 @@ read_gossip(int fd)
 	weightList.clear();
 	getKeyValue(gElem.cstr(), key, sigList, freqList, weightList, seq);
 
-	warnx << "reading from socket:\n\trxseq: " << seq << "\n\tID: "
+	warnx << "reading from socket:\nrxseq: " << seq << "\nID: "
 	      << key << "\n";
-	warnx << "\tsigList size: " << sigList.size() << "\n";
-	warnx << "\tfreqList size: " << freqList.size() << "\n";
-	warnx << "\tweightList size: " << weightList.size() << "\n";
+	warnx << "sigList size: " << sigList.size() << "\n";
+	warnx << "freqList size: " << freqList.size() << "\n";
+	warnx << "weightList size: " << weightList.size() << "\n";
 
 #ifdef _DEBUG_
 	// XXX
@@ -523,15 +523,15 @@ read_gossip(int fd)
 	str sigbuf;
 	for (int i = 0; i < (int) sigList.size(); i++) {
 		sig2str(sigList[i], sigbuf);
-		warnx << "\tsig[" << i << "]: " << sigbuf << "\n";
+		warnx << "sig[" << i << "]: " << sigbuf << "\n";
 	}
 	for (int i = 0; i < (int) freqList.size(); i++) {
 		snprintf(tmpbuf, sizeof(tmpbuf), "%f", freqList[i]);
-		warnx << "\tfreq[" << i << "]: " << tmpbuf << "\n";
+		warnx << "freq[" << i << "]: " << tmpbuf << "\n";
 	}
 	for (int i = 0; i < (int) weightList.size(); i++) {
 		snprintf(tmpbuf, sizeof(tmpbuf), "%f", weightList[i]);
-		warnx << "\tweight[" << i << "]: " << tmpbuf << "\n";
+		warnx << "weight[" << i << "]: " << tmpbuf << "\n";
 	}
 #endif
 
@@ -778,13 +778,13 @@ printlist(void)
 		++itrW;
 
 		sig2str(sig, sigbuf);
-		warnx << "\tsig: " << sigbuf << "\n";
+		warnx << "sig: " << sigbuf << "\n";
 		snprintf(buf, sizeof(buf), "%f", freq);
-		warnx << "\tfreq: " << buf << "\n";
+		warnx << "freq: " << buf << "\n";
 		snprintf(buf, sizeof(buf), "%f", weight);
-		warnx << "\tweight: " << buf << "\n";
+		warnx << "weight: " << buf << "\n";
 		snprintf(buf, sizeof(buf), "%f", avg);
-		warnx << "\tavg: " << buf << "\n";
+		warnx << "avg: " << buf << "\n";
 	}
 
 }
