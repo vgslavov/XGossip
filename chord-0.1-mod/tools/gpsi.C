@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.6 2009/10/07 04:23:42 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.7 2009/11/18 19:55:21 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <ctime>
@@ -25,7 +25,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.6 2009/10/07 04:23:42 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.7 2009/11/18 19:55:21 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -181,7 +181,7 @@ store_cb(dhash_stat status, ptr<insert_info> i)
 int
 main(int argc, char *argv[])
 {
-	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag;
+	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag;
 	int ch, intval, nids, valLen;
 	int logfd;
 	char *value;
@@ -193,11 +193,11 @@ main(int argc, char *argv[])
 	std::vector<std::string> sigfiles;
 	std::vector<std::vector<POLY> > sigList;
 
-	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = 0;
+	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = 0;
 	intval = nids = 0;
 	rxseq.clear();
 	txseq.clear();
-	while ((ch = getopt(argc, argv, "rG:ghi:L:ln:S:s:z")) != -1)
+	while ((ch = getopt(argc, argv, "rG:ghi:L:ln:S:s:zv")) != -1)
 		switch(ch) {
 		case 'G':
 			Gflag = 1;
@@ -233,6 +233,9 @@ main(int argc, char *argv[])
 		case 'z':
 			zflag = 1;
 			break;
+		case 'v':
+			vflag = 1;
+			break;
 		case 'h':
 		case '?':
 		default:
@@ -241,6 +244,11 @@ main(int argc, char *argv[])
 		}
 	argc -= optind;
 	argv += optind;
+
+	if (vflag == 1) {
+		warnx << "rcsid: " << rcsid << "\n";
+		exit(0);
+	}
 
 	if (zflag == 1 && nids != 0) {
 		for (int i = 0; i < nids; i++) {
@@ -303,7 +311,8 @@ main(int argc, char *argv[])
 
 		txseq.push_back(0);
 		while (1) {
-			ID = randomID();
+			ID = make_randomID();
+			//ID = randomID();
 			strbuf z;
 			z << ID;
 			str key(z);
@@ -1081,6 +1090,7 @@ usage(void)
 	     << "      	-i		<how often>\n"
 	     << "      	-n		<how many>\n\n"
 	     << "Actions:\n"
+	     << "	-v		print version\n"
 	     << "	-r		read signatures (requires -s)\n"
 	     << "	-z		generate random chordID (requires -n)\n"
 	     << "	-l		listen for gossip (requires -S, -G, -L)\n"
