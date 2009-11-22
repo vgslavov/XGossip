@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.8 2009/11/18 21:31:56 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.9 2009/11/22 15:58:59 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <ctime>
@@ -25,7 +25,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.8 2009/11/18 21:31:56 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.9 2009/11/22 15:58:59 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -526,8 +526,12 @@ accept_connection(int lfd)
 	socklen_t sunlen = sizeof(sun);
 	// vs "struct sockaddr *"
 	int cs = accept(lfd, reinterpret_cast<sockaddr *> (&sun), &sunlen);
-	if (cs >= 0) warnx << "accepted connection on local socket\n";
-	else if (errno != EAGAIN) fatal << "accept; errno = " << errno << "\n";
+	if (cs >= 0)
+		warnx << "accepted connection on local socket\n";
+	else if (errno != EAGAIN) {
+		warnx << "accept: errno = " << strerror(errno) << "\n";
+		return;
+	}
 	
 	fdcb(cs, selread, wrap(read_gossip, cs));
 }
@@ -543,7 +547,10 @@ read_gossip(int fd)
 	int n, seq;
 
 	n = buf.tosuio()->input(fd);
-	if (n < 0) fatal << "read failed" << "\n";
+	if (n < 0) {
+		warnx << "read_gossip: read failed" << "\n";
+		return;
+	}
 
 	if (n == 0) {
 		fdcb(fd, selread, 0);
