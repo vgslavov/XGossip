@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.7 2009/11/18 19:55:21 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.8 2009/11/18 21:31:56 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <ctime>
@@ -25,7 +25,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.7 2009/11/18 19:55:21 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.8 2009/11/18 21:31:56 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -197,6 +197,10 @@ main(int argc, char *argv[])
 	intval = nids = 0;
 	rxseq.clear();
 	txseq.clear();
+	//random_init();
+	//u_long seed = time(NULL);
+	//srandom(seed);
+	srandom(time(NULL));
 	while ((ch = getopt(argc, argv, "rG:ghi:L:ln:S:s:zv")) != -1)
 		switch(ch) {
 		case 'G':
@@ -300,7 +304,7 @@ main(int argc, char *argv[])
 
 	time(&rawtime);
 	warnx << "date: " << ctime(&rawtime);
-	warnx << "rcsid: " << rcsid;
+	warnx << "rcsid: " << rcsid << "\n";
 
 	if (gflag == 1) {
 		warnx << "listening for gossip...\n";
@@ -482,6 +486,7 @@ randomID(void)
 	srand(time(NULL));
 	//warnx << "j:  ";
 	for (int i = 0; i < 40; i++) {
+		//j = randomNumGen();
 		j = rand() % 16;
 		sprintf(buf, "%x", j);
 		//warnx << buf;
@@ -785,8 +790,10 @@ calcfreq(std::vector<std::vector<POLY> > sigList)
 			uniqueWeightList[sigList[i]] = 1;
 		}
 	}
-	warnx << "Size of unique sig list: " << uniqueSigList.size() - 1 << "\n";
-	warnx << "Size of unique weight list: " << uniqueWeightList.size() - 1 << "\n";
+	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
+	warnx << "Size of unique weight list: " << uniqueWeightList.size() << "\n";
+	//warnx << "Size of unique sig list: " << uniqueSigList.size() - 1 << "\n";
+	//warnx << "Size of unique weight list: " << uniqueWeightList.size() - 1 << "\n";
 }
 
 void
@@ -809,8 +816,10 @@ calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList,
 			//warnx << "sig: " << buf << "\nfreq: " << uniqueSigList[sigList[i]] << "\n";
 		}
 	}
-	warnx << "Size of unique sig list: " << uniqueSigList.size() - 1 << "\n";
-	warnx << "Size of unique weight list: " << uniqueWeightList.size() - 1 << "\n";
+	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
+	warnx << "Size of unique weight list: " << uniqueWeightList.size() << "\n";
+	//warnx << "Size of unique sig list: " << uniqueSigList.size() - 1 << "\n";
+	//warnx << "Size of unique weight list: " << uniqueWeightList.size() - 1 << "\n";
 }
 
 // for mass conservation
@@ -830,8 +839,10 @@ splitfreq(void)
 		itrW->second += weight / 2;
 		++itrW;
 	}
-	warnx << "Size of unique sig list: " << uniqueSigList.size() - 1 << "\n";
-	warnx << "Size of unique weight list: " << uniqueWeightList.size() - 1 << "\n";
+	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
+	warnx << "Size of unique weight list: " << uniqueWeightList.size() << "\n";
+	//warnx << "Size of unique sig list: " << uniqueSigList.size() - 1 << "\n";
+	//warnx << "Size of unique weight list: " << uniqueWeightList.size() - 1 << "\n";
 }
 
 void
@@ -874,8 +885,10 @@ printlist(void)
 		//warnx << "avg: " << buf << "\n";
 		//oss.flush();
 	}
-	warnx << "Size of unique sig list: " << uniqueSigList.size() - 1 << "\n";
-	warnx << "Size of unique weight list: " << uniqueWeightList.size() - 1 << "\n";
+	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
+	warnx << "Size of unique weight list: " << uniqueWeightList.size() << "\n";
+	//warnx << "Size of unique sig list: " << uniqueSigList.size() - 1 << "\n";
+	//warnx << "Size of unique weight list: " << uniqueWeightList.size() - 1 << "\n";
 }
 
 // copied from psi.C
