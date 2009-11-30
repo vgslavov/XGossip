@@ -1,17 +1,18 @@
-/*	$Id: gpsi.C,v 1.9 2009/11/22 15:58:59 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.10 2009/11/22 19:56:27 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
+#include <cstdio>
 #include <ctime>
-#include <dirent.h>
 #include <fstream>
 #include <iostream>
 #include <map>
-#include <stdio.h>
-#include <string.h>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include <dirent.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <vector>
-//#include <sstream>
 
 #include <chord.h>
 #include <dhash_common.h>
@@ -22,10 +23,10 @@
 #include "nodeparams.h"
 #include "gpsi.h"
 
-//#define _DEBUG_
+#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.9 2009/11/22 15:58:59 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.10 2009/11/22 19:56:27 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -54,6 +55,7 @@ void calcfreq(std::vector<std::vector <POLY> >);
 void calcfreqM(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 void calcfreqO(std::vector<std::vector <POLY> >);
 void printlist(void);
+void printdouble(std::string, double);
 void splitfreq(void);
 void usage(void);
 
@@ -197,9 +199,6 @@ main(int argc, char *argv[])
 	intval = nids = 0;
 	rxseq.clear();
 	txseq.clear();
-	//random_init();
-	//u_long seed = time(NULL);
-	//srandom(seed);
 	srandom(time(NULL));
 	while ((ch = getopt(argc, argv, "rG:ghi:L:ln:S:s:zv")) != -1)
 		switch(ch) {
@@ -299,7 +298,7 @@ main(int argc, char *argv[])
 		}
 		warnx << "calculating frequencies...\n";
 		calcfreq(sigList);
-		//printlist();
+		printlist();
 	}
 
 	time(&rawtime);
@@ -334,7 +333,7 @@ main(int argc, char *argv[])
 			} else {
 				warnx << "insert SUCCeeded\n";
 				splitfreq();
-				//printlist();
+				printlist();
 			}
 			txseq.push_back(txseq.back() + 1);
 			sleep(intval);
@@ -390,9 +389,10 @@ insertDHT(chordID ID, char *value, int valLen, int STOPCOUNT, chordID guess)
 		while (out == 0) acheck();
 		double endTime = getgtod();
 		// XXX
-		char timebuf[1024];
-		snprintf(timebuf, sizeof(timebuf), "%f", endTime - beginTime);
-		warnx << "key insert time: " << timebuf << " secs\n";
+		//char timebuf[1024];
+		//snprintf(timebuf, sizeof(timebuf), "%f", endTime - beginTime);
+		//warnx << "key insert time: " << timebuf << " secs\n";
+		printdouble("key insert time: ", endTime - beginTime);
 		// Insert was successful
 		if (!insertError) {
 			return insertStatus;
@@ -572,25 +572,18 @@ read_gossip(int fd)
 	warnx << "weightList size: " << weightList.size() << "\n";
 
 #ifdef _DEBUG_
-	// XXX
-	//char tmpbuf[255];
-	//std::ostringstream oss;
 	str sigbuf;
 	for (int i = 0; i < (int) sigList.size(); i++) {
 		sig2str(sigList[i], sigbuf);
 		warnx << "sig[" << i << "]: " << sigbuf << "\n";
 	}
 	for (int i = 0; i < (int) freqList.size(); i++) {
-		//oss << freqList[i];
-		//warnx << "freq[" << i << "]: " << oss.str() << "\n";
-		//oss.flush();
+		printdouble("freq[i]: ", freqList[i]);
 		//snprintf(tmpbuf, sizeof(tmpbuf), "%f", freqList[i]);
 		//warnx << "freq[" << i << "]: " << tmpbuf << "\n";
 	}
 	for (int i = 0; i < (int) weightList.size(); i++) {
-		//oss << weightList[i];
-		//warnx << "weight[" << i << "]: " << oss.str() << "\n";
-		//oss.flush();
+		printdouble("weight[i]: ", weightList[i]);
 		//snprintf(tmpbuf, sizeof(tmpbuf), "%f", weightList[i]);
 		//warnx << "weight[" << i << "]: " << tmpbuf << "\n";
 	}
@@ -598,7 +591,7 @@ read_gossip(int fd)
 
 	rxseq.push_back(seq);
 	calcfreqM(sigList, freqList, weightList);
-	//printlist();
+	printlist();
 }
 
 // based on:
@@ -853,14 +846,23 @@ splitfreq(void)
 }
 
 void
+printdouble(std::string fmt, double num)
+{
+	std::ostringstream oss;
+	std::string ss;
+
+	oss << num;
+	ss = oss.str();
+	warnx << fmt.c_str() << ss.c_str() << "\n";
+}
+
+void
 printlist(void)
 {
 	double freq, weight, avg;
 	std::vector<POLY> sig;
-	// XXX
-	//char buf[255];
-	//std::ostringstream oss;
 	str sigbuf;
+	int n = 0;
 
 	warnx << "uniqueSigList:\n";
 	std::map<std::vector<POLY>, double>::iterator itrW = uniqueWeightList.begin();
@@ -872,26 +874,25 @@ printlist(void)
 		freq = itr->second;
 		weight = itrW->second;
 		avg = freq / weight;
+		n += (int)avg;
 		++itrW;
 
 		sig2str(sig, sigbuf);
 		warnx << "sig: " << sigbuf << "\n";
+
+		printdouble("freq: ", freq);
 		//snprintf(buf, sizeof(buf), "%f", freq);
-		//oss << freq;
-		//warnx << "freq: " << oss.str() << "\n";
 		//warnx << "freq: " << buf << "\n";
-		//oss.flush();
+
+		printdouble("weight: ", weight);
 		//snprintf(buf, sizeof(buf), "%f", weight);
-		//oss << weight;
-		//warnx << "weight: " << oss.str() << "\n";
 		//warnx << "weight: " << buf << "\n";
-		//oss.flush();
+
+		printdouble("avg: ", avg);
 		//snprintf(buf, sizeof(buf), "%f", avg);
-		//oss << avg;
-		//warnx << "avg: " << oss.str() << "\n";
 		//warnx << "avg: " << buf << "\n";
-		//oss.flush();
 	}
+	warnx << "Size of sig list: " << n << "\n";
 	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
 	warnx << "Size of unique weight list: " << uniqueWeightList.size() << "\n";
 	//warnx << "Size of unique sig list: " << uniqueSigList.size() - 1 << "\n";
