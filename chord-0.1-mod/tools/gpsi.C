@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.11 2009/11/30 20:04:01 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.12 2009/12/01 02:04:11 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -26,7 +26,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.11 2009/11/30 20:04:01 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.12 2009/12/01 02:04:11 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -338,8 +338,8 @@ main(int argc, char *argv[])
 				warnx << "insert FAILed\n";
 			} else {
 				warnx << "insert SUCCeeded\n";
-				splitfreq();
-				if (plist == 1) printlist();
+				//splitfreq();
+				//if (plist == 1) printlist();
 			}
 			txseq.push_back(txseq.back() + 1);
 			sleep(intval);
@@ -518,6 +518,7 @@ listen_gossip(void)
 	make_async(fd);
 
 	if (listen(fd, MAXCONN) < 0) {
+		// TODO: what's %m?
 		fatal("Error from listen: %m\n");
 		close(fd);
 	}
@@ -527,15 +528,15 @@ listen_gossip(void)
 void
 accept_connection(int lfd)
 {
-	sockaddr_un sun;
-	bzero(&sun, sizeof(sun));
-	socklen_t sunlen = sizeof(sun);
-	// vs "struct sockaddr *"
-	int cs = accept(lfd, reinterpret_cast<sockaddr *> (&sun), &sunlen);
+	sockaddr_in sin;
+	unsigned sinlen = sizeof(sin);
+
+	//bzero(&sin, sizeof(sin));
+	int cs = accept(lfd, (struct sockaddr *) &sin, &sinlen);
 	if (cs >= 0)
-		warnx << "accepted connection on local socket\n";
+		warnx << "accept: connection on local socket: cs=" << cs << "\n";
 	else if (errno != EAGAIN) {
-		warnx << "accept: errno = " << strerror(errno) << "\n";
+		warnx << "accept error: errno=" << strerror(errno) << "\n";
 		return;
 	}
 	
