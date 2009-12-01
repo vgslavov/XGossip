@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.10 2009/11/22 19:56:27 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.11 2009/11/30 20:04:01 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -23,10 +23,10 @@
 #include "nodeparams.h"
 #include "gpsi.h"
 
-#define _DEBUG_
+//#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.10 2009/11/22 19:56:27 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.11 2009/11/30 20:04:01 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -36,6 +36,7 @@ chordID maxID;
 static const char* dsock;
 static const char* gsock;
 static char *logfile;
+int plist = 0;
 
 void getKeyValue(const char*, str&, std::vector<std::vector<POLY> >&, std::vector<double>&, std::vector<double>&, int&);
 void makeKeyValue(char **, int&, str&, std::map<std::vector<POLY>, double, CompareSig>&, std::map<std::vector<POLY>, double, CompareSig>&, int&, InsertType);
@@ -183,7 +184,7 @@ store_cb(dhash_stat status, ptr<insert_info> i)
 int
 main(int argc, char *argv[])
 {
-	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag;
+	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, pflag;
 	int ch, intval, nids, valLen;
 	int logfd;
 	char *value;
@@ -195,12 +196,12 @@ main(int argc, char *argv[])
 	std::vector<std::string> sigfiles;
 	std::vector<std::vector<POLY> > sigList;
 
-	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = 0;
+	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = pflag = 0;
 	intval = nids = 0;
 	rxseq.clear();
 	txseq.clear();
 	srandom(time(NULL));
-	while ((ch = getopt(argc, argv, "rG:ghi:L:ln:S:s:zv")) != -1)
+	while ((ch = getopt(argc, argv, "rG:ghi:L:ln:pS:s:zv")) != -1)
 		switch(ch) {
 		case 'G':
 			Gflag = 1;
@@ -221,6 +222,9 @@ main(int argc, char *argv[])
 			break;
 		case 'n':
 			nids = atoi(optarg);
+			break;
+		case 'p':
+			pflag = 1;
 			break;
 		case 'r':
 			rflag = 1;
@@ -284,6 +288,8 @@ main(int argc, char *argv[])
 		errfd = logfd;
 	}
 
+	if (pflag == 1) plist = 1;
+
 	if (gflag == 1 || lflag == 1) {
 		if (stat(dsock, &statbuf) != 0) fatal << "socket does not exist" << "\n";
 		dhash = New dhashclient(dsock);
@@ -298,7 +304,7 @@ main(int argc, char *argv[])
 		}
 		warnx << "calculating frequencies...\n";
 		calcfreq(sigList);
-		printlist();
+		if (plist == 1) printlist();
 	}
 
 	time(&rawtime);
@@ -333,7 +339,7 @@ main(int argc, char *argv[])
 			} else {
 				warnx << "insert SUCCeeded\n";
 				splitfreq();
-				printlist();
+				if (plist == 1) printlist();
 			}
 			txseq.push_back(txseq.back() + 1);
 			sleep(intval);
@@ -591,7 +597,7 @@ read_gossip(int fd)
 
 	rxseq.push_back(seq);
 	calcfreqM(sigList, freqList, weightList);
-	printlist();
+	if (plist == 1) printlist();
 }
 
 // based on:
@@ -1109,7 +1115,8 @@ usage(void)
 	     << "	-L		<log file>\n"
 	     << "	-s		<dir with sigs>\n"
 	     << "      	-i		<how often>\n"
-	     << "      	-n		<how many>\n\n"
+	     << "      	-n		<how many>\n"
+	     << "      	-p		call printlist()\n\n"
 	     << "Actions:\n"
 	     << "	-v		print version\n"
 	     << "	-r		read signatures (requires -s)\n"
