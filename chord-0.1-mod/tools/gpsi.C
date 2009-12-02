@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.12 2009/12/01 02:04:11 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.13 2009/12/01 04:26:16 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -26,7 +26,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.12 2009/12/01 02:04:11 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.13 2009/12/01 04:26:16 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -533,9 +533,9 @@ accept_connection(int lfd)
 
 	//bzero(&sin, sizeof(sin));
 	int cs = accept(lfd, (struct sockaddr *) &sin, &sinlen);
-	if (cs >= 0)
+	if (cs >= 0) {
 		warnx << "accept: connection on local socket: cs=" << cs << "\n";
-	else if (errno != EAGAIN) {
+	} else if (errno != EAGAIN) {
 		warnx << "accept error: errno=" << strerror(errno) << "\n";
 		return;
 	}
@@ -555,13 +555,15 @@ read_gossip(int fd)
 
 	n = buf.tosuio()->input(fd);
 	if (n < 0) {
-		warnx << "read_gossip: read failed" << "\n";
+		warnx << "read_gossip: read failed\n";
 		return;
 	}
 
 	if (n == 0) {
+		warnx << "read_gossip: no more to read\n";
 		fdcb(fd, selread, 0);
-		close(fd);
+		// do you have to close?
+		//close(fd);
 		// what's the difference?
 		// exit(0);
 		return;
