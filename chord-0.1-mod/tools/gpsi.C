@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.13 2009/12/01 04:26:16 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.14 2009/12/02 03:32:32 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -26,7 +26,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.13 2009/12/01 04:26:16 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.14 2009/12/02 03:32:32 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -521,8 +521,9 @@ listen_gossip(void)
 		// TODO: what's %m?
 		fatal("Error from listen: %m\n");
 		close(fd);
+	} else {
+		fdcb(fd, selread, wrap(accept_connection, fd));
 	}
-	fdcb(fd, selread, wrap(accept_connection, fd));
 }
 
 void
