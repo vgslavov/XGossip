@@ -1,4 +1,4 @@
-/* $Id */
+/* $Id$ */
 
 #include <iostream>
 
@@ -197,10 +197,10 @@ dhblock_noauth_srv::adjust_data (chordID key, str new_data, str prev_data,
 		fdcb(fd, selwrite, wrap(write_gossip, fd, buf));
 
 		resStatus = DHASH_OK;
-		//return "";
-		new_elems.push_back(gElem);
-		str marshalled_block = dhblock_noauth::marshal_block(new_elems);
-		return marshalled_block;
+		return "";
+		//new_elems.push_back(gElem);
+		//str marshalled_block = dhblock_noauth::marshal_block(new_elems);
+		//return marshalled_block;
 	}
 
     // if new_elems.size() > 1, then we need to merge old and new as before!!!!
