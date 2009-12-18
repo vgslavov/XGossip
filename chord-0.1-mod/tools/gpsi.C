@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.14 2009/12/02 03:32:32 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.15 2009/12/02 16:40:11 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -19,6 +19,8 @@
 #include <dhashclient.h>
 #include <dhblock.h>
 
+//#include <pthread.h>
+
 #include "../utils/utils.h"
 #include "nodeparams.h"
 #include "gpsi.h"
@@ -26,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.14 2009/12/02 03:32:32 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.15 2009/12/02 16:40:11 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -46,7 +48,7 @@ DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
 void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 
 chordID randomID(void);
-void listen_gossip(void);
+void *listen_gossip(void *);
 void accept_connection(int);
 void read_gossip(int);
 int getdir(std::string, std::vector<std::string>&);
@@ -68,6 +70,8 @@ vec<str> nodeEntries;
 
 bool insertError;
 bool retrieveError;
+
+//pthread_mutex_t lock;
 
 std::map<std::vector<POLY>, double, CompareSig> uniqueSigList;
 std::map<std::vector<POLY>, double, CompareSig> uniqueWeightList;
@@ -184,6 +188,9 @@ store_cb(dhash_stat status, ptr<insert_info> i)
 int
 main(int argc, char *argv[])
 {
+	//pthread_t thread_ID;
+	//void *exit_status;
+
 	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, pflag;
 	int ch, intval, nids, valLen;
 	int logfd;
@@ -313,6 +320,8 @@ main(int argc, char *argv[])
 
 	if (gflag == 1) {
 		warnx << "listening for gossip...\n";
+		//pthread_mutex_init(&lock, NULL);
+		//pthread_create(&thread_ID, NULL, listen_gossip, NULL);
 		listen_gossip();		
 		sleep(5);
 		warnx << "gossiping...\n";
@@ -329,7 +338,9 @@ main(int argc, char *argv[])
 			sig.clear();
 
 			warnx << "inserting:\ntxseq: " << txseq.back() << "\n";
+			//pthread_mutex_lock(&lock);
 			makeKeyValue(&value, valLen, key, uniqueSigList, uniqueWeightList, txseq.back(), GOSSIP);
+			//pthread_mutex_unlock(&lock);
 			status = insertDHT(ID, value, valLen, MAXRETRIES);
 			cleanup(value);
 
@@ -342,13 +353,14 @@ main(int argc, char *argv[])
 				//if (plist == 1) printlist();
 			}
 			txseq.push_back(txseq.back() + 1);
+			//pthread_join(thread_ID, &exit_status);
 			sleep(intval);
 		}
 	} else if (rflag == 1) {
 		return 0;
 	} else if (lflag == 1) {
 		warnx << "listening for gossip...\n";
-		listen_gossip();		
+		listen_gossip(NULL);
 	} else
 		usage();
 
@@ -507,8 +519,8 @@ randomID(void)
 	return ID;
 }
 
-void
-listen_gossip(void)
+void *
+listen_gossip(void *arg)
 {
 	unlink(gsock);
 	int fd = unixsocket(gsock);
@@ -524,6 +536,7 @@ listen_gossip(void)
 	} else {
 		fdcb(fd, selread, wrap(accept_connection, fd));
 	}
+	return NULL;
 }
 
 void
@@ -811,6 +824,7 @@ calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList,
 {
 	//int deg;
 
+	//pthread_mutex_lock(&lock);
 	for (int i = 0; i < (int) sigList.size(); i++) {
 		std::map<std::vector<POLY>, double >::iterator itr = uniqueSigList.find(sigList[i]);
 		std::map<std::vector<POLY>, double >::iterator itrW = uniqueWeightList.find(sigList[i]);
@@ -830,6 +844,7 @@ calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList,
 	warnx << "Size of unique weight list: " << uniqueWeightList.size() << "\n";
 	//warnx << "Size of unique sig list: " << uniqueSigList.size() - 1 << "\n";
 	//warnx << "Size of unique weight list: " << uniqueWeightList.size() - 1 << "\n";
+	//pthread_mutex_unlock(&lock);
 }
 
 // for mass conservation
