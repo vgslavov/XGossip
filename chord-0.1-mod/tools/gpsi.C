@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.15 2009/12/02 16:40:11 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.16 2009/12/18 15:16:46 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.15 2009/12/02 16:40:11 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.16 2009/12/18 15:16:46 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -48,7 +48,8 @@ DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
 void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 
 chordID randomID(void);
-void *listen_gossip(void *);
+void listen_gossip(void);
+//void *listen_gossip(void *);
 void accept_connection(int);
 void read_gossip(int);
 int getdir(std::string, std::vector<std::string>&);
@@ -360,7 +361,8 @@ main(int argc, char *argv[])
 		return 0;
 	} else if (lflag == 1) {
 		warnx << "listening for gossip...\n";
-		listen_gossip(NULL);
+		listen_gossip();
+		//listen_gossip(NULL);
 	} else
 		usage();
 
@@ -519,8 +521,8 @@ randomID(void)
 	return ID;
 }
 
-void *
-listen_gossip(void *arg)
+void
+listen_gossip(void)
 {
 	unlink(gsock);
 	int fd = unixsocket(gsock);
@@ -536,7 +538,7 @@ listen_gossip(void *arg)
 	} else {
 		fdcb(fd, selread, wrap(accept_connection, fd));
 	}
-	return NULL;
+	//return NULL;
 }
 
 void
