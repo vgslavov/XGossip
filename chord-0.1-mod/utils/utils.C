@@ -1,4 +1,4 @@
-/*	$Id$	*/
+/*	$Id: utils.C,v 1.1 2009/12/18 19:23:25 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -822,7 +822,7 @@ void getKeyValue(const char *ptr, str& a, str& b)
 	str tempStrKey(ptr, keySize);
 	a = tempStrKey;
 
-    ptr += keySize;
+	ptr += keySize;
 
 	memcpy(&valSize, ptr, sizeof(valSize));
 	ptr += sizeof(valSize);
@@ -1178,8 +1178,10 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, do
 		sig.clear();
 		//warnx << "len (after sig n): " << len << "\n";
 	}
+	// 4 bytes bigger than the recv-ed message (type)
 	warnx << "total len (allocated): " << len << "\nsigListLen: " << sigListLen << "\n";
-	*ptr = new char[len];
+	*ptr = New char[len];
+	//*ptr = new char[len];
 	assert(ptr);
 	char *buf = *ptr;
 
@@ -1223,6 +1225,7 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, do
 		sigLen = sig.size() * sizeof(POLY);
 		memcpy(buf, &sigLen, sizeof(sigLen));
 		buf += sizeof(sigLen);
+		warnx << "makeKeyValue: sigLen: " << sigLen << "\n";
 
 		// copy sig
 		sigPtr = (POLY *) buf;
