@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.1 2009/12/18 19:23:25 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.2 2009/12/22 22:37:04 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -901,16 +901,37 @@ void getKeyValue(const char* buf, str& key, std::vector<POLY>& value)
 }
 
 // vsfgd: gpsi
-// format: <keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
-void getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sigList, std::vector<double>& freqList, std::vector<double>& weightList, int& seq)
+int getKeyValueLen(const char* buf)
 {
+	int len;
+	memcpy(&len, buf, sizeof(len));
+	return len;
+}
+
+// vsfgd: gpsi
+// format: <total len><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
+int getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sigList, std::vector<double>& freqList, std::vector<double>& weightList, int& seq, int recvlen)
+{
+	// copy len
+	int len;
+	memcpy(&len, buf, sizeof(len));
+	warnx << "getKeyValue: msglen: " << len << "\n";
+
+	// XXX: InsertType
+	if ((recvlen + sizeof(int)) != len) {
+		warnx << "getKeyValue: len doesn't match\n";
+		return -1;
+	}
+
 	// copy keysize
+	const char *keySizePtr;
 	int keySize;
-	memcpy(&keySize, buf, sizeof(keySize));
+	keySizePtr = buf + sizeof(len);
+	memcpy(&keySize, keySizePtr, sizeof(keySize));
 
 	// copy key
 	const char *keyPtr;
-	keyPtr = buf + sizeof(keySize);
+	keyPtr = keySizePtr + sizeof(keySize);
 	key = str(keyPtr, keySize);
 	//assert(key);
 
@@ -965,7 +986,7 @@ void getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sig
 
 		sigListPtr = weightPtr + sizeof(weight);
 	}
-	return;
+	return 0;
 }
 
 // vsfgd: gpsi (old)
@@ -1149,15 +1170,14 @@ void makeKeyValue(char **ptr, int& len, str& key, std::vector<POLY>& sig,
 }
 
 // vsfgd: gpsi
-// format: <type><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
+// format: <type><total len><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
 void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, double, CompareSig>& sigList, std::map<std::vector<POLY>, double, CompareSig>& weightList, int& seq, InsertType type)
 {
 	int keyLen = key.len();
 	//warnx << "LENGTH: ++++ " << keyLen << "\n";
 	
-	// type + keysize + key + seq + siglistlen
-	len = sizeof(int) + sizeof(int) + keyLen + sizeof(int) + sizeof(int);
-	//warnx << "len (everything but the siglist): " << len << "\n";
+	// type + total len + keysize + key + seq + siglistlen
+	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(int) + sizeof(int);
 
 	int sigListLen = sigList.size();
 	int sigLen;
@@ -1178,8 +1198,10 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, do
 		sig.clear();
 		//warnx << "len (after sig n): " << len << "\n";
 	}
-	// 4 bytes bigger than the recv-ed message (type)
-	warnx << "total len (allocated): " << len << "\nsigListLen: " << sigListLen << "\n";
+	// XXX: includes 4 bytes for type
+	warnx << "makeKeyValue: len (allocated): " << len
+	      << "\nsigListLen: " << sigListLen << "\n";
+	// TODO: New vs new
 	*ptr = New char[len];
 	//*ptr = new char[len];
 	assert(ptr);
@@ -1188,6 +1210,13 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, do
 	// copy type
 	memcpy(buf, &type, sizeof(type));
 	buf += sizeof(type);
+
+	// copy len
+	// XXX: is sizeof(type) always equal to sizeof(int)?
+	//len = len - sizeof(int);
+	//warnx << "makeKeyValue: len (msg): " << len << "\n";
+	memcpy(buf, &len, sizeof(len));
+	buf += sizeof(len);
 
 	// copy key
 	memcpy(buf, &keyLen, sizeof(keyLen));
