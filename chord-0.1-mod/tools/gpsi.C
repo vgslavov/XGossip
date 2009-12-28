@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.16 2009/12/18 15:16:46 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.17 2009/12/21 16:25:47 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.16 2009/12/18 15:16:46 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.17 2009/12/21 16:25:47 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -39,13 +39,15 @@ static const char* dsock;
 static const char* gsock;
 static char *logfile;
 int plist = 0;
+ 
+//int getKeyValueLen(const char*);
+//void getKeyValue(const char*, str&, std::vector<std::vector<POLY> >&, std::vector<double>&, std::vector<double>&, int&);
+//void makeKeyValue(char **, int&, str&, std::map<std::vector<POLY>, double, CompareSig>&, std::map<std::vector<POLY>, double, CompareSig>&, int&, InsertType);
+//int getKeyValue(const char*, str&, std::vector<POLY>&, double&, int&, int);
+//void makeKeyValue(char **, int&, str&, std::vector<POLY>&, double&, int&, InsertType);
 
-void getKeyValue(const char*, str&, std::vector<std::vector<POLY> >&, std::vector<double>&, std::vector<double>&, int&);
-void makeKeyValue(char **, int&, str&, std::map<std::vector<POLY>, double, CompareSig>&, std::map<std::vector<POLY>, double, CompareSig>&, int&, InsertType);
-void getKeyValue(const char*, str&, std::vector<POLY>&, double&, int&);
-void makeKeyValue(char **, int&, str&, std::vector<POLY>&, double&, int&, InsertType);
 DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
-void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
+//void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 
 chordID randomID(void);
 void listen_gossip(void);
@@ -357,6 +359,9 @@ main(int argc, char *argv[])
 			//pthread_join(thread_ID, &exit_status);
 			sleep(intval);
 		}
+
+		// when do we destroy the thread?
+		//pthread_mutex_destroy(&lock);
 	} else if (rflag == 1) {
 		return 0;
 	} else if (lflag == 1) {
@@ -521,6 +526,8 @@ randomID(void)
 	return ID;
 }
 
+//void *
+//listen_gossip(void *)
 void
 listen_gossip(void)
 {
@@ -535,24 +542,28 @@ listen_gossip(void)
 		// TODO: what's %m?
 		fatal("Error from listen: %m\n");
 		close(fd);
-	} else {
-		fdcb(fd, selread, wrap(accept_connection, fd));
+		return;
 	}
+
+	fdcb(fd, selread, wrap(accept_connection, fd));
+
 	//return NULL;
 }
 
 void
-accept_connection(int lfd)
+accept_connection(int fd)
 {
 	sockaddr_in sin;
 	unsigned sinlen = sizeof(sin);
 
 	//bzero(&sin, sizeof(sin));
-	int cs = accept(lfd, (struct sockaddr *) &sin, &sinlen);
+	int cs = accept(fd, (struct sockaddr *) &sin, &sinlen);
 	if (cs >= 0) {
 		warnx << "accept: connection on local socket: cs=" << cs << "\n";
 	} else if (errno != EAGAIN) {
-		warnx << "accept error: errno=" << strerror(errno) << "\n";
+		warnx << "accept: error: " << strerror(errno) << "\n";
+		// disable readability callback?
+		//fdcb(fd, selread, 0);
 		return;
 	}
 	
@@ -563,35 +574,72 @@ void
 read_gossip(int fd)
 {
 	strbuf buf;
+	strbuf totalbuf;
 	str key;
 	std::vector<std::vector<POLY> > sigList;
 	std::vector<double> freqList;
 	std::vector<double> weightList;
-	int n, seq;
+	int n, msglen, recvlen; 
+	int ret, seq;
 
-	n = buf.tosuio()->input(fd);
-	if (n < 0) {
-		warnx << "read_gossip: read failed\n";
-		return;
-	}
+	msglen = recvlen = 0;
+	warnx << "reading from socket:\n";
 
-	if (n == 0) {
-		warnx << "read_gossip: no more to read\n";
-		fdcb(fd, selread, 0);
-		// do you have to close?
-		//close(fd);
-		// what's the difference?
-		// exit(0);
-		return;
-	}
-	str gElem(buf);
+	do {
+		n = buf.tosuio()->input(fd);
+
+		if (n < 0) {
+			warnx << "read_gossip: read failed\n";
+			// disable readability callback?
+			fdcb(fd, selread, 0);
+			// do you have to close?
+			//close(fd);
+			return;
+		}
+
+		// EOF
+		if (n == 0) {
+			warnx << "read_gossip: no more to read\n";
+			// 0 or NULL?
+			fdcb(fd, selread, 0);
+			// do you have to close?
+			close(fd);
+			// what's the difference and should we continue?
+			//exit(0);
+			//return;
+		}
+
+		warnx << "read_gossip: n: " << n << "\n";
+		recvlen += n;
+		warnx << "read_gossip: recvlen: " << recvlen << "\n";
+
+		// run 1st time only
+		if (msglen == 0) {
+			str gbuf = buf;
+			msglen = getKeyValueLen(gbuf);
+			warnx << "read_gossip: msglen: " << msglen << "\n";
+		}
+
+		totalbuf << buf;
+		buf.tosuio()->clear();
+
+	// XXX: InsertType
+	} while ((recvlen + sizeof(int)) < msglen);
+
+	str gmsg(totalbuf);
 	sigList.clear();
 	freqList.clear();
 	weightList.clear();
-	getKeyValue(gElem.cstr(), key, sigList, freqList, weightList, seq);
+	//assert(gmsg);
+	ret = getKeyValue(gmsg.cstr(), key, sigList, freqList, weightList, seq, recvlen);
+	if (ret == -1) {
+		fdcb(fd, selread, 0);
+		close(fd);
+		return;
+	}
 
-	warnx << "reading from socket:\nrxseq: " << seq << "\nID: "
-	      << key << "\n";
+	warnx << "rxseq: " << seq << "\n";
+	warnx << "ID: " << key << "\n";
 	warnx << "sigList size: " << sigList.size() << "\n";
 	warnx << "freqList size: " << freqList.size() << "\n";
 	warnx << "weightList size: " << weightList.size() << "\n";
