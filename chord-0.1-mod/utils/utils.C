@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.2 2009/12/22 22:37:04 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.3 2009/12/28 23:42:20 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -918,7 +918,7 @@ int getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sigL
 	warnx << "getKeyValue: msglen: " << len << "\n";
 
 	// XXX: InsertType
-	if ((recvlen + sizeof(int)) != len) {
+	if ((recvlen + (int)sizeof(int)) != len) {
 		warnx << "getKeyValue: len doesn't match\n";
 		return -1;
 	}

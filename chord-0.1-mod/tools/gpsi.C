@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.17 2009/12/21 16:25:47 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.18 2009/12/28 23:42:59 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.17 2009/12/21 16:25:47 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.18 2009/12/28 23:42:59 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -624,7 +624,7 @@ read_gossip(int fd)
 		buf.tosuio()->clear();
 
 	// XXX: InsertType
-	} while ((recvlen + sizeof(int)) < msglen);
+	} while ((recvlen + (int)sizeof(int)) < msglen);
 
 	str gmsg(totalbuf);
 	sigList.clear();
