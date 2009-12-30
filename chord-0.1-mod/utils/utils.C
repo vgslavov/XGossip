@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.3 2009/12/28 23:42:20 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.4 2009/12/28 23:46:59 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -915,7 +915,7 @@ int getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sigL
 	// copy len
 	int len;
 	memcpy(&len, buf, sizeof(len));
-	warnx << "getKeyValue: msglen: " << len << "\n";
+	//warnx << "getKeyValue: msglen: " << len << "\n";
 
 	// XXX: InsertType
 	if ((recvlen + (int)sizeof(int)) != len) {
@@ -961,7 +961,9 @@ int getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sigL
 	for (int i = 0; i < sigListLen; i++) {
 		// copy sigLen
 		memcpy(&sigLen, sigListPtr, sizeof(sigLen));
+#ifdef _DEBUG_
 		warnx << "getKeyValue: sigLen: " << sigLen << "\n";
+#endif
 
 		// copy sig
 		sigListPtr += sizeof(sigLen);
@@ -1199,8 +1201,8 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, do
 		//warnx << "len (after sig n): " << len << "\n";
 	}
 	// XXX: includes 4 bytes for type
-	warnx << "makeKeyValue: len (allocated): " << len
-	      << "\nsigListLen: " << sigListLen << "\n";
+	warnx << "makeKeyValue: len (allocated): " << len << "\n";
+	warnx << "makeKeyValue: sigListLen: " << sigListLen << "\n";
 	// TODO: New vs new
 	*ptr = New char[len];
 	//*ptr = new char[len];
@@ -1254,7 +1256,9 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, do
 		sigLen = sig.size() * sizeof(POLY);
 		memcpy(buf, &sigLen, sizeof(sigLen));
 		buf += sizeof(sigLen);
+#ifdef _DEBUG_
 		warnx << "makeKeyValue: sigLen: " << sigLen << "\n";
+#endif
 
 		// copy sig
 		sigPtr = (POLY *) buf;

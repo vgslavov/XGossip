@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.18 2009/12/28 23:42:59 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.19 2009/12/28 23:48:25 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.18 2009/12/28 23:42:59 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.19 2009/12/28 23:48:25 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -609,16 +609,19 @@ read_gossip(int fd)
 			//return;
 		}
 
-		warnx << "read_gossip: n: " << n << "\n";
-		recvlen += n;
-		warnx << "read_gossip: recvlen: " << recvlen << "\n";
-
 		// run 1st time only
 		if (msglen == 0) {
 			str gbuf = buf;
 			msglen = getKeyValueLen(gbuf);
 			warnx << "read_gossip: msglen: " << msglen << "\n";
 		}
+
+		recvlen += n;
+
+#ifdef _DEBUG_
+		warnx << "read_gossip: n: " << n << "\n";
+		warnx << "read_gossip: recvlen: " << recvlen << "\n";
+#endif
 
 		totalbuf << buf;
 		buf.tosuio()->clear();
