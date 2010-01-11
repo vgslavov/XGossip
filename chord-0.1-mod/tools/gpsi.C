@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.19 2009/12/28 23:48:25 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.20 2009/12/30 22:26:00 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.19 2009/12/28 23:48:25 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.20 2009/12/30 22:26:00 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -194,8 +194,8 @@ main(int argc, char *argv[])
 	//pthread_t thread_ID;
 	//void *exit_status;
 
-	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, pflag;
-	int ch, intval, nids, valLen;
+	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, pflag, Hflag, dflag;
+	int ch, intval, nids, seed, valLen;
 	int logfd;
 	char *value;
 	struct stat statbuf;
@@ -206,13 +206,27 @@ main(int argc, char *argv[])
 	std::vector<std::string> sigfiles;
 	std::vector<std::vector<POLY> > sigList;
 
-	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = pflag = 0;
-	intval = nids = 0;
+	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = pflag = Hflag = dflag = 0;
+	intval = nids = seed = 0;
 	rxseq.clear();
 	txseq.clear();
-	srandom(time(NULL));
-	while ((ch = getopt(argc, argv, "rG:ghi:L:ln:pS:s:zv")) != -1)
+	// generate a unique seed (idea from ccrypt)
+	char acc[512], host[256];
+	struct timeval tv;
+	gethostname(host, 256);
+	gettimeofday(&tv, NULL);
+	snprintf(acc, sizeof(acc), "%s,%ld,%ld,%ld", host, (long)tv.tv_sec,
+		(long)tv.tv_usec, (long)getpid());
+	//warnx << "acc: " << acc << "\n";
+	//warnx << "uacc: " << (unsigned int)acc << "\n";
+	srandom((unsigned int)acc);
+	//srandom(time(NULL));
+	while ((ch = getopt(argc, argv, "d:G:gHhi:L:ln:prS:s:vz")) != -1)
 		switch(ch) {
+		case 'd':
+			dflag = 1;
+			seed = strtol(optarg, NULL, 10);
+			break;
 		case 'G':
 			Gflag = 1;
 			gsock = optarg;
@@ -220,8 +234,11 @@ main(int argc, char *argv[])
 		case 'g':
 			gflag = 1;
 			break;
+		case 'H':
+			Hflag = 1;
+			break;
 		case 'i':
-			intval = atoi(optarg);
+			intval = strtol(optarg, NULL, 10);
 			break;
 		case 'L':
 			Lflag = 1;
@@ -231,7 +248,7 @@ main(int argc, char *argv[])
 			lflag = 1;
 			break;
 		case 'n':
-			nids = atoi(optarg);
+			nids = strtol(optarg, NULL, 10);
 			break;
 		case 'p':
 			pflag = 1;
@@ -279,6 +296,40 @@ main(int argc, char *argv[])
 		}
 		return 0;
 	}
+
+	if (Hflag == 1 && dflag != 0 && sflag != 0) {
+		std::vector<chordID> minhash;
+		std::vector<POLY> sig;
+
+		getdir(sigdir, sigfiles);
+		sigList.clear();
+		warnx << "reading signatures from files...\n";
+		for (unsigned int i = 0; i < sigfiles.size(); i++) {
+			readsig(sigfiles[i], sigList);
+		}
+
+		// TODO
+		sig = sigList[0];
+		int kc = sig.size();
+		warnx << "kc: " << kc << "\n";
+		int lc = 100;
+		int mc = 500;
+		int nc = seed;
+
+		lsh *myLSH = new lsh(kc, lc, mc, nc);
+		minhash = myLSH->getHashCode(sig);
+
+		warnx << "minhash.size(): " << minhash.size() << "\n";
+		warnx << "minhash IDs:\n";
+		for (int i = 0; i < (int) minhash.size(); i++) {
+			warnx << minhash[i] << "\n";
+		}
+
+		delete myLSH;
+
+		return 0;
+	}
+
 	// TODO: make sure only one flag is set at a time
 	// read, gossip or listen
 	if (rflag == 0 && gflag == 0 && lflag == 0) usage();
@@ -320,6 +371,9 @@ main(int argc, char *argv[])
 	time(&rawtime);
 	warnx << "date: " << ctime(&rawtime);
 	warnx << "rcsid: " << rcsid << "\n";
+	warnx << "host: " << host << "\n";
+	warnx << "acc: " << acc << "\n";
+	warnx << "uacc: " << (unsigned long)acc << "\n";
 
 	if (gflag == 1) {
 		warnx << "listening for gossip...\n";
@@ -1182,18 +1236,20 @@ usage(void)
 {
 	warn << "Usage: " << __progname << " [-h] [options...]\n\n";
 	warn << "Options:\n"
-	     << "	-S		<dhash socket>\n"
+	     << "	-d		<random prime number for seed>\n"
 	     << "	-G		<gossip socket>\n"
-	     << "	-L		<log file>\n"
-	     << "	-s		<dir with sigs>\n"
 	     << "      	-i		<how often>\n"
+	     << "	-L		<log file>\n"
 	     << "      	-n		<how many>\n"
-	     << "      	-p		call printlist()\n\n"
+	     << "      	-p		print list of signatures\n"
+	     << "	-S		<dhash socket>\n"
+	     << "	-s		<dir with sigs>\n\n"
 	     << "Actions:\n"
-	     << "	-v		print version\n"
-	     << "	-r		read signatures (requires -s)\n"
-	     << "	-z		generate random chordID (requires -n)\n"
+	     << "	-g		gossip (requires -S, -G, -s, -i)\n"
+	     << "	-H		generate chordIDs using LSH (requires -s)\n"
 	     << "	-l		listen for gossip (requires -S, -G, -L)\n"
-	     << "	-g		gossip (requires -S, -G, -s, -i)\n";
+	     << "	-r		read signatures (requires -s)\n"
+	     << "	-v		print version\n"
+	     << "	-z		generate random chordID (requires -n)\n";
 	exit(0);
 }
