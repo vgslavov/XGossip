@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.20 2009/12/30 22:26:00 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.21 2010/01/11 17:32:05 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.20 2009/12/30 22:26:00 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.21 2010/01/11 17:32:05 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -195,7 +195,7 @@ main(int argc, char *argv[])
 	//void *exit_status;
 
 	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, pflag, Hflag, dflag;
-	int ch, intval, nids, seed, valLen;
+	int ch, intval, nids, lshseed, valLen;
 	int logfd;
 	char *value;
 	struct stat statbuf;
@@ -207,25 +207,26 @@ main(int argc, char *argv[])
 	std::vector<std::vector<POLY> > sigList;
 
 	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = pflag = Hflag = dflag = 0;
-	intval = nids = seed = 0;
+	intval = nids = lshseed = 0;
 	rxseq.clear();
 	txseq.clear();
-	// generate a unique seed (idea from ccrypt)
-	char acc[512], host[256];
+
+	// set random local seed
+	char host[256];
 	struct timeval tv;
+	unsigned int loseed;
 	gethostname(host, 256);
 	gettimeofday(&tv, NULL);
-	snprintf(acc, sizeof(acc), "%s,%ld,%ld,%ld", host, (long)tv.tv_sec,
-		(long)tv.tv_usec, (long)getpid());
-	//warnx << "acc: " << acc << "\n";
-	//warnx << "uacc: " << (unsigned int)acc << "\n";
-	srandom((unsigned int)acc);
+	loseed = ((long)tv.tv_sec + (long)tv.tv_usec) / (long)getpid();
+	//warnx << "loseed: " << loseed << "\n";
+	srandom(loseed);
 	//srandom(time(NULL));
+
 	while ((ch = getopt(argc, argv, "d:G:gHhi:L:ln:prS:s:vz")) != -1)
 		switch(ch) {
 		case 'd':
 			dflag = 1;
-			seed = strtol(optarg, NULL, 10);
+			lshseed = strtol(optarg, NULL, 10);
 			break;
 		case 'G':
 			Gflag = 1;
@@ -314,7 +315,7 @@ main(int argc, char *argv[])
 		warnx << "kc: " << kc << "\n";
 		int lc = 100;
 		int mc = 500;
-		int nc = seed;
+		int nc = lshseed;
 
 		lsh *myLSH = new lsh(kc, lc, mc, nc);
 		minhash = myLSH->getHashCode(sig);
@@ -372,8 +373,8 @@ main(int argc, char *argv[])
 	warnx << "date: " << ctime(&rawtime);
 	warnx << "rcsid: " << rcsid << "\n";
 	warnx << "host: " << host << "\n";
-	warnx << "acc: " << acc << "\n";
-	warnx << "uacc: " << (unsigned long)acc << "\n";
+	warnx << "pid: " << getpid() << "\n";
+	warnx << "loseed: " << loseed << "\n";
 
 	if (gflag == 1) {
 		warnx << "listening for gossip...\n";
