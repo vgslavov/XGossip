@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.21 2010/01/11 17:32:05 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.22 2010/01/12 23:06:36 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.21 2010/01/11 17:32:05 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.22 2010/01/12 23:06:36 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -211,17 +211,6 @@ main(int argc, char *argv[])
 	rxseq.clear();
 	txseq.clear();
 
-	// set random local seed
-	char host[256];
-	struct timeval tv;
-	unsigned int loseed;
-	gethostname(host, 256);
-	gettimeofday(&tv, NULL);
-	loseed = ((long)tv.tv_sec + (long)tv.tv_usec) / (long)getpid();
-	//warnx << "loseed: " << loseed << "\n";
-	srandom(loseed);
-	//srandom(time(NULL));
-
 	while ((ch = getopt(argc, argv, "d:G:gHhi:L:ln:prS:s:vz")) != -1)
 		switch(ch) {
 		case 'd':
@@ -298,42 +287,9 @@ main(int argc, char *argv[])
 		return 0;
 	}
 
-	if (Hflag == 1 && dflag != 0 && sflag != 0) {
-		std::vector<chordID> minhash;
-		std::vector<POLY> sig;
-
-		getdir(sigdir, sigfiles);
-		sigList.clear();
-		warnx << "reading signatures from files...\n";
-		for (unsigned int i = 0; i < sigfiles.size(); i++) {
-			readsig(sigfiles[i], sigList);
-		}
-
-		// TODO
-		sig = sigList[0];
-		int kc = sig.size();
-		warnx << "kc: " << kc << "\n";
-		int lc = 100;
-		int mc = 500;
-		int nc = lshseed;
-
-		lsh *myLSH = new lsh(kc, lc, mc, nc);
-		minhash = myLSH->getHashCode(sig);
-
-		warnx << "minhash.size(): " << minhash.size() << "\n";
-		warnx << "minhash IDs:\n";
-		for (int i = 0; i < (int) minhash.size(); i++) {
-			warnx << minhash[i] << "\n";
-		}
-
-		delete myLSH;
-
-		return 0;
-	}
-
 	// TODO: make sure only one flag is set at a time
-	// read, gossip or listen
-	if (rflag == 0 && gflag == 0 && lflag == 0) usage();
+	// read, gossip, LSH or listen
+	if (rflag == 0 && gflag == 0 && lflag == 0 && Hflag == 0) usage();
 
 	// sockets are required when listening or gossiping
 	if ((gflag == 1 || lflag == 1) && (Gflag == 0 || Sflag == 0)) usage();
@@ -342,6 +298,7 @@ main(int argc, char *argv[])
 	if (gflag == 1 && intval == 0 && sflag == 0) usage();
 
 	if (rflag == 1 && sflag == 0) usage();
+	if (Hflag == 1 && sflag == 0 && dflag == 0) usage();
 
 	if (Lflag == 1) {
 		logfd = open(logfile, O_RDWR | O_CREAT, 0666);
@@ -357,7 +314,7 @@ main(int argc, char *argv[])
 		dhash = New dhashclient(dsock);
 	}
 
-	if (rflag == 1 || gflag == 1) {
+	if (rflag == 1 || gflag == 1 || Hflag == 1) {
 		getdir(sigdir, sigfiles);
 		sigList.clear();
 		warnx << "reading signatures from files...\n";
@@ -368,6 +325,57 @@ main(int argc, char *argv[])
 		calcfreq(sigList);
 		if (plist == 1) printlist();
 	}
+
+	// LSH
+	if (Hflag == 1 && dflag != 0 && sflag != 0) {
+		std::vector<chordID> minhash;
+		std::vector<std::vector<chordID> > matrix;
+		std::vector<POLY> sig;
+		int col;
+
+		srand(time(NULL));
+
+		for (int i = 0; i < (int)sigList.size(); i++) {
+			sig = sigList[i];
+			int kc = sig.size();
+			warnx << "kc: " << kc << "\n";
+			int lc = 10;
+			int mc = 50;
+			int nc = lshseed;
+
+			lsh *myLSH = new lsh(kc, lc, mc, nc);
+			minhash = myLSH->getHashCode(sig);
+
+			warnx << "minhash.size(): " << minhash.size() << "\n";
+			warnx << "minhash IDs:\n";
+			for (int i = 0; i < (int)minhash.size(); i++) {
+				warnx << minhash[i] << "\n";
+			}
+
+			matrix.push_back(minhash);
+
+			delete myLSH;
+		}
+		col = rand() % (int)minhash.size();
+
+		warnx << "chordIDs in random column " << col << ":\n";
+		for (int i = 0; i < (int)matrix.size(); i++) {
+			warnx << matrix[i][col] << "\n";;
+		}
+
+		return 0;
+	}
+
+	// set random local seed
+	char host[256];
+	struct timeval tv;
+	unsigned int loseed;
+	gethostname(host, 256);
+	gettimeofday(&tv, NULL);
+	loseed = ((long)tv.tv_sec + (long)tv.tv_usec) / (long)getpid();
+	//warnx << "loseed: " << loseed << "\n";
+	srandom(loseed);
+	//srandom(time(NULL));
 
 	time(&rawtime);
 	warnx << "date: " << ctime(&rawtime);
@@ -407,8 +415,8 @@ main(int argc, char *argv[])
 				warnx << "insert FAILed\n";
 			} else {
 				warnx << "insert SUCCeeded\n";
-				//splitfreq();
-				//if (plist == 1) printlist();
+				splitfreq();
+				if (plist == 1) printlist();
 			}
 			txseq.push_back(txseq.back() + 1);
 			//pthread_join(thread_ID, &exit_status);
@@ -784,6 +792,7 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 
 	if (fread(&size, sizeof(int), 1, sigfp) != 1) {
 		assert(0);
+		warnx << "invalid signature\n";
 	}
 	warnx << "Signature size: " << size * sizeof(POLY) << " bytes\n";
 
@@ -1247,7 +1256,7 @@ usage(void)
 	     << "	-s		<dir with sigs>\n\n"
 	     << "Actions:\n"
 	     << "	-g		gossip (requires -S, -G, -s, -i)\n"
-	     << "	-H		generate chordIDs using LSH (requires -s)\n"
+	     << "	-H		generate chordIDs using LSH (requires -s, -d)\n"
 	     << "	-l		listen for gossip (requires -S, -G, -L)\n"
 	     << "	-r		read signatures (requires -s)\n"
 	     << "	-v		print version\n"

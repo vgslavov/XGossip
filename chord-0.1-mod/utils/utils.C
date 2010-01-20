@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.4 2009/12/28 23:46:59 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.5 2009/12/30 22:26:28 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -6,6 +6,17 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <map>
+
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include <chord.h>
+#include <dhash_common.h>
+#include <dhashclient.h>
+#include <dhblock.h>
+
 #include "utils.h"
 
 bool isStrValue(std::string& input)
@@ -1899,3 +1910,181 @@ int enlargement(std::vector<POLY>& entrySig, std::vector<POLY>& sig)
 
     return ((myMBR[1]-myMBR[0]) - (entrySig[1]-entrySig[0]));
 }
+
+// dp244: lsh
+
+// determine min element value of a vector
+POLY
+lsh::isMinimum(std::vector<POLY>& v)
+{
+	POLY v1 = v[0];
+
+	for (unsigned int i = 0; i < v.size(); i++) {
+		if (v[i] < v1) {
+			v1 = v[i];
+			//warnx<<" my V "<<v[i]<<"\n";
+		}
+	}
+	//warnx<<" min "<<v1<<"\n";
+	return v1;
+}
+
+// read config file and extract the prime number
+int
+lsh::getPrimeNumberFromConfig(char* configFileName)
+{
+	int prime = -999;
+	int number = -999;
+	std::ifstream conTxt;
+
+	conTxt.open(configFileName);
+	if (!conTxt) {
+		warnx << "Config file not Found. Exiting .... " << "\n";
+		exit(0);
+	}
+
+	while (conTxt >> prime) number = prime;
+
+	conTxt.close();
+	return number;
+}
+
+// function to compute hashCode
+std::vector<chordID>
+lsh::getHashCode(std::vector<POLY>& S)
+{
+	//std::vector<bool> isWhat;
+	//std::vector<POLY> S1;
+	std::vector<POLY> h;
+	std::vector<POLY> min_hash;
+	std::vector<std::string> pre_hash;
+	std::vector<chordID> hash;
+
+	// random number generation using seeds from constructor argument "n"
+	srand(n); 
+	int random_integer_a; 
+	int random_integer_b; 
+	// initialize 
+	int lowest_a = 1, highest_a = -9;
+	int lowest_b = 0, highest_b = -9;
+	// get prime number
+	//highest_a = getPrimeNumberFromConfig("lsh.config");
+	//highest_b = getPrimeNumberFromConfig("lsh.config");
+	//highest_a = 1122941;
+	//highest_b = 1122941;
+	highest_a = highest_b = n;
+
+	if (highest_a <= 0) {
+		warnx << "Inappropriate prime number. Exiting .... " << "\n";
+		exit(0);
+	}
+
+	if (highest_b <= 0) {
+		warnx << "Inappropriate prime number. Exiting .... " << "\n";
+		exit(0);
+	}
+
+	int range_a = (highest_a - lowest_a) + 1;
+	int range_b = (highest_b - lowest_b) + 1;
+
+	// group from ctor arg m
+	for (int ik = 0; ik < m; ik++) {
+		// loop over how many rand number we want (from ctor argument l)
+		for (int j = 0; j < l; j++) {
+			// loop over S which is read from external file sig.txt
+			for (int i = 0; i < k; i++) {
+				random_integer_a  = lowest_a +
+					int((double)range_a*rand()/(RAND_MAX + 1.0));
+				random_integer_b  = lowest_b +
+					int((double)range_b*rand()/(RAND_MAX + 1.0));  
+				//warnx << "random_integer_a: " << random_integer_a << "\n";
+				//warnx << "random_integer_b: " << random_integer_b << "\n";
+				POLY htmp = (random_integer_a * S[i] + random_integer_b) % highest_a;
+				//warnx << "h[k]: " << htmp << "\n";
+				h.push_back(htmp);
+			}
+			//warnx << "h.size(): " << h.size() << "\n";
+			POLY min = isMinimum(h);
+			//warnx << "min of h: " << min << "\n";
+			min_hash.push_back(min);	
+			h.clear();
+		}
+		std::string temp;
+		std::stringstream ss;
+		for (unsigned int ijk = 0; ijk < min_hash.size(); ijk++) {
+		      ss.str("");
+		      ss << min_hash[ijk];
+		      temp += ss.str();
+		}
+		//warnx << "min_hash.size(): " << min_hash.size() << "\n";
+		
+		ss.str("");
+		pre_hash.push_back(temp);
+		temp.clear();
+		min_hash.clear();
+	}
+	//warnx << "pre_hash.size(): " << pre_hash.size() << "\n";
+
+	// now compute hash
+	// this is temporary
+	//std::ofstream txt;
+	//txt.open("prehash1.txt");
+	chordID ID;
+	const char *p;
+	int len;
+	//warnx << "hash IDs:\n";
+	for (unsigned int ih = 0; ih < pre_hash.size(); ih++) {
+		p = pre_hash[ih].c_str();
+		len = strlen(p);
+		ID = compute_hash(p, len);
+		//warnx << ID << "\n";
+		hash.push_back(ID);
+		//txt << str1 << "\n";
+		//char storage[1024];
+		//char *buf = &storage[0];
+		//mpz_get_raw(buf,sha1::hashsize,&ID);
+		//warnx<<buf<<" "<<"\n";
+	}
+	//warnx << "hash.size(): " << hash.size() << "\n";
+	//txt.close();
+	//hash is a vector of type chordID with m number of IDs
+	return hash;
+}
+
+/*
+// main function
+// we can make it a separate file but for the time being we
+// keep it in lsh.C
+//
+int main (void){
+
+     std::vector<chordID> minhash;
+     std::vector<POLY> abc;
+      ifstream txt;
+      int mn;
+//input file
+      txt.open("sig1.txt");
+      if (!txt ) {// if input file is absent
+         //warnx<<"No input file! "<<"\n";
+         warnx<<"exiting.... "<<"\n";
+         exit(0);
+      }
+       while(txt>>mn){
+            abc.push_back(mn);
+       }
+          
+         
+
+     lsh *myLSH = new lsh(abc.size(),100,500,345675);
+
+     minhash = myLSH->getHashCode(abc);
+     //warnx<<minhash.size()<<"\n";
+
+	delete myLSH;
+
+ 
+
+
+
+}
+*/
