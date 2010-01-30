@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.5 2009/12/30 22:26:28 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.6 2010/01/20 00:40:05 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -911,7 +911,7 @@ void getKeyValue(const char* buf, str& key, std::vector<POLY>& value)
 	return;
 }
 
-// vsfgd: gpsi
+// vsfgd: gpsi (current)
 int getKeyValueLen(const char* buf)
 {
 	int len;
@@ -919,7 +919,7 @@ int getKeyValueLen(const char* buf)
 	return len;
 }
 
-// vsfgd: gpsi
+// vsfgd: gpsi (current)
 // format: <total len><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
 int getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sigList, std::vector<double>& freqList, std::vector<double>& weightList, int& seq, int recvlen)
 {
@@ -1182,7 +1182,110 @@ void makeKeyValue(char **ptr, int& len, str& key, std::vector<POLY>& sig,
 	return;
 }
 
-// vsfgd: gpsi
+// vsfgd: gpsi (current)
+// format: <type><total len><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
+void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, std::vector<double>, CompareSig>& sigList, int& seq, InsertType type)
+{
+	int keyLen = key.len();
+	//warnx << "LENGTH: ++++ " << keyLen << "\n";
+	
+	// type + total len + keysize + key + seq + siglistlen
+	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(int) + sizeof(int);
+
+	int sigListLen = sigList.size();
+	int sigLen;
+	std::vector<POLY> sig;
+	sig.clear();
+
+	// + sigListLen *
+	for (std::map<std::vector<POLY>, std::vector<double> >::iterator itr = sigList.begin();
+	     itr != sigList.end(); itr++) {
+
+		sig = itr->first;
+		sigLen = sig.size() * sizeof(POLY);
+		//warnx << "sigLen: " << sigLen << "\n";
+		// (sigsize + sig + freq + weight)
+		// FUCKING DOUBLE!
+		len += (sizeof(int) + sigLen + sizeof(double) + sizeof(double));
+		sig.clear();
+		//warnx << "len (after sig n): " << len << "\n";
+	}
+	// XXX: includes 4 bytes for type
+	warnx << "makeKeyValue: len (allocated): " << len << "\n";
+	warnx << "makeKeyValue: sigListLen: " << sigListLen << "\n";
+	// TODO: New vs new?
+	*ptr = New char[len];
+	//*ptr = new char[len];
+	assert(ptr);
+	char *buf = *ptr;
+
+	// copy type
+	memcpy(buf, &type, sizeof(type));
+	buf += sizeof(type);
+
+	// copy len
+	// XXX: is sizeof(type) always equal to sizeof(int)?
+	//len = len - sizeof(int);
+	//warnx << "makeKeyValue: len (msg): " << len << "\n";
+	memcpy(buf, &len, sizeof(len));
+	buf += sizeof(len);
+
+	// copy key
+	memcpy(buf, &keyLen, sizeof(keyLen));
+	buf += sizeof(keyLen);
+	memcpy(buf, key.cstr(), keyLen);
+	buf += keyLen;
+
+	// copy seq
+	memcpy(buf, &seq, sizeof(seq));
+	buf += sizeof(seq);
+
+	// copy sigListLen
+	memcpy(buf, &sigListLen, sizeof(sigListLen));
+	buf += sizeof(sigListLen);
+
+	double freq;
+	double weight;
+	POLY *sigPtr = (POLY *) buf;
+	for (std::map<std::vector<POLY>, std::vector<double> >::iterator itr = sigList.begin(); itr != sigList.end(); itr++) {
+
+		sig = itr->first;
+		freq = itr->second[0] / 2;
+		weight = itr->second[1] / 2;
+
+		// copy sigLen
+		sigLen = sig.size() * sizeof(POLY);
+		memcpy(buf, &sigLen, sizeof(sigLen));
+		buf += sizeof(sigLen);
+#ifdef _DEBUG_
+		warnx << "makeKeyValue: sigLen: " << sigLen << "\n";
+#endif
+
+		// copy sig
+		sigPtr = (POLY *) buf;
+		for (int i = 0; i < (int) sig.size(); i++) {
+			sigPtr[i] = sig[i];
+			// is this better?
+			//buf += sizeof(POLY);
+		}
+		buf += sigLen;
+
+		// copy freq
+		memcpy(buf, &freq, sizeof(freq));
+		buf += sizeof(freq);
+
+		// copy weight
+		memcpy(buf, &weight, sizeof(weight));
+		buf += sizeof(weight);
+
+		sig.clear();
+	}
+	//buf += sigListLen;
+
+	return;
+}
+
+// vsfgd: gpsi (old)
 // format: <type><total len><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
 void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, double, CompareSig>& sigList, std::map<std::vector<POLY>, double, CompareSig>& weightList, int& seq, InsertType type)
 {
@@ -1913,6 +2016,12 @@ int enlargement(std::vector<POLY>& entrySig, std::vector<POLY>& sig)
 
 // dp244: lsh
 
+POLY
+lsh::getIRRPoly()
+{
+	return selected_poly;
+}
+
 // determine min element value of a vector
 POLY
 lsh::isMinimum(std::vector<POLY>& v)
@@ -1929,6 +2038,7 @@ lsh::isMinimum(std::vector<POLY>& v)
 	return v1;
 }
 
+// obsolete:
 // read config file and extract the prime number
 int
 lsh::getPrimeNumberFromConfig(char* configFileName)
@@ -1949,8 +2059,76 @@ lsh::getPrimeNumberFromConfig(char* configFileName)
 	return number;
 }
 
-// function to compute hashCode
+POLY
+lsh::findMod(void *x, int len, IRRPOLY z)
+{
+        unsigned char *ptr = (unsigned char *) x;
+
+        unsigned char bitMask = 1;
+        int zDegree = getDegree(z);
+#ifdef _DEBUG_
+        cout << "POLY degree: " << zDegree << endl;
+#endif
+        POLY testMask = (1 << zDegree);
+        POLY modMask = (z ^ (1 << zDegree));
+
+        POLY res = 0;
+        POLY resMask = modMask;
+        int k = 0;
+#ifdef _DEBUG_
+        cout << "LENGTH: " << len << " Z: " << z << endl;
+#endif
+
+        POLY smallBitsMask = 1;
+        for (int i = 0; i < len; i++) {
+                for (int j = 0; j < 8; j++) {
+                        if (k >= zDegree) {
+                                if ((POLY) (*ptr & bitMask) > (POLY) 0) {
+                                        res = res ^ resMask;
+                                }
+                                resMask = resMask << 1;
+                                if ((POLY) (resMask & testMask) > (POLY) 0) {
+                                        resMask = (resMask ^ testMask) ^ modMask;
+                                }
+                        }
+                        else {
+                                if ((POLY) (*ptr & bitMask) > (POLY) 0) {
+                                        res = res | smallBitsMask;
+                                }
+                                smallBitsMask = smallBitsMask << 1;
+                        }
+                        k++;
+                        bitMask = bitMask << 1;
+                }
+
+                ptr += 1;
+                bitMask = 1;
+        }
+#ifdef _DEBUG_
+        cout << "TEXT mod: " << (char *) x << "=" << res << endl;
+#endif
+        return res;
+}
+
+// Returns the degree of the polynomial
+int
+lsh::getDegree(POLY z)
+{
+        POLY mask = (1 << (sizeof(POLY) * 8 - 1));
+
+        int i = sizeof(POLY) * 8 - 1;
+        while (mask > (POLY) 0) {
+                if ((mask & z) != (POLY) 0) {
+                        return i;
+                }
+                i--;
+                mask = mask >> 1;
+        }
+        return i;
+}
+
 std::vector<chordID>
+// function to compute hashCode
 lsh::getHashCode(std::vector<POLY>& S)
 {
 	//std::vector<bool> isWhat;
@@ -2051,40 +2229,103 @@ lsh::getHashCode(std::vector<POLY>& S)
 	return hash;
 }
 
-/*
-// main function
-// we can make it a separate file but for the time being we
-// keep it in lsh.C
-//
-int main (void){
+std::vector<POLY>
+lsh::getHashCodeFindMod(std::vector<POLY>& S, POLY polNumber)
+{
+	//std::vector<bool> isWhat;
+	//std::vector<POLY> S1;
+	std::vector<POLY> h;
+	std::vector<POLY> min_hash;
+	std::vector<std::string> pre_hash;
+	std::vector<POLY> hash;
 
-     std::vector<chordID> minhash;
-     std::vector<POLY> abc;
-      ifstream txt;
-      int mn;
-//input file
-      txt.open("sig1.txt");
-      if (!txt ) {// if input file is absent
-         //warnx<<"No input file! "<<"\n";
-         warnx<<"exiting.... "<<"\n";
-         exit(0);
-      }
-       while(txt>>mn){
-            abc.push_back(mn);
-       }
-          
-         
+	// random number generation using seeds from constructor argument "n"
+	srand(n); 
+	int random_integer_a; 
+	int random_integer_b; 
+	// initialize 
+	int lowest_a = 1, highest_a = -9;
+	int lowest_b = 0, highest_b = -9;
+	// get prime number
+	//highest_a = getPrimeNumberFromConfig("lsh.config");
+	//highest_b = getPrimeNumberFromConfig("lsh.config");
+	//highest_a = 1122941;
+	//highest_b = 1122941;
+	highest_a = highest_b = n;
 
-     lsh *myLSH = new lsh(abc.size(),100,500,345675);
+	if (highest_a <= 0) {
+		warnx << "Inappropriate prime number. Exiting .... " << "\n";
+		exit(0);
+	}
 
-     minhash = myLSH->getHashCode(abc);
-     //warnx<<minhash.size()<<"\n";
+	if (highest_b <= 0) {
+		warnx << "Inappropriate prime number. Exiting .... " << "\n";
+		exit(0);
+	}
 
-	delete myLSH;
+	int range_a = (highest_a - lowest_a) + 1;
+	int range_b = (highest_b - lowest_b) + 1;
 
- 
+	// group from ctor arg m
+	for (int ik = 0; ik < m; ik++) {
+		// loop over how many rand number we want (from ctor argument l)
+		for (int j = 0; j < l; j++) {
+			// loop over S which is read from external file sig.txt
+			for (int i = 0; i < k; i++) {
+				random_integer_a  = lowest_a +
+					int((double)range_a*rand()/(RAND_MAX + 1.0));
+				random_integer_b  = lowest_b +
+					int((double)range_b*rand()/(RAND_MAX + 1.0));  
+				//warnx << "random_integer_a: " << random_integer_a << "\n";
+				//warnx << "random_integer_b: " << random_integer_b << "\n";
+				POLY htmp = (random_integer_a * S[i] + random_integer_b) % highest_a;
+				//warnx << "h[k]: " << htmp << "\n";
+				h.push_back(htmp);
+			}
+			//warnx << "h.size(): " << h.size() << "\n";
+			POLY min = isMinimum(h);
+			//warnx << "min of h: " << min << "\n";
+			min_hash.push_back(min);	
+			h.clear();
+		}
+		std::string temp;
+		std::stringstream ss;
+		for (unsigned int ijk = 0; ijk < min_hash.size(); ijk++) {
+		      ss.str("");
+		      ss << min_hash[ijk];
+		      temp += ss.str();
+		}
+		//warnx << "min_hash.size(): " << min_hash.size() << "\n";
+		
+		ss.str("");
+		pre_hash.push_back(temp);
+		temp.clear();
+		min_hash.clear();
+	}
+	//warnx << "pre_hash.size(): " << pre_hash.size() << "\n";
 
-
-
+	// now compute hash
+	// this is temporary
+	//std::ofstream txt;
+	//txt.open("prehash1.txt");
+	POLY ID;
+	const char *p;
+	int len;
+	//warnx << "hash IDs:\n";
+	for (unsigned int ih = 0; ih < pre_hash.size(); ih++) {
+		p = pre_hash[ih].c_str();
+		len = strlen(p);
+		ID = findMod((char *)p, len, polNumber);
+		//warnx << ID << "\n";
+		hash.push_back(ID);
+		//txt << str1 << "\n";
+		//char storage[1024];
+		//char *buf = &storage[0];
+		//mpz_get_raw(buf,sha1::hashsize,&ID);
+		//warnx<<buf<<" "<<"\n";
+	}
+	//warnx << "hash.size(): " << hash.size() << "\n";
+	//txt.close();
+	//hash is a vector of type chordID with m number of IDs
+	return hash;
 }
-*/
