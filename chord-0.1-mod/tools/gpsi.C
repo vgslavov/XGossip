@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.23 2010/01/20 00:41:03 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.24 2010/01/30 20:25:39 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.23 2010/01/20 00:41:03 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.24 2010/01/30 20:25:39 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -40,12 +40,6 @@ static const char* gsock;
 static char *logfile;
 int plist = 0;
  
-//int getKeyValueLen(const char*);
-//void getKeyValue(const char*, str&, std::vector<std::vector<POLY> >&, std::vector<double>&, std::vector<double>&, int&);
-//void makeKeyValue(char **, int&, str&, std::map<std::vector<POLY>, double, CompareSig>&, std::map<std::vector<POLY>, double, CompareSig>&, int&, InsertType);
-//int getKeyValue(const char*, str&, std::vector<POLY>&, double&, int&, int);
-//void makeKeyValue(char **, int&, str&, std::vector<POLY>&, double&, int&, InsertType);
-
 DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
 //void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 
@@ -76,10 +70,13 @@ bool retrieveError;
 
 //pthread_mutex_t lock;
 
-std::map<std::vector<POLY>, double, CompareSig> uniqueSigList;
-std::map<std::vector<POLY>, double, CompareSig> uniqueWeightList;
+std::map<std::vector<POLY>, std::vector<double>, CompareSig> uniqueSigList;
+//std::map<std::vector<POLY>, double, CompareSig> uniqueSigList;
+//std::map<std::vector<POLY>, double, CompareSig> uniqueWeightList;
 std::vector<int> rxseq;
 std::vector<int> txseq;
+
+std::vector<std::map<std::vector<POLY>, std::vector<double>, CompareSig> > allt;
 
 // hash table statistics
 int numReads;
@@ -287,7 +284,6 @@ main(int argc, char *argv[])
 		for (int i = 0; i < nids; i++) {
 			strbuf t;
 			ID = make_randomID();
-			//ID = randomID();
 			t << ID;
 			str tmpkey(t);
 			warnx << tmpkey << "\n";
@@ -447,7 +443,6 @@ main(int argc, char *argv[])
 		txseq.push_back(0);
 		while (1) {
 			ID = make_randomID();
-			//ID = randomID();
 			strbuf z;
 			z << ID;
 			str key(z);
@@ -456,7 +451,7 @@ main(int argc, char *argv[])
 
 			warnx << "inserting:\ntxseq: " << txseq.back() << "\n";
 			//pthread_mutex_lock(&lock);
-			makeKeyValue(&value, valLen, key, uniqueSigList, uniqueWeightList, txseq.back(), GOSSIP);
+			makeKeyValue(&value, valLen, key, uniqueSigList, txseq.back(), GOSSIP);
 			//pthread_mutex_unlock(&lock);
 			status = insertDHT(ID, value, valLen, MAXRETRIES);
 			cleanup(value);
@@ -613,7 +608,7 @@ retrieveDHT(chordID keyID, int MAXWAIT, str& sigdata, chordID guess)
 	//warnx << "# of node entries: " << nodeEntries.size() << "\n";
 }
 
-// TODO: verify randomness
+// deprecated (use make_randomID() instead)
 chordID
 randomID(void)
 {
@@ -820,13 +815,6 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 	// change to if?
 	assert(sigfp);
 
-	// open tags
-	//tagsfile = sigfile + std::string(TAGFILE);
-	//warnx << "opening tagsfile: " << tagsfile.c_str() << "...\n";
-	//tagsfp = fopen(tagsfile.c_str(), "r");
-	// change to if?
-	//assert(tagsfp);
-
 	// TODO: add maxcount arg?
 
 	// DONT use readData to retrieve signatures from input files...
@@ -851,8 +839,8 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 	sig.clear();
 	// dummy sig
 	// the polynomial "1" has a degree 0
-	sig.push_back(1);
-	sigList.push_back(sig);
+	//sig.push_back(1);
+	//sigList.push_back(sig);
 	sig.clear();
 	POLY e;
 	warnx << "Document signature: ";
@@ -869,80 +857,6 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 	warnx << "Size of sig list: " << sigList.size() << "\n";
 	finishTime = getgtod();
 	fclose(sigfp);
-
-	/*
-	char hostname[64];
-	gethostname(hostname, sizeof(hostname));
-#ifdef _LIVE_
-	strcpy(hostname, "");
-#endif
-	// TODO: add docidType arg?
-	char docId[128];
-	// Read the document id
-	int len;
-	// len of docid string includes \0
-	if (fread(&len, sizeof(len), 1, sigfp) != 1) {
-		assert(0);
-	}
-
-	if (fread(&docId, len, 1, sigfp) != 1) {
-		assert(0);
-	}
-	// XXX: add the hostname
-	strcat(docId, ".");
-	strcat(docId, hostname);
-	strcat(docId, "#");
-
-	//warnx << "**********************************************************\n";
-	//warnx << "*            Inserting document " << docId << " ********\n";
-	//warnx << "**********************************************************\n";
-
-	// Read the distinct tags
-	std::vector<std::string> distinctTags;
-	distinctTags.clear();
-
-	readTags(tagsfp, distinctTags);
-
-	// Each H-index based on tagname!
-	for (int ts = 0; ts < (int) distinctTags.size(); ts++) {
-		// Do not insert for attributes
-		if (distinctTags[ts].find(ATTRSUFFIX) != std::string::npos) {
-			continue;
-		}
-		INDEXNAME = distinctTags[ts];
-
-		// is REPLICAID needed?
-		std::string root = INDEXNAME + std::string(ROOTNODEID);
-		//std::string root = INDEXNAME + std::string(ROOTNODEID) + std::string(REPLICAID);
-		//warnx << "********* H-index chosen for inserting signature:  " << distinctTags[ts].c_str() << " ********** \n";
-		rootNodeID = compute_hash(root.c_str(), root.length());
-		//warnx << "Root node id for index " << INDEXNAME.c_str() << " : " << rootNodeID << "\n";
-
-		// ROOT node id			
-		strbuf s;
-		s << rootNodeID;
-		str rootID(s);
-
-		//warnx << "ROOT ID: " << rootID << "\n";
-#ifdef _DEBUG_
-		for (int l = 0; l < (int) sig.size(); l++) {
-			warnx << sig[l] << " ";
-		}
-		//warnx << "\n";
-#endif
-	}
-	fclose(sigfp);
-	fclose(tagsfp);
-
-	//warnx << "Data read in bytes: " << dataFetched << "\n";
-	//warnx << "Data written in bytes: " << dataStored << "\n";
-	//warnx << "Number of documents inserted: " << 1 << "\n";
-	// TODO: count?
-	//warnx << "Number of documents inserted: " << count - 1 << "\n";
-	//warnx << "Number of full nodes: " << cacheOfFullNodes.size() << "\n";
-	finishTime = getgtod();
-	//std::cerr << "Time taken to process XML tags: " << finishTime - startTime << " secs " << std::endl;
-	*/
 }
 
 bool
@@ -965,28 +879,26 @@ calcfreq(std::vector<std::vector<POLY> > sigList)
 	//int deg;
 
 	// dummy's freq is 0 and weight is 1
-	uniqueSigList[sigList[0]] = 0;
-	uniqueWeightList[sigList[0]] = 1;
+	//uniqueSigList[sigList[0]].push_back(0);
+	//uniqueSigList[sigList[0]].push_back(1);
 
 	//deg = getDegree(sig);
 	//warnx << "deg of dummy sig: " << deg << "\n";
 
-	// skip dummy sig
-	for (int i = 1; i < (int) sigList.size(); i++) {
-		std::map<std::vector<POLY>, double >::iterator itr = uniqueSigList.find(sigList[i]);
+	for (int i = 0; i < (int) sigList.size(); i++) {
+		std::map<std::vector<POLY>, std::vector<double> >::iterator itr = uniqueSigList.find(sigList[i]);
 		if (itr != uniqueSigList.end()) {
 			// do not increment weight when sig has duplicates!
 			// increment only freq
-			itr->second += 1;
+			itr->second[0] += 1;
 		} else {
 			//deg = getDegree(sigList[i]);
 			//warnx << "deg of sig: " << deg << "\n";
-			uniqueSigList[sigList[i]] = 1;
-			uniqueWeightList[sigList[i]] = 1;
+			uniqueSigList[sigList[i]].push_back(1);
+			uniqueSigList[sigList[i]].push_back(1);
 		}
 	}
 	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
-	warnx << "Size of unique weight list: " << uniqueWeightList.size() << "\n";
 }
 
 void
@@ -994,23 +906,18 @@ calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList,
 {
 	//int deg;
 
-	// skip dummy sig
 	//pthread_mutex_lock(&lock);
-	for (int i = 1; i < (int) sigList.size(); i++) {
-		std::map<std::vector<POLY>, double >::iterator itr = uniqueSigList.find(sigList[i]);
-		std::map<std::vector<POLY>, double >::iterator itrW = uniqueWeightList.find(sigList[i]);
+	for (int i = 0; i < (int) sigList.size(); i++) {
+		std::map<std::vector<POLY>, std::vector<double> >::iterator itr = uniqueSigList.find(sigList[i]);
 		if (itr != uniqueSigList.end()) {
-			itr->second += freqList[i];
-			itrW->second += weightList[i];
-			//warnx << "sig: " << buf << "\nfreq: " << itr->second << "\n";
+			itr->second[0] += freqList[i];
+			itr->second[1] += weightList[i];
 		} else {
-			uniqueSigList[sigList[i]] = freqList[i];
-			uniqueWeightList[sigList[i]] = weightList[i];
-			//warnx << "sig: " << buf << "\nfreq: " << uniqueSigList[sigList[i]] << "\n";
+			uniqueSigList[sigList[i]].push_back(freqList[i]);
+			uniqueSigList[sigList[i]].push_back(weightList[i]);
 		}
 	}
 	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
-	warnx << "Size of unique weight list: " << uniqueWeightList.size() << "\n";
 	//pthread_mutex_unlock(&lock);
 }
 
@@ -1020,21 +927,14 @@ splitfreq(void)
 {
 	double freq, weight;
 
-	std::map<std::vector<POLY>, double>::iterator itrW = uniqueWeightList.begin();
-	for (std::map<std::vector<POLY>, double>::iterator itr = uniqueSigList.begin();
-	     itr != uniqueSigList.end(); itr++) {
+	for (std::map<std::vector<POLY>, std::vector<double> >::iterator itr = uniqueSigList.begin(); itr != uniqueSigList.end(); itr++) {
 
-		// first check if end of weightList?
-		freq = itr->second;
-		itr->second += freq / 2;
-		weight = itrW->second;
-		itrW->second += weight / 2;
-		++itrW;
+		freq = itr->second[0];
+		itr->second[0] = freq / 2;
+		weight = itr->second[1];
+		itr->second[1] = weight / 2;
 	}
 	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
-	warnx << "Size of unique weight list: " << uniqueWeightList.size() << "\n";
-	//warnx << "Size of unique sig list: " << uniqueSigList.size() - 1 << "\n";
-	//warnx << "Size of unique weight list: " << uniqueWeightList.size() - 1 << "\n";
 }
 
 void
@@ -1057,38 +957,23 @@ printlist(void)
 	int n = 0;
 
 	warnx << "uniqueSigList:\n";
-	std::map<std::vector<POLY>, double>::iterator itrW = uniqueWeightList.begin();
-	for (std::map<std::vector<POLY>, double>::iterator itr = uniqueSigList.begin();
-	     itr != uniqueSigList.end(); itr++) {
+	for (std::map<std::vector<POLY>, std::vector<double> >::iterator itr = uniqueSigList.begin(); itr != uniqueSigList.end(); itr++) {
 
-		// first check if end of weightList?
 		sig = itr->first;
-		freq = itr->second;
-		weight = itrW->second;
+		freq = itr->second[0];
+		weight = itr->second[1];
 		avg = freq / weight;
 		n += (int)avg;
-		++itrW;
 
 		sig2str(sig, sigbuf);
 		warnx << "sig: " << sigbuf << "\n";
 
 		printdouble("freq: ", freq);
-		//snprintf(buf, sizeof(buf), "%f", freq);
-		//warnx << "freq: " << buf << "\n";
-
 		printdouble("weight: ", weight);
-		//snprintf(buf, sizeof(buf), "%f", weight);
-		//warnx << "weight: " << buf << "\n";
-
 		printdouble("avg: ", avg);
-		//snprintf(buf, sizeof(buf), "%f", avg);
-		//warnx << "avg: " << buf << "\n";
 	}
 	warnx << "Size of sig list: " << n << "\n";
 	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
-	warnx << "Size of unique weight list: " << uniqueWeightList.size() << "\n";
-	//warnx << "Size of unique sig list: " << uniqueSigList.size() - 1 << "\n";
-	//warnx << "Size of unique weight list: " << uniqueWeightList.size() - 1 << "\n";
 }
 
 // copied from psi.C
