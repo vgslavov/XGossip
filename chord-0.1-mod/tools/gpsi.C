@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.22 2010/01/12 23:06:36 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.23 2010/01/20 00:41:03 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.22 2010/01/12 23:06:36 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.23 2010/01/20 00:41:03 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -194,10 +194,11 @@ main(int argc, char *argv[])
 	//pthread_t thread_ID;
 	//void *exit_status;
 
-	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, pflag, Hflag, dflag;
+	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, pflag, Hflag, dflag, jflag, mflag;
 	int ch, intval, nids, lshseed, valLen;
 	int logfd;
 	char *value;
+	char *irrpolyfile;
 	struct stat statbuf;
 	time_t rawtime;
 	chordID ID;
@@ -206,12 +207,13 @@ main(int argc, char *argv[])
 	std::vector<std::string> sigfiles;
 	std::vector<std::vector<POLY> > sigList;
 
-	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = pflag = Hflag = dflag = 0;
+	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = pflag = Hflag = dflag = jflag = mflag = 0;
 	intval = nids = lshseed = 0;
+	irrpolyfile = NULL;
 	rxseq.clear();
 	txseq.clear();
 
-	while ((ch = getopt(argc, argv, "d:G:gHhi:L:ln:prS:s:vz")) != -1)
+	while ((ch = getopt(argc, argv, "d:G:gHhi:j:L:lmn:prS:s:vz")) != -1)
 		switch(ch) {
 		case 'd':
 			dflag = 1;
@@ -230,12 +232,19 @@ main(int argc, char *argv[])
 		case 'i':
 			intval = strtol(optarg, NULL, 10);
 			break;
+		case 'j':
+			jflag = 1;
+			irrpolyfile = optarg;
+			break;
 		case 'L':
 			Lflag = 1;
 			logfile = optarg;
 			break;
 		case 'l':
 			lflag = 1;
+			break;
+		case 'm':
+			mflag = 1;
 			break;
 		case 'n':
 			nids = strtol(optarg, NULL, 10);
@@ -298,7 +307,7 @@ main(int argc, char *argv[])
 	if (gflag == 1 && intval == 0 && sflag == 0) usage();
 
 	if (rflag == 1 && sflag == 0) usage();
-	if (Hflag == 1 && sflag == 0 && dflag == 0) usage();
+	if (Hflag == 1 && sflag == 0 && dflag == 0 && jflag == 0) usage();
 
 	if (Lflag == 1) {
 		logfd = open(logfile, O_RDWR | O_CREAT, 0666);
@@ -327,40 +336,82 @@ main(int argc, char *argv[])
 	}
 
 	// LSH
-	if (Hflag == 1 && dflag != 0 && sflag != 0) {
-		std::vector<chordID> minhash;
-		std::vector<std::vector<chordID> > matrix;
-		std::vector<POLY> sig;
-		int col;
+	if (Hflag == 1 && dflag != 0 && sflag != 0 && jflag != 0) {
 
-		srand(time(NULL));
+		// XXX: ugly, use templates
+		if (mflag == 1) {
+			std::vector<POLY> minhash;
+			std::vector<std::vector<POLY> > matrix;
+			std::vector<POLY> sig;
+			int col;
 
-		for (int i = 0; i < (int)sigList.size(); i++) {
-			sig = sigList[i];
-			int kc = sig.size();
-			warnx << "kc: " << kc << "\n";
-			int lc = 10;
-			int mc = 50;
-			int nc = lshseed;
+			srand(time(NULL));
+			//srand(lshseed);
 
-			lsh *myLSH = new lsh(kc, lc, mc, nc);
-			minhash = myLSH->getHashCode(sig);
+			for (int i = 0; i < (int)sigList.size(); i++) {
+				sig = sigList[i];
+				int kc = sig.size();
+				warnx << "kc: " << kc << "\n";
+				int lc = 10;
+				int mc = 50;
+				int nc = lshseed;
 
-			warnx << "minhash.size(): " << minhash.size() << "\n";
-			warnx << "minhash IDs:\n";
-			for (int i = 0; i < (int)minhash.size(); i++) {
-				warnx << minhash[i] << "\n";
+				lsh *myLSH = new lsh(kc, lc, mc, nc, irrpolyfile);
+				minhash = myLSH->getHashCodeFindMod(sig, myLSH->getIRRPoly());
+
+				warnx << "minhash.size(): " << minhash.size() << "\n";
+				warnx << "minhash IDs:\n";
+				for (int i = 0; i < (int)minhash.size(); i++) {
+					warnx << minhash[i] << "\n";
+				}
+
+				matrix.push_back(minhash);
+
+				delete myLSH;
+			}
+			int range = (int)minhash.size() + 1;
+			col = int((double)range*rand()/(RAND_MAX + 1.0));
+
+			warnx << "POLYs in random column " << col << ":\n";
+			for (int i = 0; i < (int)matrix.size(); i++) {
+				warnx << matrix[i][col] << "\n";;
 			}
 
-			matrix.push_back(minhash);
+		} else {
+			std::vector<chordID> minhash;
+			std::vector<std::vector<chordID> > matrix;
+			std::vector<POLY> sig;
+			int col;
 
-			delete myLSH;
-		}
-		col = rand() % (int)minhash.size();
+			srand(time(NULL));
 
-		warnx << "chordIDs in random column " << col << ":\n";
-		for (int i = 0; i < (int)matrix.size(); i++) {
-			warnx << matrix[i][col] << "\n";;
+			for (int i = 0; i < (int)sigList.size(); i++) {
+				sig = sigList[i];
+				int kc = sig.size();
+				warnx << "kc: " << kc << "\n";
+				int lc = 10;
+				int mc = 50;
+				int nc = lshseed;
+
+				lsh *myLSH = new lsh(kc, lc, mc, nc, irrpolyfile);
+				minhash = myLSH->getHashCode(sig);
+
+				warnx << "minhash.size(): " << minhash.size() << "\n";
+				warnx << "minhash IDs:\n";
+				for (int i = 0; i < (int)minhash.size(); i++) {
+					warnx << minhash[i] << "\n";
+				}
+
+				matrix.push_back(minhash);
+
+				delete myLSH;
+			}
+			col = rand() % (int)minhash.size();
+
+			warnx << "chordIDs in random column " << col << ":\n";
+			for (int i = 0; i < (int)matrix.size(); i++) {
+				warnx << matrix[i][col] << "\n";;
+			}
 		}
 
 		return 0;
@@ -798,6 +849,11 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 
 	std::vector<POLY> sig;
 	sig.clear();
+	// dummy sig
+	// the polynomial "1" has a degree 0
+	sig.push_back(1);
+	sigList.push_back(sig);
+	sig.clear();
 	POLY e;
 	warnx << "Document signature: ";
 	for (int i = 0; i < size; i++) {
@@ -908,20 +964,19 @@ calcfreq(std::vector<std::vector<POLY> > sigList)
 {
 	//int deg;
 
-	// add dummy sig
-	//std::vector<POLY> sig;
-	//sig.clear();
-	// the polynomial "1" has a degree 0
-	//sig.push_back(1);
-	//sigList.push_back(sig);
+	// dummy's freq is 0 and weight is 1
+	uniqueSigList[sigList[0]] = 0;
+	uniqueWeightList[sigList[0]] = 1;
 
 	//deg = getDegree(sig);
 	//warnx << "deg of dummy sig: " << deg << "\n";
 
-	for (int i = 0; i < (int) sigList.size(); i++) {
+	// skip dummy sig
+	for (int i = 1; i < (int) sigList.size(); i++) {
 		std::map<std::vector<POLY>, double >::iterator itr = uniqueSigList.find(sigList[i]);
 		if (itr != uniqueSigList.end()) {
 			// do not increment weight when sig has duplicates!
+			// increment only freq
 			itr->second += 1;
 		} else {
 			//deg = getDegree(sigList[i]);
@@ -932,8 +987,6 @@ calcfreq(std::vector<std::vector<POLY> > sigList)
 	}
 	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
 	warnx << "Size of unique weight list: " << uniqueWeightList.size() << "\n";
-	//warnx << "Size of unique sig list: " << uniqueSigList.size() - 1 << "\n";
-	//warnx << "Size of unique weight list: " << uniqueWeightList.size() - 1 << "\n";
 }
 
 void
@@ -941,13 +994,12 @@ calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList,
 {
 	//int deg;
 
+	// skip dummy sig
 	//pthread_mutex_lock(&lock);
-	for (int i = 0; i < (int) sigList.size(); i++) {
+	for (int i = 1; i < (int) sigList.size(); i++) {
 		std::map<std::vector<POLY>, double >::iterator itr = uniqueSigList.find(sigList[i]);
 		std::map<std::vector<POLY>, double >::iterator itrW = uniqueWeightList.find(sigList[i]);
 		if (itr != uniqueSigList.end()) {
-			// don't merge the peer's dummy freq with your own dummy's freq
-			//if ((deg = getDegree(sigList[i])) == 0) continue;
 			itr->second += freqList[i];
 			itrW->second += weightList[i];
 			//warnx << "sig: " << buf << "\nfreq: " << itr->second << "\n";
@@ -959,8 +1011,6 @@ calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList,
 	}
 	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
 	warnx << "Size of unique weight list: " << uniqueWeightList.size() << "\n";
-	//warnx << "Size of unique sig list: " << uniqueSigList.size() - 1 << "\n";
-	//warnx << "Size of unique weight list: " << uniqueWeightList.size() - 1 << "\n";
 	//pthread_mutex_unlock(&lock);
 }
 
@@ -1249,14 +1299,16 @@ usage(void)
 	     << "	-d		<random prime number for seed>\n"
 	     << "	-G		<gossip socket>\n"
 	     << "      	-i		<how often>\n"
+	     << "      	-j		<irrpoly file>\n"
 	     << "	-L		<log file>\n"
+	     << "      	-m		use findMod instead of compute_hash\n"
 	     << "      	-n		<how many>\n"
 	     << "      	-p		print list of signatures\n"
 	     << "	-S		<dhash socket>\n"
 	     << "	-s		<dir with sigs>\n\n"
 	     << "Actions:\n"
 	     << "	-g		gossip (requires -S, -G, -s, -i)\n"
-	     << "	-H		generate chordIDs using LSH (requires -s, -d)\n"
+	     << "	-H		generate chordIDs/POLYs using LSH (requires -s, -d, -j)\n"
 	     << "	-l		listen for gossip (requires -S, -G, -L)\n"
 	     << "	-r		read signatures (requires -s)\n"
 	     << "	-v		print version\n"
