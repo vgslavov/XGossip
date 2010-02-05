@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.6 2010/01/20 00:40:05 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.7 2010/01/30 22:51:47 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -1250,8 +1250,9 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, st
 	for (std::map<std::vector<POLY>, std::vector<double> >::iterator itr = sigList.begin(); itr != sigList.end(); itr++) {
 
 		sig = itr->first;
-		freq = itr->second[0] / 2;
-		weight = itr->second[1] / 2;
+		// DO NOT halve f and w
+		freq = itr->second[0];
+		weight = itr->second[1];
 
 		// copy sigLen
 		sigLen = sig.size() * sizeof(POLY);
