@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.9 2010/02/05 18:49:08 dp244 Exp dp244 $	*/
+/*	$Id: utils.C,v 1.10 2010/02/08 18:04:48 dp244 Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -2330,6 +2330,3 @@ lsh::getHashCodeFindMod(std::vector<POLY>& S, POLY polNumber)
 	//hash is a vector of type chordID with m number of IDs
 	return hash;
 }
-
-// change
-// 2nd change
