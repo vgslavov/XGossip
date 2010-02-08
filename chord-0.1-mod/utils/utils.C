@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.8 2010/02/05 18:45:17 vsfgd Exp dp244 $	*/
+/*	$Id: utils.C,v 1.9 2010/02/05 18:49:08 dp244 Exp dp244 $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -2332,3 +2332,4 @@ lsh::getHashCodeFindMod(std::vector<POLY>& S, POLY polNumber)
 }
 
 // change
+// 2nd change
