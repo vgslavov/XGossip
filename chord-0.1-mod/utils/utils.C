@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.13 2010/02/08 18:17:51 dp244 Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.14 2010/02/08 18:18:23 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -1211,8 +1211,8 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, st
 		//warnx << "len (after sig n): " << len << "\n";
 	}
 	// XXX: includes 4 bytes for type
-	warnx << "makeKeyValue: len (allocated): " << len << "\n";
-	warnx << "makeKeyValue: sigListLen: " << sigListLen << "\n";
+	warnx << "makeKeyValue: len (allocated): " << len
+	      << ", sigListLen: " << sigListLen << "\n";
 	// TODO: New vs new?
 	*ptr = New char[len];
 	//*ptr = new char[len];
@@ -2330,7 +2330,3 @@ lsh::getHashCodeFindMod(std::vector<POLY>& S, POLY polNumber)
 	//hash is a vector of type chordID with m number of IDs
 	return hash;
 }
-
-// test
-// test2
-// test3
