@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.24 2010/01/30 20:25:39 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.25 2010/01/30 23:12:03 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.24 2010/01/30 20:25:39 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.25 2010/01/30 23:12:03 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -44,19 +44,22 @@ DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
 //void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 
 chordID randomID(void);
+void accept_connection(int);
+bool sigcmp(const std::vector<POLY>&, const std::vector<POLY>&);
 void listen_gossip(void);
 //void *listen_gossip(void *);
-void accept_connection(int);
+void merge_lists(void);
 void read_gossip(int);
 int getdir(std::string, std::vector<std::string>&);
 void readsig(std::string, std::vector<std::vector <POLY> >&);
 bool sig2str(std::vector<POLY>, str&);
+void add2vecomap(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 void calcfreq(std::vector<std::vector <POLY> >);
 void calcfreqM(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 void calcfreqO(std::vector<std::vector <POLY> >);
-void printlist(void);
+void printlist(int);
 void printdouble(std::string, double);
-void splitfreq(void);
+void splitfreq(int);
 void usage(void);
 
 DHTStatus insertStatus;
@@ -70,13 +73,18 @@ bool retrieveError;
 
 //pthread_mutex_t lock;
 
-std::map<std::vector<POLY>, std::vector<double>, CompareSig> uniqueSigList;
+typedef std::map<std::vector<POLY>, std::vector<double>, CompareSig> mapType;
+typedef std::vector<mapType> vecomap;
+vecomap allT;
+
+//std::vector<std::map<std::vector<POLY>, std::vector<double>, CompareSig> > allT;
+//std::map<std::vector<POLY>, std::vector<double>, CompareSig> uniqueSigList;
 //std::map<std::vector<POLY>, double, CompareSig> uniqueSigList;
 //std::map<std::vector<POLY>, double, CompareSig> uniqueWeightList;
 std::vector<int> rxseq;
 std::vector<int> txseq;
 
-std::vector<std::map<std::vector<POLY>, std::vector<double>, CompareSig> > allt;
+std::vector<POLY> dummysig;
 
 // hash table statistics
 int numReads;
@@ -322,13 +330,23 @@ main(int argc, char *argv[])
 	if (rflag == 1 || gflag == 1 || Hflag == 1) {
 		getdir(sigdir, sigfiles);
 		sigList.clear();
+
+		// insert dummy
+		// the polynomial "1" has a degree 0
+		dummysig.clear();
+		dummysig.push_back(1);
+		sigList.push_back(dummysig);
+
 		warnx << "reading signatures from files...\n";
 		for (unsigned int i = 0; i < sigfiles.size(); i++) {
 			readsig(sigfiles[i], sigList);
 		}
 		warnx << "calculating frequencies...\n";
 		calcfreq(sigList);
-		if (plist == 1) printlist();
+		if (plist == 1) {
+			warnx << "initial ";
+			printlist(0);
+		}
 	}
 
 	// LSH
@@ -449,9 +467,15 @@ main(int argc, char *argv[])
 			std::vector<POLY> sig;
 			sig.clear();
 
-			warnx << "inserting:\ntxseq: " << txseq.back() << "\n";
 			//pthread_mutex_lock(&lock);
-			makeKeyValue(&value, valLen, key, uniqueSigList, txseq.back(), GOSSIP);
+			merge_lists();
+			warnx << "inserting:\ntxseq: "
+			      << txseq.back() << ", txID: " << ID << "\n";
+			if (plist == 1) {
+				warnx << "gossiping merged ";
+				printlist(0);
+			}
+			makeKeyValue(&value, valLen, key, allT[0], txseq.back(), GOSSIP);
 			//pthread_mutex_unlock(&lock);
 			status = insertDHT(ID, value, valLen, MAXRETRIES);
 			cleanup(value);
@@ -461,11 +485,10 @@ main(int argc, char *argv[])
 				warnx << "insert FAILed\n";
 			} else {
 				warnx << "insert SUCCeeded\n";
-				splitfreq();
-				if (plist == 1) printlist();
 			}
 			txseq.push_back(txseq.back() + 1);
 			//pthread_join(thread_ID, &exit_status);
+			warnx << "sleeping...\n";
 			sleep(intval);
 		}
 
@@ -488,7 +511,7 @@ main(int argc, char *argv[])
 DHTStatus
 insertDHT(chordID ID, char *value, int valLen, int STOPCOUNT, chordID guess)
 {
-	warnx << "key: " << ID << "\n";
+	//warnx << "txID: " << ID << "\n";
 	dataStored += valLen;
 	int numTries = 0;
 		
@@ -527,6 +550,7 @@ insertDHT(chordID ID, char *value, int valLen, int STOPCOUNT, chordID guess)
 		//snprintf(timebuf, sizeof(timebuf), "%f", endTime - beginTime);
 		//warnx << "key insert time: " << timebuf << " secs\n";
 		printdouble("key insert time: ", endTime - beginTime);
+		warnx << "\n";
 		// Insert was successful
 		if (!insertError) {
 			return insertStatus;
@@ -608,7 +632,7 @@ retrieveDHT(chordID keyID, int MAXWAIT, str& sigdata, chordID guess)
 	//warnx << "# of node entries: " << nodeEntries.size() << "\n";
 }
 
-// deprecated (use make_randomID() instead)
+// deprecated: use make_randomID() instead
 chordID
 randomID(void)
 {
@@ -722,13 +746,13 @@ read_gossip(int fd)
 		if (msglen == 0) {
 			str gbuf = buf;
 			msglen = getKeyValueLen(gbuf);
-			warnx << "read_gossip: msglen: " << msglen << "\n";
+			warnx << "msglen: " << msglen;
 		}
 
 		recvlen += n;
 
 #ifdef _DEBUG_
-		warnx << "read_gossip: n: " << n << "\n";
+		warnx << "\nread_gossip: n: " << n << "\n";
 		warnx << "read_gossip: recvlen: " << recvlen << "\n";
 #endif
 
@@ -750,11 +774,11 @@ read_gossip(int fd)
 		return;
 	}
 
-	warnx << "rxseq: " << seq << "\n";
-	warnx << "ID: " << key << "\n";
-	warnx << "sigList size: " << sigList.size() << "\n";
-	warnx << "freqList size: " << freqList.size() << "\n";
-	warnx << "weightList size: " << weightList.size() << "\n";
+	warnx << ", rxseq: " << seq << ", rxID: " << key << "\n";
+	// TODO: check if sizes are the same?
+	warnx << "sigList size: " << sigList.size()
+	      << ", freqList size: " << freqList.size()
+	      << ", weightList size: " << weightList.size() << "\n";
 
 #ifdef _DEBUG_
 	str sigbuf;
@@ -764,19 +788,18 @@ read_gossip(int fd)
 	}
 	for (int i = 0; i < (int) freqList.size(); i++) {
 		printdouble("freq[i]: ", freqList[i]);
-		//snprintf(tmpbuf, sizeof(tmpbuf), "%f", freqList[i]);
-		//warnx << "freq[" << i << "]: " << tmpbuf << "\n";
+		warnx << "\n";
 	}
 	for (int i = 0; i < (int) weightList.size(); i++) {
 		printdouble("weight[i]: ", weightList[i]);
-		//snprintf(tmpbuf, sizeof(tmpbuf), "%f", weightList[i]);
-		//warnx << "weight[" << i << "]: " << tmpbuf << "\n";
+		warnx << "\n";
 	}
 #endif
 
 	rxseq.push_back(seq);
-	calcfreqM(sigList, freqList, weightList);
-	if (plist == 1) printlist();
+	add2vecomap(sigList, freqList, weightList);
+	//calcfreqM(sigList, freqList, weightList);
+	//if (plist == 1) printlist(0);
 }
 
 // based on:
@@ -824,23 +847,18 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 	if (fread(&numSigs, sizeof(int), 1, sigfp) != 1) {
 		warnx << "numSigs: " << numSigs << "\n";
 	}
-	warnx << "NUM sigs: " << numSigs << "\n";
+	warnx << "NUM sigs: " << numSigs;
 	assert(numSigs == 1);
 
 	int size;
 
 	if (fread(&size, sizeof(int), 1, sigfp) != 1) {
 		assert(0);
-		warnx << "invalid signature\n";
+		warnx << "\ninvalid signature\n";
 	}
-	warnx << "Signature size: " << size * sizeof(POLY) << " bytes\n";
+	warnx << ", Signature size: " << size * sizeof(POLY) << " bytes\n";
 
 	std::vector<POLY> sig;
-	sig.clear();
-	// dummy sig
-	// the polynomial "1" has a degree 0
-	//sig.push_back(1);
-	//sigList.push_back(sig);
 	sig.clear();
 	POLY e;
 	warnx << "Document signature: ";
@@ -876,17 +894,19 @@ sig2str(std::vector<POLY> sig, str &buf)
 void
 calcfreq(std::vector<std::vector<POLY> > sigList)
 {
+	mapType uniqueSigList;
 	//int deg;
 
 	// dummy's freq is 0 and weight is 1
-	//uniqueSigList[sigList[0]].push_back(0);
-	//uniqueSigList[sigList[0]].push_back(1);
+	uniqueSigList[sigList[0]].push_back(0);
+	uniqueSigList[sigList[0]].push_back(1);
 
 	//deg = getDegree(sig);
 	//warnx << "deg of dummy sig: " << deg << "\n";
 
-	for (int i = 0; i < (int) sigList.size(); i++) {
-		std::map<std::vector<POLY>, std::vector<double> >::iterator itr = uniqueSigList.find(sigList[i]);
+	// skip dummy
+	for (int i = 1; i < (int) sigList.size(); i++) {
+		mapType::iterator itr = uniqueSigList.find(sigList[i]);
 		if (itr != uniqueSigList.end()) {
 			// do not increment weight when sig has duplicates!
 			// increment only freq
@@ -894,47 +914,206 @@ calcfreq(std::vector<std::vector<POLY> > sigList)
 		} else {
 			//deg = getDegree(sigList[i]);
 			//warnx << "deg of sig: " << deg << "\n";
+			// set freq
 			uniqueSigList[sigList[i]].push_back(1);
+			// set weight
 			uniqueSigList[sigList[i]].push_back(1);
 		}
 	}
-	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
+	allT.push_back(uniqueSigList);
+	warnx << "Size of unique sig list: " << allT[0].size() << "\n";
 }
 
+// deprecated: use merge_lists() instead
 void
 calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList, std::vector<double> weightList)
 {
 	//int deg;
 
 	//pthread_mutex_lock(&lock);
-	for (int i = 0; i < (int) sigList.size(); i++) {
-		std::map<std::vector<POLY>, std::vector<double> >::iterator itr = uniqueSigList.find(sigList[i]);
-		if (itr != uniqueSigList.end()) {
+	// skip dummy
+	for (int i = 1; i < (int) sigList.size(); i++) {
+		mapType::iterator itr = allT[0].find(sigList[i]);
+		if (itr != allT[0].end()) {
 			itr->second[0] += freqList[i];
 			itr->second[1] += weightList[i];
 		} else {
-			uniqueSigList[sigList[i]].push_back(freqList[i]);
-			uniqueSigList[sigList[i]].push_back(weightList[i]);
+			allT[0][sigList[i]].push_back(freqList[i]);
+			allT[0][sigList[i]].push_back(weightList[i]);
 		}
 	}
-	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
+	warnx << "Size of unique sig list: " << allT[0].size() << "\n";
 	//pthread_mutex_unlock(&lock);
 }
 
-// for mass conservation
 void
-splitfreq(void)
+add2vecomap(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList, std::vector<double> weightList)
+{
+	mapType uniqueSigList;
+
+	//pthread_mutex_lock(&lock);
+	for (int i = 0; i < (int) sigList.size(); i++) {
+		uniqueSigList[sigList[i]].push_back(freqList[i]);
+		uniqueSigList[sigList[i]].push_back(weightList[i]);
+	}
+	allT.push_back(uniqueSigList);
+	//pthread_mutex_unlock(&lock);
+	warnx << "add2vecomap: allT.size(): " << allT.size() << "\n";
+}
+
+// copied from psi.C
+bool
+sigcmp(const std::vector<POLY>& s1, const std::vector<POLY>& s2)
+{
+	// Return TRUE if s1 < s2
+	//warnx << "sigcmp: S1 size: " << s1.size()
+	//      << ", S2 size: " << s2.size() << "\n";
+
+	if (s1.size() < s2.size()) return true;
+	else if (s1.size() == s2.size()) {
+		for (int i = 0; i < (int) s1.size(); i++) {
+			if (s1[i] < s2[i]) return true;
+			else if (s1[i] > s2[i]) return false;
+		}
+		return false;
+	} else return false;
+}
+
+void
+merge_lists()
+{
+	double sumf, sumw;
+	str sigbuf;
+	std::vector<POLY> minsig;
+	minsig.clear();
+
+	warnx << "merge_lists:\n";
+	int n = allT.size();
+	warnx << "initial allT.size(): " << n << "\n";
+	if (n == 1) {
+		splitfreq(0);
+		return;
+	} else {
+		for (int i = 0; i < n; i++)
+			printlist(i);
+	}
+
+	std::vector<mapType::iterator> citr;
+	for (int i = 0; i < n; i++) {
+		citr.push_back(allT[i].begin());
+		// skip dummy
+		++citr[i];
+	}
+
+	warnx << "merging:\n";
+	while (1) {
+		int j = n;
+		// check if at end of lists
+		for (int i = 0; i < n; i++) {
+			if (citr[i] == allT[i].end()) {
+				warnx << "end of T_" << i << "\n";
+				--j;
+			}
+		}
+		// done with all lists
+		if (j == 0) {
+			sumw = 0;
+			for (int i = 0; i < n; i++) {
+				sumw += allT[i][dummysig][1];
+			}
+			printdouble("new local dummy sumw/2: ", sumw/2);
+			warnx << "\n";
+			allT[0][dummysig][1] = sumw / 2;
+			break;
+		}
+
+		// find min sig
+		int z = 0;
+		for (int i = 0; i < n; i++) {
+			// skip lists which are done
+			if (citr[i] == allT[i].end()) {
+				continue;
+			} else if (z == 0){
+				minsig = citr[i]->first;
+				sig2str(minsig, sigbuf);
+				warnx << "initial minsig: "
+				      << sigbuf << "\n";
+				z = 1;
+
+			}
+			if (sigcmp(citr[i]->first, minsig) == 1)
+				minsig = citr[i]->first;
+		}
+
+		sig2str(minsig, sigbuf);
+		warnx << "actual minsig: " << sigbuf << "\n";
+
+		sumf = sumw = 0;
+		// add all f's and w's for a particular sig
+		for (int i = 0; i < n; i++) {
+			// skip lists which are done
+			if (citr[i] == allT[i].end()) {
+				continue;
+			} else if (citr[i]->first == minsig) {
+				warnx << "minsig found in T_" << i << "\n";
+				sumf += citr[i]->second[0];
+				sumw += citr[i]->second[1];
+				// XXX: if i == 0, itr will be incremented later
+				if (i != 0) ++citr[i];
+			} else {
+				warnx << "no minsig in T_" << i << "\n";
+				// or use find()?
+				sumf += allT[i][dummysig][0];
+				sumw += allT[i][dummysig][1];
+			}
+		}
+
+		printdouble("sumf: ", sumf);
+		printdouble(", sumw: ", sumw);
+		warnx << "\n";
+
+		// update allT[0]
+		if (citr[0]->first == minsig) {
+			// update sums of existing sig
+			warnx << "updating sums of minsig\n";
+			allT[0][minsig][0] = sumf/2;
+			allT[0][minsig][1] = sumw/2;
+			// XXX: see above XXX
+			++citr[0];
+			//citr[0]->second[0] = sumf / 2;
+			//citr[0]->second[1] = sumw / 2;
+		} else {
+			// insert new sig
+			warnx << "inserting minsig...\n";
+			allT[0][minsig].push_back(sumf/2);
+			allT[0][minsig].push_back(sumw/2);
+
+			// XXX: point to the sig immediately following the inserted one
+			//citr[0] = allT[0].find(minsig);
+			//++citr[0];
+
+		}
+	}
+
+	// delete all except first (doesn't free memory but it's O(1))
+	while (allT.size() > 1) allT.pop_back();
+	//warnx << "allT.size() after pop: " << allT.size() << "\n";
+}
+
+void
+splitfreq(int listnum)
 {
 	double freq, weight;
 
-	for (std::map<std::vector<POLY>, std::vector<double> >::iterator itr = uniqueSigList.begin(); itr != uniqueSigList.end(); itr++) {
+	warnx << "splitting list T_" << listnum << ":\n";
+	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
 
 		freq = itr->second[0];
 		itr->second[0] = freq / 2;
 		weight = itr->second[1];
 		itr->second[1] = weight / 2;
 	}
-	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
+	warnx << "Size of unique sig list: " << allT[listnum].size() << "\n";
 }
 
 void
@@ -945,35 +1124,35 @@ printdouble(std::string fmt, double num)
 
 	oss << num;
 	ss = oss.str();
-	warnx << fmt.c_str() << ss.c_str() << "\n";
+	warnx << fmt.c_str() << ss.c_str();
 }
 
 void
-printlist(void)
+printlist(int listnum)
 {
-	double freq, weight, avg;
+	double freq, weight, avg, n = 0;
 	std::vector<POLY> sig;
 	str sigbuf;
-	int n = 0;
 
-	warnx << "uniqueSigList:\n";
-	for (std::map<std::vector<POLY>, std::vector<double> >::iterator itr = uniqueSigList.begin(); itr != uniqueSigList.end(); itr++) {
+	warnx << "printing list T_" << listnum << ":\n";
+	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
 
 		sig = itr->first;
 		freq = itr->second[0];
 		weight = itr->second[1];
 		avg = freq / weight;
-		n += (int)avg;
+		n += avg;
 
 		sig2str(sig, sigbuf);
 		warnx << "sig: " << sigbuf << "\n";
 
 		printdouble("freq: ", freq);
-		printdouble("weight: ", weight);
-		printdouble("avg: ", avg);
+		printdouble(", weight: ", weight);
+		printdouble(", avg: ", avg);
+		warnx << "\n";
 	}
-	warnx << "Size of sig list: " << n << "\n";
-	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
+	printdouble("Size of sig list: ", n);
+	warnx << ", Size of unique sig list: " << allT[listnum].size() << "\n";
 }
 
 // copied from psi.C
