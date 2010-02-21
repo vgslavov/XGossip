@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.14 2010/02/08 18:18:23 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.15 2010/02/10 02:30:45 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -1211,8 +1211,8 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, st
 		//warnx << "len (after sig n): " << len << "\n";
 	}
 	// XXX: includes 4 bytes for type
-	warnx << "makeKeyValue: len (allocated): " << len
-	      << ", sigListLen: " << sigListLen << "\n";
+	warnx << "makeKeyValue: msglen (allocated): " << len
+	      << ", listlen: " << sigListLen << "\n";
 	// TODO: New vs new?
 	*ptr = New char[len];
 	//*ptr = new char[len];
