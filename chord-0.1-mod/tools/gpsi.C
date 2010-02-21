@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.25 2010/01/30 23:12:03 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.26 2010/02/18 04:35:59 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.25 2010/01/30 23:12:03 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.26 2010/02/18 04:35:59 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -39,6 +39,7 @@ static const char* dsock;
 static const char* gsock;
 static char *logfile;
 int plist = 0;
+int peers = 0;
  
 DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
 //void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
@@ -200,6 +201,7 @@ main(int argc, char *argv[])
 	//void *exit_status;
 
 	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, pflag, Hflag, dflag, jflag, mflag;
+
 	int ch, intval, nids, lshseed, valLen;
 	int logfd;
 	char *value;
@@ -213,12 +215,13 @@ main(int argc, char *argv[])
 	std::vector<std::vector<POLY> > sigList;
 
 	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = pflag = Hflag = dflag = jflag = mflag = 0;
+
 	intval = nids = lshseed = 0;
 	irrpolyfile = NULL;
 	rxseq.clear();
 	txseq.clear();
 
-	while ((ch = getopt(argc, argv, "d:G:gHhi:j:L:lmn:prS:s:vz")) != -1)
+	while ((ch = getopt(argc, argv, "d:G:gHhi:j:L:lmn:pq:rS:s:vz")) != -1)
 		switch(ch) {
 		case 'd':
 			dflag = 1;
@@ -256,6 +259,9 @@ main(int argc, char *argv[])
 			break;
 		case 'p':
 			pflag = 1;
+			break;
+		case 'q':
+			peers = strtol(optarg, NULL, 10);
 			break;
 		case 'r':
 			rflag = 1;
@@ -447,6 +453,7 @@ main(int argc, char *argv[])
 	warnx << "rcsid: " << rcsid << "\n";
 	warnx << "host: " << host << "\n";
 	warnx << "pid: " << getpid() << "\n";
+	warnx << "peers: " << peers << "\n";
 	warnx << "loseed: " << loseed << "\n";
 
 	if (gflag == 1) {
@@ -774,11 +781,11 @@ read_gossip(int fd)
 		return;
 	}
 
-	warnx << ", rxseq: " << seq << ", rxID: " << key << "\n";
+	warnx << ", listlen: " << sigList.size() << ", rxseq: " << seq
+	      << ", rxID: " << key << "\n";
 	// TODO: check if sizes are the same?
-	warnx << "sigList size: " << sigList.size()
-	      << ", freqList size: " << freqList.size()
-	      << ", weightList size: " << weightList.size() << "\n";
+	//warnx << ", freqList size: " << freqList.size()
+	//warnx << ", weightList size: " << weightList.size() << "\n";
 
 #ifdef _DEBUG_
 	str sigbuf;
@@ -921,7 +928,7 @@ calcfreq(std::vector<std::vector<POLY> > sigList)
 		}
 	}
 	allT.push_back(uniqueSigList);
-	warnx << "Size of unique sig list: " << allT[0].size() << "\n";
+	warnx << "calcfreq: Size of unique sig list: " << allT[0].size() << "\n";
 }
 
 // deprecated: use merge_lists() instead
@@ -942,7 +949,7 @@ calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList,
 			allT[0][sigList[i]].push_back(weightList[i]);
 		}
 	}
-	warnx << "Size of unique sig list: " << allT[0].size() << "\n";
+	warnx << "calcfreqM: Size of unique sig list: " << allT[0].size() << "\n";
 	//pthread_mutex_unlock(&lock);
 }
 
@@ -987,17 +994,20 @@ merge_lists()
 	std::vector<POLY> minsig;
 	minsig.clear();
 
-	warnx << "merge_lists:\n";
+	warnx << "merging:\n";
 	int n = allT.size();
 	warnx << "initial allT.size(): " << n << "\n";
 	if (n == 1) {
 		splitfreq(0);
 		return;
 	} else {
+#ifdef _DEBUG_
 		for (int i = 0; i < n; i++)
 			printlist(i);
+#endif
 	}
 
+	// init pointers to beginning of lists
 	std::vector<mapType::iterator> citr;
 	for (int i = 0; i < n; i++) {
 		citr.push_back(allT[i].begin());
@@ -1005,13 +1015,12 @@ merge_lists()
 		++citr[i];
 	}
 
-	warnx << "merging:\n";
 	while (1) {
 		int j = n;
 		// check if at end of lists
 		for (int i = 0; i < n; i++) {
 			if (citr[i] == allT[i].end()) {
-				warnx << "end of T_" << i << "\n";
+				//warnx << "end of T_" << i << "\n";
 				--j;
 			}
 		}
@@ -1035,9 +1044,11 @@ merge_lists()
 				continue;
 			} else if (z == 0){
 				minsig = citr[i]->first;
+#ifdef _DEBUG_
 				sig2str(minsig, sigbuf);
 				warnx << "initial minsig: "
 				      << sigbuf << "\n";
+#endif
 				z = 1;
 
 			}
@@ -1045,50 +1056,58 @@ merge_lists()
 				minsig = citr[i]->first;
 		}
 
+#ifdef _DEBUG_
 		sig2str(minsig, sigbuf);
 		warnx << "actual minsig: " << sigbuf << "\n";
+#endif
 
 		sumf = sumw = 0;
 		// add all f's and w's for a particular sig
 		for (int i = 0; i < n; i++) {
-			// skip lists which are done
+			// DO NOT skip lists which are done
+			// use their dummy
 			if (citr[i] == allT[i].end()) {
-				continue;
+				//warnx << "no minsig in T_" << i
+				//      << " (list ended)\n";
+				sumf += allT[i][dummysig][0];
+				sumw += allT[i][dummysig][1];
+				//continue;
 			} else if (citr[i]->first == minsig) {
-				warnx << "minsig found in T_" << i << "\n";
+				//warnx << "minsig found in T_" << i << "\n";
 				sumf += citr[i]->second[0];
 				sumw += citr[i]->second[1];
-				// XXX: if i == 0, itr will be incremented later
+				// XXX: itr of T_0 will be incremented later
 				if (i != 0) ++citr[i];
 			} else {
-				warnx << "no minsig in T_" << i << "\n";
-				// or use find()?
+				//warnx << "no minsig in T_" << i << "\n";
 				sumf += allT[i][dummysig][0];
 				sumw += allT[i][dummysig][1];
 			}
 		}
 
+#ifdef _DEBUG_
 		printdouble("sumf: ", sumf);
 		printdouble(", sumw: ", sumw);
 		warnx << "\n";
+#endif
 
 		// update allT[0]
 		if (citr[0]->first == minsig) {
 			// update sums of existing sig
-			warnx << "updating sums of minsig\n";
+			//warnx << "updating sums of minsig\n";
 			allT[0][minsig][0] = sumf/2;
 			allT[0][minsig][1] = sumw/2;
 			// XXX: see above XXX
 			++citr[0];
-			//citr[0]->second[0] = sumf / 2;
-			//citr[0]->second[1] = sumw / 2;
 		} else {
 			// insert new sig
-			warnx << "inserting minsig...\n";
+			//warnx << "inserting minsig...\n";
 			allT[0][minsig].push_back(sumf/2);
 			allT[0][minsig].push_back(sumw/2);
 
-			// XXX: point to the sig immediately following the inserted one
+			// not needed:
+			// if the minsig was missing in T_i,
+			// itr already points to the next sig
 			//citr[0] = allT[0].find(minsig);
 			//++citr[0];
 
@@ -1113,7 +1132,7 @@ splitfreq(int listnum)
 		weight = itr->second[1];
 		itr->second[1] = weight / 2;
 	}
-	warnx << "Size of unique sig list: " << allT[listnum].size() << "\n";
+	warnx << "splitfreq: Size of unique sig list: " << allT[listnum].size() << "\n";
 }
 
 void
@@ -1130,18 +1149,21 @@ printdouble(std::string fmt, double num)
 void
 printlist(int listnum)
 {
-	double freq, weight, avg, n = 0;
+	double freq, weight, avg;
+	double sumavg = 0;
+	double sumsum = 0;
 	std::vector<POLY> sig;
 	str sigbuf;
 
-	warnx << "printing list T_" << listnum << ":\n";
+	warnx << "list T_" << listnum << ":\n";
 	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
 
 		sig = itr->first;
 		freq = itr->second[0];
 		weight = itr->second[1];
 		avg = freq / weight;
-		n += avg;
+		sumavg += avg;
+		sumsum += (avg * peers);
 
 		sig2str(sig, sigbuf);
 		warnx << "sig: " << sigbuf << "\n";
@@ -1149,10 +1171,16 @@ printlist(int listnum)
 		printdouble("freq: ", freq);
 		printdouble(", weight: ", weight);
 		printdouble(", avg: ", avg);
+		printdouble(", avg*p: ", avg * peers);
+		printdouble(", avg*p-5: ", avg * (peers-5));
+		printdouble(", avg*p+5: ", avg * (peers+5));
 		warnx << "\n";
 	}
-	printdouble("Size of sig list: ", n);
-	warnx << ", Size of unique sig list: " << allT[listnum].size() << "\n";
+	printdouble("printlist: Sum of avg: ", sumavg);
+	warnx << "\n";
+	printdouble("printlist: Sum of sum (multiset): ", sumsum);
+	warnx << "\n";
+	warnx << "printlist: Size of unique sig list (set): " << allT[listnum].size() << "\n";
 }
 
 // copied from psi.C
@@ -1368,6 +1396,7 @@ usage(void)
 	     << "      	-m		use findMod instead of compute_hash\n"
 	     << "      	-n		<how many>\n"
 	     << "      	-p		print list of signatures\n"
+	     << "      	-q		<estimate of # of peers in DHT>\n"
 	     << "	-S		<dhash socket>\n"
 	     << "	-s		<dir with sigs>\n\n"
 	     << "Actions:\n"
