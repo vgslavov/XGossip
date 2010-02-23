@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.26 2010/02/18 04:35:59 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.27 2010/02/21 00:32:05 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.26 2010/02/18 04:35:59 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.27 2010/02/21 00:32:05 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -449,7 +449,8 @@ main(int argc, char *argv[])
 	//srandom(time(NULL));
 
 	time(&rawtime);
-	warnx << "date: " << ctime(&rawtime);
+	warnx << "ctime: " << ctime(&rawtime);
+	warnx << "sincepoch: " << time(&rawtime) << "\n";
 	warnx << "rcsid: " << rcsid << "\n";
 	warnx << "host: " << host << "\n";
 	warnx << "pid: " << getpid() << "\n";
@@ -463,7 +464,7 @@ main(int argc, char *argv[])
 		listen_gossip();		
 		sleep(5);
 		warnx << "gossiping...\n";
-		warnx << "interval: " << intval << " sec\n";
+		warnx << "interval: " << intval << "\n";
 
 		txseq.push_back(0);
 		while (1) {
@@ -477,7 +478,7 @@ main(int argc, char *argv[])
 			//pthread_mutex_lock(&lock);
 			merge_lists();
 			warnx << "inserting:\ntxseq: "
-			      << txseq.back() << ", txID: " << ID << "\n";
+			      << txseq.back() << "\ntxID: " << ID << "\n";
 			if (plist == 1) {
 				warnx << "gossiping merged ";
 				printlist(0);
@@ -753,13 +754,13 @@ read_gossip(int fd)
 		if (msglen == 0) {
 			str gbuf = buf;
 			msglen = getKeyValueLen(gbuf);
-			warnx << "msglen: " << msglen;
+			warnx << "rxmsglen: " << msglen << "\n";
 		}
 
 		recvlen += n;
 
 #ifdef _DEBUG_
-		warnx << "\nread_gossip: n: " << n << "\n";
+		warnx << "read_gossip: n: " << n << "\n";
 		warnx << "read_gossip: recvlen: " << recvlen << "\n";
 #endif
 
@@ -781,8 +782,9 @@ read_gossip(int fd)
 		return;
 	}
 
-	warnx << ", listlen: " << sigList.size() << ", rxseq: " << seq
-	      << ", rxID: " << key << "\n";
+	warnx << "rxlistlen: " << sigList.size() << "\n"
+	      << "rxseq: " << seq << "\n"
+	      << "rxID: " << key << "\n";
 	// TODO: check if sizes are the same?
 	//warnx << ", freqList size: " << freqList.size()
 	//warnx << ", weightList size: " << weightList.size() << "\n";
@@ -1156,6 +1158,7 @@ printlist(int listnum)
 	str sigbuf;
 
 	warnx << "list T_" << listnum << ":\n";
+	warnx << "hdr: freq, weight, avg, avg*p, avg*(p-5), avg*(p+5)\n";
 	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
 
 		sig = itr->first;
@@ -1168,14 +1171,15 @@ printlist(int listnum)
 		sig2str(sig, sigbuf);
 		warnx << "sig: " << sigbuf << "\n";
 
-		printdouble("freq: ", freq);
-		printdouble(", weight: ", weight);
-		printdouble(", avg: ", avg);
-		printdouble(", avg*p: ", avg * peers);
-		printdouble(", avg*p-5: ", avg * (peers-5));
-		printdouble(", avg*p+5: ", avg * (peers+5));
+		printdouble("attr: ", freq);
+		printdouble(", ", weight);
+		printdouble(", ", avg);
+		printdouble(", ", avg * peers);
+		printdouble(", ", avg * (peers-5));
+		printdouble(", ", avg * (peers+5));
 		warnx << "\n";
 	}
+	warnx << "hdr: freq, weight, avg, avg*p, avg*(p-5), avg*(p+5)\n";
 	printdouble("printlist: Sum of avg: ", sumavg);
 	warnx << "\n";
 	printdouble("printlist: Sum of sum (multiset): ", sumsum);
