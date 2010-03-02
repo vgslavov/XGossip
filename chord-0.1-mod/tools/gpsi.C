@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.27 2010/02/21 00:32:05 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.28 2010/02/23 22:35:32 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.27 2010/02/21 00:32:05 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.28 2010/02/23 22:35:32 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -58,7 +58,7 @@ void add2vecomap(std::vector<std::vector <POLY> >, std::vector<double>, std::vec
 void calcfreq(std::vector<std::vector <POLY> >);
 void calcfreqM(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 void calcfreqO(std::vector<std::vector <POLY> >);
-void printlist(int);
+void printlist(int, int);
 void printdouble(std::string, double);
 void splitfreq(int);
 void usage(void);
@@ -350,8 +350,7 @@ main(int argc, char *argv[])
 		warnx << "calculating frequencies...\n";
 		calcfreq(sigList);
 		if (plist == 1) {
-			warnx << "initial ";
-			printlist(0);
+			printlist(0, -1);
 		}
 	}
 
@@ -480,8 +479,7 @@ main(int argc, char *argv[])
 			warnx << "inserting:\ntxseq: "
 			      << txseq.back() << "\ntxID: " << ID << "\n";
 			if (plist == 1) {
-				warnx << "gossiping merged ";
-				printlist(0);
+				printlist(0, txseq.back());
 			}
 			makeKeyValue(&value, valLen, key, allT[0], txseq.back(), GOSSIP);
 			//pthread_mutex_unlock(&lock);
@@ -881,7 +879,7 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 	sig2str(sig, buf);
 	warnx << buf << "\n";
 	sigList.push_back(sig);
-	warnx << "Size of sig list: " << sigList.size() << "\n";
+	warnx << "readsig: Size of sig list: " << sigList.size() << "\n";
 	finishTime = getgtod();
 	fclose(sigfp);
 }
@@ -930,7 +928,7 @@ calcfreq(std::vector<std::vector<POLY> > sigList)
 		}
 	}
 	allT.push_back(uniqueSigList);
-	warnx << "calcfreq: Size of unique sig list: " << allT[0].size() << "\n";
+	warnx << "calcfreq: setsize: " << allT[0].size() << "\n";
 }
 
 // deprecated: use merge_lists() instead
@@ -1005,7 +1003,7 @@ merge_lists()
 	} else {
 #ifdef _DEBUG_
 		for (int i = 0; i < n; i++)
-			printlist(i);
+			printlist(i, -1);
 #endif
 	}
 
@@ -1126,7 +1124,6 @@ splitfreq(int listnum)
 {
 	double freq, weight;
 
-	warnx << "splitting list T_" << listnum << ":\n";
 	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
 
 		freq = itr->second[0];
@@ -1134,7 +1131,7 @@ splitfreq(int listnum)
 		weight = itr->second[1];
 		itr->second[1] = weight / 2;
 	}
-	warnx << "splitfreq: Size of unique sig list: " << allT[listnum].size() << "\n";
+	warnx << "splitfreq: setsize: " << allT[listnum].size() << "\n";
 }
 
 void
@@ -1149,16 +1146,17 @@ printdouble(std::string fmt, double num)
 }
 
 void
-printlist(int listnum)
+printlist(int listnum, int seq)
 {
+	int n = 0;
 	double freq, weight, avg;
 	double sumavg = 0;
 	double sumsum = 0;
 	std::vector<POLY> sig;
 	str sigbuf;
 
-	warnx << "list T_" << listnum << ":\n";
-	warnx << "hdr: freq, weight, avg, avg*p, avg*(p-5), avg*(p+5)\n";
+	warnx << "list T_" << listnum << ": " << seq << " " << allT[listnum].size() << "\n";
+	warnx << "hdrB: freq weight avg avg*p\n";
 	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
 
 		sig = itr->first;
@@ -1169,22 +1167,20 @@ printlist(int listnum)
 		sumsum += (avg * peers);
 
 		sig2str(sig, sigbuf);
-		warnx << "sig: " << sigbuf << "\n";
-
-		printdouble("attr: ", freq);
-		printdouble(", ", weight);
-		printdouble(", ", avg);
-		printdouble(", ", avg * peers);
-		printdouble(", ", avg * (peers-5));
-		printdouble(", ", avg * (peers+5));
+		warnx << "sig" << n << ": " << sigbuf;
+		printdouble(" ", freq);
+		printdouble(" ", weight);
+		printdouble(" ", avg);
+		printdouble(" ", avg * peers);
 		warnx << "\n";
+		++n;
 	}
-	warnx << "hdr: freq, weight, avg, avg*p, avg*(p-5), avg*(p+5)\n";
-	printdouble("printlist: Sum of avg: ", sumavg);
+	warnx << "hdrE: freq weight avg avg*p\n";
+	printdouble("printlist: sumavg: ", sumavg);
 	warnx << "\n";
-	printdouble("printlist: Sum of sum (multiset): ", sumsum);
+	printdouble("printlist: multisetsize: ", sumsum);
 	warnx << "\n";
-	warnx << "printlist: Size of unique sig list (set): " << allT[listnum].size() << "\n";
+	warnx << "printlist: setsize: " << allT[listnum].size() << "\n";
 }
 
 // copied from psi.C
