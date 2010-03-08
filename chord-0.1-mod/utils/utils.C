@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.18 2010/03/07 21:22:06 vsfgd Exp dp244 $	*/
+/*	$Id: utils.C,v 1.19 2010/03/08 02:52:34 dp244 Exp dp244 $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -2018,13 +2018,13 @@ int enlargement(std::vector<POLY>& entrySig, std::vector<POLY>& sig)
 // dp244: lsh
 
 
-vector<POLY> lsh::getUniqueSet(vector<POLY>& inputPols){
+std::vector<POLY> lsh::getUniqueSet(std::vector<POLY>& inputPols){
 
     ifstream irrpoltxt;
     POLY pol;
-    vector<POLY> irr;
-    vector<POLY> polManipulate;
-    vector<POLY> polNums;
+    std::vector<POLY> irr;
+    std::vector<POLY> polManipulate;
+    std::vector<POLY> polNums;
 
     irrpoltxt.open("irrpoly.dat");
     while (irrpoltxt>>pol){
@@ -2036,8 +2036,8 @@ vector<POLY> lsh::getUniqueSet(vector<POLY>& inputPols){
     for ( unsigned int i = 0; i< inputPols.size(); i++){
       polNums.push_back(inputPols[i]);
     }
-    vector<POLY> result;
-    vector<POLY>::iterator it;
+    std::vector<POLY> result;
+    std::vector<POLY>::iterator it;
     it = unique(polNums.begin(), polNums.end());
     polNums.resize(it - polNums.begin());
     int count[polNums.size()];
