@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.28 2010/02/23 22:35:32 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.29 2010/03/02 17:11:38 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.28 2010/02/23 22:35:32 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.29 2010/03/02 17:11:38 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -82,6 +82,8 @@ vecomap allT;
 //std::map<std::vector<POLY>, std::vector<double>, CompareSig> uniqueSigList;
 //std::map<std::vector<POLY>, double, CompareSig> uniqueSigList;
 //std::map<std::vector<POLY>, double, CompareSig> uniqueWeightList;
+
+std::vector<int> rxmsglen;
 std::vector<int> rxseq;
 std::vector<int> txseq;
 
@@ -476,8 +478,8 @@ main(int argc, char *argv[])
 
 			//pthread_mutex_lock(&lock);
 			merge_lists();
-			warnx << "inserting:\ntxseq: "
-			      << txseq.back() << "\ntxID: " << ID << "\n";
+			warnx << "inserting:\ntxseq: " << txseq.back()
+			      << " txID: " << ID << "\n";
 			if (plist == 1) {
 				printlist(0, txseq.back());
 			}
@@ -752,13 +754,13 @@ read_gossip(int fd)
 		if (msglen == 0) {
 			str gbuf = buf;
 			msglen = getKeyValueLen(gbuf);
-			warnx << "rxmsglen: " << msglen << "\n";
+			warnx << "rxmsglen: " << msglen;
 		}
 
 		recvlen += n;
 
 #ifdef _DEBUG_
-		warnx << "read_gossip: n: " << n << "\n";
+		warnx << "\nread_gossip: n: " << n << "\n";
 		warnx << "read_gossip: recvlen: " << recvlen << "\n";
 #endif
 
@@ -780,12 +782,19 @@ read_gossip(int fd)
 		return;
 	}
 
-	warnx << "rxlistlen: " << sigList.size() << "\n"
-	      << "rxseq: " << seq << "\n"
-	      << "rxID: " << key << "\n";
+	warnx << " rxlistlen: " << sigList.size()
+	      << " rxseq: " << seq
+	      << " txseq-cur: " << txseq.back()
+	      << " rxID: " << key << "\n";
 	// TODO: check if sizes are the same?
 	//warnx << ", freqList size: " << freqList.size()
 	//warnx << ", weightList size: " << weightList.size() << "\n";
+
+	// TODO: discard out of round msgs?
+	if (seq < txseq.back())
+		warnx << "warning: rxseq < txseq\n";
+	else if (seq > txseq.back())
+		warnx << "warning: rxseq > txseq\n";
 
 #ifdef _DEBUG_
 	str sigbuf;
@@ -1177,10 +1186,8 @@ printlist(int listnum, int seq)
 	}
 	warnx << "hdrE: freq weight avg avg*p\n";
 	printdouble("printlist: sumavg: ", sumavg);
-	warnx << "\n";
-	printdouble("printlist: multisetsize: ", sumsum);
-	warnx << "\n";
-	warnx << "printlist: setsize: " << allT[listnum].size() << "\n";
+	printdouble(" multisetsize: ", sumsum);
+	warnx << " setsize: " << allT[listnum].size() << "\n";
 }
 
 // copied from psi.C
