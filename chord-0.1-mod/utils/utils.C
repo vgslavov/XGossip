@@ -1,7 +1,8 @@
-/*	$Id: utils.C,v 1.19 2010/03/08 02:52:34 dp244 Exp dp244 $	*/
+/*	$Id: utils.C,v 1.20 2010/03/08 03:02:06 dp244 Exp dp244 $	*/
 
 // Author: Praveen Rao
 #include <iostream>
+#include <fstream>
 #include <sys/time.h>
 #include <assert.h>
 #include <stdlib.h>
