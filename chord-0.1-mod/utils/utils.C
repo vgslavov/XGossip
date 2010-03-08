@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.17 2010/02/23 22:36:03 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.18 2010/03/07 21:22:06 vsfgd Exp dp244 $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -2016,6 +2016,53 @@ int enlargement(std::vector<POLY>& entrySig, std::vector<POLY>& sig)
 }
 
 // dp244: lsh
+
+
+vector<POLY> lsh::getUniqueSet(vector<POLY>& inputPols){
+
+    ifstream irrpoltxt;
+    POLY pol;
+    vector<POLY> irr;
+    vector<POLY> polManipulate;
+    vector<POLY> polNums;
+
+    irrpoltxt.open("irrpoly.dat");
+    while (irrpoltxt>>pol){
+      irr.push_back(pol);
+    }
+    irrpoltxt.close();
+
+
+    for ( unsigned int i = 0; i< inputPols.size(); i++){
+      polNums.push_back(inputPols[i]);
+    }
+    vector<POLY> result;
+    vector<POLY>::iterator it;
+    it = unique(polNums.begin(), polNums.end());
+    polNums.resize(it - polNums.begin());
+    int count[polNums.size()];
+    for ( unsigned int i = 0; i < polNums.size(); i++){
+       count[i] = 0;
+       for ( unsigned int j = 0; j < inputPols.size(); j++){
+          if ( !(polNums[i] < inputPols[j])&&
+               !(polNums[i] > inputPols[j])){
+               if ( count[i] > 0 ){
+/* for the time being, this operation is withheld*/
+                   polManipulate.push_back(inputPols[j]);
+                   multiplyPoly(result,polManipulate,irr[count[i]-1]);
+                   inputPols[j] = result[0];
+                   polManipulate.clear();
+                   result.clear();
+          }
+               count[i]++;
+          }
+        }
+      }
+
+return  inputPols;
+}
+
+
 
 POLY
 lsh::getIRRPoly()
