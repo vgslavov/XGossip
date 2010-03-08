@@ -63,7 +63,7 @@ class lsh {
 	int getDegree(IRRPOLY);
 	POLY getIRRPoly();
 // new dp244
-        vector<POLY> getUniqueSet(vector<POLY>& inputPols);
+        std::vector<POLY> getUniqueSet(vector<POLY>& inputPols);
 
 	// private variables
 	private:
