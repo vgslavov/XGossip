@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.20 2010/03/08 03:02:06 dp244 Exp dp244 $	*/
+/*	$Id: utils.C,v 1.21 2010/03/08 03:06:08 dp244 Exp dp244 $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -2021,7 +2021,7 @@ int enlargement(std::vector<POLY>& entrySig, std::vector<POLY>& sig)
 
 std::vector<POLY> lsh::getUniqueSet(std::vector<POLY>& inputPols){
 
-    ifstream irrpoltxt;
+    std::ifstream irrpoltxt;
     POLY pol;
     std::vector<POLY> irr;
     std::vector<POLY> polManipulate;
