@@ -1,14 +1,13 @@
-/*	$Id: utils.C,v 1.21 2010/03/08 03:06:08 dp244 Exp dp244 $	*/
+/*	$Id: utils.C,v 1.22 2010/03/08 03:07:11 dp244 Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
-#include <fstream>
 #include <sys/time.h>
 #include <assert.h>
 #include <stdlib.h>
-#include <map>
 
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -2016,10 +2015,10 @@ int enlargement(std::vector<POLY>& entrySig, std::vector<POLY>& sig)
     return ((myMBR[1]-myMBR[0]) - (entrySig[1]-entrySig[0]));
 }
 
-// dp244: lsh
+// dp244: all LSH code
 
-
-std::vector<POLY> lsh::getUniqueSet(std::vector<POLY>& inputPols){
+std::vector<POLY> lsh::getUniqueSet(std::vector<POLY>& inputPols)
+{
 
     std::ifstream irrpoltxt;
     POLY pol;
@@ -2027,12 +2026,11 @@ std::vector<POLY> lsh::getUniqueSet(std::vector<POLY>& inputPols){
     std::vector<POLY> polManipulate;
     std::vector<POLY> polNums;
 
-    irrpoltxt.open("irrpoly.dat");
+    irrpoltxt.open(irrpoly.c_str());
     while (irrpoltxt>>pol){
       irr.push_back(pol);
     }
     irrpoltxt.close();
-
 
     for ( unsigned int i = 0; i< inputPols.size(); i++){
       polNums.push_back(inputPols[i]);
@@ -2087,8 +2085,8 @@ lsh::isMinimum(std::vector<POLY>& v)
 	return v1;
 }
 
-// obsolete:
-// read config file and extract the prime number
+// obsolete: instead give prime number when you create LSH object
+/*
 int
 lsh::getPrimeNumberFromConfig(char* configFileName)
 {
@@ -2107,77 +2105,10 @@ lsh::getPrimeNumberFromConfig(char* configFileName)
 	conTxt.close();
 	return number;
 }
+*/
 
-POLY
-lsh::findMod(void *x, int len, IRRPOLY z)
-{
-        unsigned char *ptr = (unsigned char *) x;
-
-        unsigned char bitMask = 1;
-        int zDegree = getDegree(z);
-#ifdef _DEBUG_
-        cout << "POLY degree: " << zDegree << endl;
-#endif
-        POLY testMask = (1 << zDegree);
-        POLY modMask = (z ^ (1 << zDegree));
-
-        POLY res = 0;
-        POLY resMask = modMask;
-        int k = 0;
-#ifdef _DEBUG_
-        cout << "LENGTH: " << len << " Z: " << z << endl;
-#endif
-
-        POLY smallBitsMask = 1;
-        for (int i = 0; i < len; i++) {
-                for (int j = 0; j < 8; j++) {
-                        if (k >= zDegree) {
-                                if ((POLY) (*ptr & bitMask) > (POLY) 0) {
-                                        res = res ^ resMask;
-                                }
-                                resMask = resMask << 1;
-                                if ((POLY) (resMask & testMask) > (POLY) 0) {
-                                        resMask = (resMask ^ testMask) ^ modMask;
-                                }
-                        }
-                        else {
-                                if ((POLY) (*ptr & bitMask) > (POLY) 0) {
-                                        res = res | smallBitsMask;
-                                }
-                                smallBitsMask = smallBitsMask << 1;
-                        }
-                        k++;
-                        bitMask = bitMask << 1;
-                }
-
-                ptr += 1;
-                bitMask = 1;
-        }
-#ifdef _DEBUG_
-        cout << "TEXT mod: " << (char *) x << "=" << res << endl;
-#endif
-        return res;
-}
-
-// Returns the degree of the polynomial
-int
-lsh::getDegree(POLY z)
-{
-        POLY mask = (1 << (sizeof(POLY) * 8 - 1));
-
-        int i = sizeof(POLY) * 8 - 1;
-        while (mask > (POLY) 0) {
-                if ((mask & z) != (POLY) 0) {
-                        return i;
-                }
-                i--;
-                mask = mask >> 1;
-        }
-        return i;
-}
-
-std::vector<chordID>
 // function to compute hashCode
+std::vector<chordID>
 lsh::getHashCode(std::vector<POLY>& S)
 {
 	//std::vector<bool> isWhat;
