@@ -1,3 +1,5 @@
+/*	$Id$	*/
+
 // Author: Praveen Rao
 #ifndef _UTILS_H_
 #define _UTILS_H_
@@ -21,7 +23,7 @@ const int MAXBUFS = 2000;
 // vsfgd
 //const str GSOCK = "g-sock";
 
-// dp244
+// dp244: all LSH code
 class lsh {
 	public:
 	// constructor
@@ -51,19 +53,22 @@ class lsh {
 		int rand_index = int((double)range*rand()/(RAND_MAX + 1.0));
 
 		selected_poly = numbers[rand_index];
+		irrpoly = fileName;
 	}
 
 	// destructor
 	~lsh() {};
-	std::vector<chordID> getHashCode(std::vector<POLY>& S);
 	std::vector<POLY> getHashCodeFindMod(std::vector<POLY>& S,POLY polNumber);
+	std::vector<chordID> getHashCode(std::vector<POLY>& S);
 	POLY isMinimum(std::vector<POLY>& v);
-	int getPrimeNumberFromConfig(char* configFileName);
-	POLY findMod(void *, int, IRRPOLY);
-	int getDegree(IRRPOLY);
 	POLY getIRRPoly();
-// new dp244
         std::vector<POLY> getUniqueSet(std::vector<POLY>& inputPols);
+
+	// obsolete: instead give prime number when you create LSH object
+	//int getPrimeNumberFromConfig(char* configFileName);
+	// already in utils.C
+	//int getDegree(IRRPOLY);
+	//POLY findMod(void *, int, IRRPOLY);
 
 	// private variables
 	private:
@@ -72,6 +77,7 @@ class lsh {
 	int m;
 	int n;
         POLY selected_poly;
+	std::string irrpoly;
 };
 
 enum OPTYPE {
@@ -191,6 +197,7 @@ struct Interval {
  int getKeyValueLen(const char* buf);
  int getKeyValue(const char*, str&, std::vector<std::vector<POLY> >&, std::vector<double>&, std::vector<double>&, int&, int);
  void makeKeyValue(char **, int&, str&, std::map<std::vector<POLY>, std::vector<double>, CompareSig>&, int&, InsertType);
+
 // vsfgd: gpsi (old)
  void makeKeyValue(char **, int&, str&, std::map<std::vector<POLY>, double, CompareSig>&, std::map<std::vector<POLY>, double, CompareSig>&, int&, InsertType);
 
