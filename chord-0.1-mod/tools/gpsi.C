@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.29 2010/03/02 17:11:38 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.30 2010/03/08 22:10:57 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.29 2010/03/02 17:11:38 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.30 2010/03/08 22:10:57 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -83,7 +83,7 @@ vecomap allT;
 //std::map<std::vector<POLY>, double, CompareSig> uniqueSigList;
 //std::map<std::vector<POLY>, double, CompareSig> uniqueWeightList;
 
-std::vector<int> rxmsglen;
+//std::vector<int> rxmsglen;
 std::vector<int> rxseq;
 std::vector<int> txseq;
 
@@ -202,7 +202,7 @@ main(int argc, char *argv[])
 	//pthread_t thread_ID;
 	//void *exit_status;
 
-	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, pflag, Hflag, dflag, jflag, mflag;
+	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, pflag, Hflag, dflag, jflag, mflag, uflag;
 
 	int ch, intval, nids, lshseed, valLen;
 	int logfd;
@@ -216,14 +216,14 @@ main(int argc, char *argv[])
 	std::vector<std::string> sigfiles;
 	std::vector<std::vector<POLY> > sigList;
 
-	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = pflag = Hflag = dflag = jflag = mflag = 0;
+	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = pflag = Hflag = dflag = jflag = mflag = uflag = 0;
 
 	intval = nids = lshseed = 0;
 	irrpolyfile = NULL;
 	rxseq.clear();
 	txseq.clear();
 
-	while ((ch = getopt(argc, argv, "d:G:gHhi:j:L:lmn:pq:rS:s:vz")) != -1)
+	while ((ch = getopt(argc, argv, "d:G:gHhi:j:L:lmn:pq:rS:s:uvz")) != -1)
 		switch(ch) {
 		case 'd':
 			dflag = 1;
@@ -276,6 +276,9 @@ main(int argc, char *argv[])
 			sflag = 1;
 			sigdir = optarg;
 			break;
+		case 'u':
+			uflag = 1;
+			break;
 		case 'z':
 			zflag = 1;
 			break;
@@ -296,6 +299,16 @@ main(int argc, char *argv[])
 		exit(0);
 	}
 
+	// set random local seed
+	char host[256];
+	struct timeval tv;
+	unsigned int loseed;
+	gethostname(host, 256);
+	gettimeofday(&tv, NULL);
+	loseed = ((long)tv.tv_sec + (long)tv.tv_usec) / (long)getpid();
+	//warnx << "loseed: " << loseed << "\n";
+
+	srandom(loseed);
 	if (zflag == 1 && nids != 0) {
 		for (int i = 0; i < nids; i++) {
 			strbuf t;
@@ -303,7 +316,7 @@ main(int argc, char *argv[])
 			t << ID;
 			str tmpkey(t);
 			warnx << tmpkey << "\n";
-			sleep(5);
+			//sleep(5);
 		}
 		return 0;
 	}
@@ -345,6 +358,16 @@ main(int argc, char *argv[])
 		dummysig.push_back(1);
 		sigList.push_back(dummysig);
 
+		/*
+		std::vector<POLY> testsig;
+		testsig.clear();
+		testsig.push_back(6228403);
+		testsig.push_back(6228403);
+		testsig.push_back(6228403);
+		testsig.push_back(6228403);
+		sigList.push_back(testsig);
+		*/
+
 		warnx << "reading signatures from files...\n";
 		for (unsigned int i = 0; i < sigfiles.size(); i++) {
 			readsig(sigfiles[i], sigList);
@@ -358,76 +381,99 @@ main(int argc, char *argv[])
 
 	// LSH
 	if (Hflag == 1 && dflag != 0 && sflag != 0 && jflag != 0) {
-
 		// XXX: ugly, use templates
+		// use findMod()
 		if (mflag == 1) {
 			std::vector<POLY> minhash;
 			std::vector<std::vector<POLY> > matrix;
 			std::vector<POLY> sig;
+			str sigbuf;
 			int col;
-
-			srand(time(NULL));
-			//srand(lshseed);
 
 			for (int i = 0; i < (int)sigList.size(); i++) {
 				sig = sigList[i];
 				int kc = sig.size();
 				warnx << "kc: " << kc << "\n";
 				int lc = 10;
-				int mc = 50;
+				int mc = 20;
 				int nc = lshseed;
 
 				lsh *myLSH = new lsh(kc, lc, mc, nc, irrpolyfile);
+
+				// convert multiset to set
+				if (uflag == 1) {
+					/*
+					for (unsigned int i = 0; i < sig.size(); i++) {
+						warnx << "nomod..." << sig[i] << "\n";
+					}
+					for (unsigned int i = 0; i < sig.size(); i++) {
+						warnx << "mod..." << (myLSH->getUniqueSet(sig))[i] << "\n";
+					}
+					*/
+
+					sig2str(sig, sigbuf);
+					warnx << "multiset: " << sigbuf << "\n";
+					myLSH->getUniqueSet(sig);
+					sig2str(sig, sigbuf);
+					warnx << "set: " << sigbuf << "\n";
+				}
+
 				minhash = myLSH->getHashCodeFindMod(sig, myLSH->getIRRPoly());
 
 				warnx << "minhash.size(): " << minhash.size() << "\n";
-				warnx << "minhash IDs:\n";
-				for (int i = 0; i < (int)minhash.size(); i++) {
-					warnx << minhash[i] << "\n";
+				if (plist == 1) {
+					warnx << "minhash IDs:\n";
+					for (int i = 0; i < (int)minhash.size(); i++) {
+						warnx << minhash[i] << "\n";
+					}
 				}
 
 				matrix.push_back(minhash);
-
 				delete myLSH;
 			}
-			int range = (int)minhash.size() + 1;
-			col = int((double)range*rand()/(RAND_MAX + 1.0));
+			// call srand/srandom right before calling rand/random
+			//srand(time(NULL));
+			srand(loseed);
+			int range = (int)minhash.size();
+			col = int((double)range * rand() / (RAND_MAX + 1.0));
 
 			warnx << "POLYs in random column " << col << ":\n";
 			for (int i = 0; i < (int)matrix.size(); i++) {
 				warnx << matrix[i][col] << "\n";;
 			}
-
+		// use compute_hash()
 		} else {
 			std::vector<chordID> minhash;
 			std::vector<std::vector<chordID> > matrix;
 			std::vector<POLY> sig;
 			int col;
 
-			srand(time(NULL));
-
 			for (int i = 0; i < (int)sigList.size(); i++) {
 				sig = sigList[i];
 				int kc = sig.size();
 				warnx << "kc: " << kc << "\n";
 				int lc = 10;
-				int mc = 50;
+				int mc = 20;
 				int nc = lshseed;
 
 				lsh *myLSH = new lsh(kc, lc, mc, nc, irrpolyfile);
 				minhash = myLSH->getHashCode(sig);
 
 				warnx << "minhash.size(): " << minhash.size() << "\n";
-				warnx << "minhash IDs:\n";
-				for (int i = 0; i < (int)minhash.size(); i++) {
-					warnx << minhash[i] << "\n";
+				if (plist == 1) {
+					warnx << "minhash IDs:\n";
+					for (int i = 0; i < (int)minhash.size(); i++) {
+						warnx << minhash[i] << "\n";
+					}
 				}
 
 				matrix.push_back(minhash);
-
 				delete myLSH;
 			}
-			col = rand() % (int)minhash.size();
+			//srand(time(NULL));
+			srand(loseed);
+			int range = (int)minhash.size();
+			col = int((double)range * rand() / (RAND_MAX + 1.0));
 
 			warnx << "chordIDs in random column " << col << ":\n";
 			for (int i = 0; i < (int)matrix.size(); i++) {
@@ -437,17 +483,6 @@ main(int argc, char *argv[])
 
 		return 0;
 	}
-
-	// set random local seed
-	char host[256];
-	struct timeval tv;
-	unsigned int loseed;
-	gethostname(host, 256);
-	gettimeofday(&tv, NULL);
-	loseed = ((long)tv.tv_sec + (long)tv.tv_usec) / (long)getpid();
-	//warnx << "loseed: " << loseed << "\n";
-	srandom(loseed);
-	//srandom(time(NULL));
 
 	time(&rawtime);
 	warnx << "ctime: " << ctime(&rawtime);
@@ -467,6 +502,7 @@ main(int argc, char *argv[])
 		warnx << "gossiping...\n";
 		warnx << "interval: " << intval << "\n";
 
+		srandom(loseed);
 		txseq.push_back(0);
 		while (1) {
 			ID = make_randomID();
@@ -1395,17 +1431,18 @@ usage(void)
 {
 	warn << "Usage: " << __progname << " [-h] [options...]\n\n";
 	warn << "Options:\n"
-	     << "	-d		<random prime number for seed>\n"
+	     << "	-d		<random prime number for LSH seed>\n"
 	     << "	-G		<gossip socket>\n"
 	     << "      	-i		<how often>\n"
 	     << "      	-j		<irrpoly file>\n"
 	     << "	-L		<log file>\n"
-	     << "      	-m		use findMod instead of compute_hash\n"
+	     << "      	-m		call findMod instead of compute_hash\n"
 	     << "      	-n		<how many>\n"
 	     << "      	-p		print list of signatures\n"
 	     << "      	-q		<estimate of # of peers in DHT>\n"
 	     << "	-S		<dhash socket>\n"
-	     << "	-s		<dir with sigs>\n\n"
+	     << "	-s		<dir with sigs>\n"
+	     << "	-u		convert multiset to set\n\n"
 	     << "Actions:\n"
 	     << "	-g		gossip (requires -S, -G, -s, -i)\n"
 	     << "	-H		generate chordIDs/POLYs using LSH (requires -s, -d, -j)\n"
