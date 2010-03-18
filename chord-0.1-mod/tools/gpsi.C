@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.30 2010/03/08 22:10:57 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.31 2010/03/17 00:18:53 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.30 2010/03/08 22:10:57 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.31 2010/03/17 00:18:53 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -41,25 +41,24 @@ static char *logfile;
 int plist = 0;
 int peers = 0;
  
-DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
-//void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
-
-chordID randomID(void);
 void accept_connection(int);
-bool sigcmp(const std::vector<POLY>&, const std::vector<POLY>&);
-void listen_gossip(void);
-//void *listen_gossip(void *);
-void merge_lists(void);
-void read_gossip(int);
-int getdir(std::string, std::vector<std::string>&);
-void readsig(std::string, std::vector<std::vector <POLY> >&);
-bool sig2str(std::vector<POLY>, str&);
 void add2vecomap(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
+int getdir(std::string, std::vector<std::string>&);
 void calcfreq(std::vector<std::vector <POLY> >);
 void calcfreqM(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 void calcfreqO(std::vector<std::vector <POLY> >);
-void printlist(int, int);
+DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
+void listen_gossip(void);
+//void *listen_gossip(void *);
+void merge_lists(void);
 void printdouble(std::string, double);
+void printlist(int, int);
+chordID randomID(void);
+void read_gossip(int);
+void readsig(std::string, std::vector<std::vector <POLY> >&);
+//void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
+bool sig2str(std::vector<POLY>, str&);
+bool sigcmp(const std::vector<POLY>&, const std::vector<POLY>&);
 void splitfreq(int);
 void usage(void);
 
@@ -76,6 +75,7 @@ bool retrieveError;
 
 typedef std::map<std::vector<POLY>, std::vector<double>, CompareSig> mapType;
 typedef std::vector<mapType> vecomap;
+// local list T[0] is stored in allT[0];
 vecomap allT;
 
 //std::vector<std::map<std::vector<POLY>, std::vector<double>, CompareSig> > allT;
@@ -513,7 +513,11 @@ main(int argc, char *argv[])
 			sig.clear();
 
 			//pthread_mutex_lock(&lock);
+			double beginTime = getgtod();    
 			merge_lists();
+			double endTime = getgtod();    
+			printdouble("merge lists time: ", endTime - beginTime);
+			warnx << "\n";
 			warnx << "inserting:\ntxseq: " << txseq.back()
 			      << " txID: " << ID << "\n";
 			if (plist == 1) {
@@ -826,11 +830,13 @@ read_gossip(int fd)
 	//warnx << ", freqList size: " << freqList.size()
 	//warnx << ", weightList size: " << weightList.size() << "\n";
 
-	// TODO: discard out of round msgs?
-	if (seq < txseq.back())
-		warnx << "warning: rxseq < txseq\n";
-	else if (seq > txseq.back())
-		warnx << "warning: rxseq > txseq\n";
+	if (seq < txseq.back()) {
+		warnx << "discarding: rxseq < txseq\n";
+		return;
+	} else if (seq > txseq.back()) {
+		warnx << "discarding: rxseq > txseq\n";
+		return;
+	}
 
 #ifdef _DEBUG_
 	str sigbuf;
@@ -947,14 +953,10 @@ void
 calcfreq(std::vector<std::vector<POLY> > sigList)
 {
 	mapType uniqueSigList;
-	//int deg;
 
 	// dummy's freq is 0 and weight is 1
 	uniqueSigList[sigList[0]].push_back(0);
 	uniqueSigList[sigList[0]].push_back(1);
-
-	//deg = getDegree(sig);
-	//warnx << "deg of dummy sig: " << deg << "\n";
 
 	// skip dummy
 	for (int i = 1; i < (int) sigList.size(); i++) {
@@ -964,8 +966,6 @@ calcfreq(std::vector<std::vector<POLY> > sigList)
 			// increment only freq
 			itr->second[0] += 1;
 		} else {
-			//deg = getDegree(sigList[i]);
-			//warnx << "deg of sig: " << deg << "\n";
 			// set freq
 			uniqueSigList[sigList[i]].push_back(1);
 			// set weight
