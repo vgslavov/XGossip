@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.31 2010/03/17 00:18:53 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.32 2010/03/18 05:58:32 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.31 2010/03/17 00:18:53 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.32 2010/03/18 05:58:32 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -39,6 +39,7 @@ static const char* dsock;
 static const char* gsock;
 static char *logfile;
 int plist = 0;
+int discardmsg = 0;
 int peers = 0;
  
 void accept_connection(int);
@@ -202,7 +203,7 @@ main(int argc, char *argv[])
 	//pthread_t thread_ID;
 	//void *exit_status;
 
-	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, pflag, Hflag, dflag, jflag, mflag, uflag;
+	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, uflag;
 
 	int ch, intval, nids, lshseed, valLen;
 	int logfd;
@@ -216,15 +217,18 @@ main(int argc, char *argv[])
 	std::vector<std::string> sigfiles;
 	std::vector<std::vector<POLY> > sigList;
 
-	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = pflag = Hflag = dflag = jflag = mflag = uflag = 0;
+	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = uflag = 0;
 
 	intval = nids = lshseed = 0;
 	irrpolyfile = NULL;
 	rxseq.clear();
 	txseq.clear();
 
-	while ((ch = getopt(argc, argv, "d:G:gHhi:j:L:lmn:pq:rS:s:uvz")) != -1)
+	while ((ch = getopt(argc, argv, "cd:G:gHhi:j:L:lmn:pq:rS:s:uvz")) != -1)
 		switch(ch) {
+		case 'c':
+			discardmsg = 1;
+			break;
 		case 'd':
 			dflag = 1;
 			lshseed = strtol(optarg, NULL, 10);
@@ -260,7 +264,7 @@ main(int argc, char *argv[])
 			nids = strtol(optarg, NULL, 10);
 			break;
 		case 'p':
-			pflag = 1;
+			plist = 1;
 			break;
 		case 'q':
 			peers = strtol(optarg, NULL, 10);
@@ -341,10 +345,14 @@ main(int argc, char *argv[])
 		errfd = logfd;
 	}
 
-	if (pflag == 1) plist = 1;
+	if (jflag == 1) {
+		if (stat(irrpolyfile, &statbuf) != 0)
+			fatal << "'" << irrpolyfile << "' does not exist" << "\n";
+	}
 
 	if (gflag == 1 || lflag == 1) {
-		if (stat(dsock, &statbuf) != 0) fatal << "socket does not exist" << "\n";
+		if (stat(dsock, &statbuf) != 0)
+			fatal << "'" << dsock << "' does not exist" << "\n";
 		dhash = New dhashclient(dsock);
 	}
 
@@ -383,6 +391,7 @@ main(int argc, char *argv[])
 	if (Hflag == 1 && dflag != 0 && sflag != 0 && jflag != 0) {
 		// XXX: ugly, use templates
 		// use findMod()
+		double freq, weight;
 		if (mflag == 1) {
 			std::vector<POLY> minhash;
 			std::vector<std::vector<POLY> > matrix;
@@ -390,8 +399,10 @@ main(int argc, char *argv[])
 			str sigbuf;
 			int col;
 
-			for (int i = 0; i < (int)sigList.size(); i++) {
-				sig = sigList[i];
+			for (mapType::iterator itr = allT[0].begin(); itr != allT[0].end(); itr++) {
+				sig = itr->first;
+				freq = itr->second[0];
+				weight = itr->second[1];
 				int kc = sig.size();
 				warnx << "kc: " << kc << "\n";
 				int lc = 10;
@@ -420,7 +431,7 @@ main(int argc, char *argv[])
 
 				minhash = myLSH->getHashCodeFindMod(sig, myLSH->getIRRPoly());
 
-				warnx << "minhash.size(): " << minhash.size() << "\n";
+				//warnx << "minhash.size(): " << minhash.size() << "\n";
 				if (plist == 1) {
 					warnx << "minhash IDs:\n";
 					for (int i = 0; i < (int)minhash.size(); i++) {
@@ -448,8 +459,10 @@ main(int argc, char *argv[])
 			std::vector<POLY> sig;
 			int col;
 
-			for (int i = 0; i < (int)sigList.size(); i++) {
-				sig = sigList[i];
+			for (mapType::iterator itr = allT[0].begin(); itr != allT[0].end(); itr++) {
+				sig = itr->first;
+				freq = itr->second[0];
+				weight = itr->second[1];
 				int kc = sig.size();
 				warnx << "kc: " << kc << "\n";
 				int lc = 10;
@@ -459,7 +472,7 @@ main(int argc, char *argv[])
 				lsh *myLSH = new lsh(kc, lc, mc, nc, irrpolyfile);
 				minhash = myLSH->getHashCode(sig);
 
-				warnx << "minhash.size(): " << minhash.size() << "\n";
+				//warnx << "minhash.size(): " << minhash.size() << "\n";
 				if (plist == 1) {
 					warnx << "minhash IDs:\n";
 					for (int i = 0; i < (int)minhash.size(); i++) {
@@ -832,10 +845,10 @@ read_gossip(int fd)
 
 	if (seq < txseq.back()) {
 		warnx << "discarding: rxseq < txseq\n";
-		return;
+		if (discardmsg == 1) return;
 	} else if (seq > txseq.back()) {
 		warnx << "discarding: rxseq > txseq\n";
-		return;
+		if (discardmsg == 1) return;
 	}
 
 #ifdef _DEBUG_
@@ -868,6 +881,7 @@ getdir(std::string dir, std::vector<std::string> &files)
 	DIR *dp;
 	struct dirent *dirp;
 
+	// TODO: move to main
 	if ((dp = opendir(dir.c_str())) == NULL) {
 		fatal("can't read dir\n");
 		return errno;
@@ -1431,6 +1445,7 @@ usage(void)
 {
 	warn << "Usage: " << __progname << " [-h] [options...]\n\n";
 	warn << "Options:\n"
+	     << "	-c		discard out-of-round messages\n"
 	     << "	-d		<random prime number for LSH seed>\n"
 	     << "	-G		<gossip socket>\n"
 	     << "      	-i		<how often>\n"
