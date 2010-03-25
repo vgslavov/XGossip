@@ -1,4 +1,4 @@
-/* $Id$ */
+/*	$Id: dhblock_noauth_srv.C,v 1.2 2009/12/18 19:20:52 vsfgd Exp vsfgd $	*/
 
 #include <iostream>
 
@@ -126,17 +126,20 @@ dhblock_noauth_srv::real_store (chordID dbkey,
 void
 write_gossip(int fd, strbuf buf)
 {
+	// success (1), EAGAIN (0), other write error (-1)
 	int n = buf.tosuio()->output(fd);
 
 	if (n < 0) {
 		warnx << "gossip: write_gossip failed\n";
+		// disable writability callback?
+		fdcb(fd, selwrite, 0);
 		return;
 	}
-	
+
 	// still writing
 	if (buf.tosuio()->resid()) return;
 
-	// done writing
+	// done writing (0 or NULL?)
 	fdcb(fd, selwrite, 0);
 }
 
@@ -173,8 +176,10 @@ dhblock_noauth_srv::adjust_data (chordID key, str new_data, str prev_data,
 	if (gtype == GOSSIP) {
 		extern str gsock;
 		//warnx << "TYPE: GOSSIP (" << gtype << ")";
-    		str gElem(new_elems[0].cstr()+sizeof(gtype),
-			  new_elems[0].len()-sizeof(gtype));
+		// strip GOSSIP msg type
+    		//str gElem(new_elems[0].cstr()+sizeof(gtype),
+		//	  new_elems[0].len()-sizeof(gtype));
+		//str gElem(new_elems[0].cstr());
 
                 //getKeyValue(gElem.cstr(), gKey, sum, weight);
 		//std::cout << ", KEY: " << gKey << ", VALUE (s, w): (" << sum
@@ -193,6 +198,8 @@ dhblock_noauth_srv::adjust_data (chordID key, str new_data, str prev_data,
 		//make_async(fd);
 		strbuf buf;
 		buf << gElem;
+		//warnx << "gossip: buf.len: " << buf.len() << "\n";
+		warnx << "gossip: gElem.len(): " << gElem.len() << "\n";
 		//buf << "KEY:" << gKey << ",VALUE:" << gValue;
 		fdcb(fd, selwrite, wrap(write_gossip, fd, buf));
 
