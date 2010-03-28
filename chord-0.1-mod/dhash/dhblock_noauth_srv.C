@@ -1,4 +1,4 @@
-/*	$Id: dhblock_noauth_srv.C,v 1.2 2009/12/18 19:20:52 vsfgd Exp vsfgd $	*/
+/*	$Id: dhblock_noauth_srv.C,v 1.3 2010/03/25 19:01:03 vsfgd Exp vsfgd $	*/
 
 #include <iostream>
 
@@ -173,13 +173,13 @@ dhblock_noauth_srv::adjust_data (chordID key, str new_data, str prev_data,
 	str gKey;
 	memcpy(&gtype, new_elems[0].cstr(), sizeof(gtype));
 
-	if (gtype == GOSSIP) {
+	if ((gtype == GOSSIP) || (gtype == INITGOSSIP)) {
 		extern str gsock;
-		//warnx << "TYPE: GOSSIP (" << gtype << ")";
+		warnx << "TYPE = " << gtype << "\n";
 		// strip GOSSIP msg type
     		//str gElem(new_elems[0].cstr()+sizeof(gtype),
 		//	  new_elems[0].len()-sizeof(gtype));
-		//str gElem(new_elems[0].cstr());
+		str gElem(new_elems[0].cstr(), new_elems[0].len());
 
                 //getKeyValue(gElem.cstr(), gKey, sum, weight);
 		//std::cout << ", KEY: " << gKey << ", VALUE (s, w): (" << sum
@@ -199,7 +199,7 @@ dhblock_noauth_srv::adjust_data (chordID key, str new_data, str prev_data,
 		strbuf buf;
 		buf << gElem;
 		//warnx << "gossip: buf.len: " << buf.len() << "\n";
-		warnx << "gossip: gElem.len(): " << gElem.len() << "\n";
+		//warnx << "gossip: gElem.len(): " << gElem.len() << "\n";
 		//buf << "KEY:" << gKey << ",VALUE:" << gValue;
 		fdcb(fd, selwrite, wrap(write_gossip, fd, buf));
 
