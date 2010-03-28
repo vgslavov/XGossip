@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.32 2010/03/18 05:58:32 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.33 2010/03/25 14:06:50 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.32 2010/03/18 05:58:32 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.33 2010/03/25 14:06:50 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -481,17 +481,42 @@ main(int argc, char *argv[])
 				}
 
 				matrix.push_back(minhash);
+
+				//srand(time(NULL));
+				srand(loseed);
+				int range = (int)minhash.size();
+				col = int((double)range * rand() / (RAND_MAX + 1.0));
+				warnx << "random col: " << col << "\n";
+				ID = (matrix.back())[col];
+				warnx << "ID in col: " << ID << "\n";
+				if (gflag == 1) {
+					strbuf t;
+					t << ID;
+					str key(t);
+					makeKeyValue(&value, valLen, key, sig, freq, weight, INITGOSSIP);
+					status = insertDHT(ID, value, valLen, MAXRETRIES);
+					cleanup(value);
+
+					// do not exit if insert FAILs!
+					if (status != SUCC) {
+						warnx << "insert FAILed\n";
+					} else {
+						warnx << "insert SUCCeeded\n";
+					}
+
+					warnx << "sleeping...\n";
+					sleep(intval);
+				}
+
 				delete myLSH;
 			}
-			//srand(time(NULL));
-			srand(loseed);
-			int range = (int)minhash.size();
-			col = int((double)range * rand() / (RAND_MAX + 1.0));
-
+		
+			/*
 			warnx << "chordIDs in random column " << col << ":\n";
 			for (int i = 0; i < (int)matrix.size(); i++) {
 				warnx << matrix[i][col] << "\n";;
 			}
+			*/
 		}
 
 		return 0;
@@ -522,8 +547,8 @@ main(int argc, char *argv[])
 			strbuf z;
 			z << ID;
 			str key(z);
-			std::vector<POLY> sig;
-			sig.clear();
+			//std::vector<POLY> sig;
+			//sig.clear();
 
 			//pthread_mutex_lock(&lock);
 			double beginTime = getgtod();    
@@ -770,9 +795,11 @@ read_gossip(int fd)
 	strbuf buf;
 	strbuf totalbuf;
 	str key;
+	str sigbuf;
 	std::vector<std::vector<POLY> > sigList;
 	std::vector<double> freqList;
 	std::vector<double> weightList;
+	InsertType msgtype;
 	int n, msglen, recvlen; 
 	int ret, seq;
 
@@ -821,13 +848,40 @@ read_gossip(int fd)
 		buf.tosuio()->clear();
 
 	// XXX: InsertType
-	} while ((recvlen + (int)sizeof(int)) < msglen);
+	//} while ((recvlen + (int)sizeof(int)) < msglen);
+	} while (recvlen < msglen);
 
 	str gmsg(totalbuf);
 	sigList.clear();
 	freqList.clear();
 	weightList.clear();
-	//assert(gmsg);
+
+	msgtype = getKeyValueType(gmsg.cstr());
+	warnx << " type: ";
+	if (msgtype == GOSSIP)
+		warnx << "GOSSIP";
+	else if (msgtype == INITGOSSIP) {
+		warnx << "INITGOSSIP";
+		warnx << "\n";
+		double freq, weight;
+		std::vector<POLY> sig;
+		sig.clear();
+		ret = getKeyValue(gmsg.cstr(), key, sig, freq, weight, recvlen);
+		sig2str(sig, sigbuf);
+		warnx << "sig: " << sigbuf;
+		printdouble(" freq: ", freq);
+		printdouble(" weight: ", weight);
+		warnx << "\n";
+		if (ret == -1) {
+			fdcb(fd, selread, 0);
+			close(fd);
+			return;
+		}
+
+		return;
+	} else
+		warnx << "invalid";
+
 	ret = getKeyValue(gmsg.cstr(), key, sigList, freqList, weightList, seq, recvlen);
 	if (ret == -1) {
 		fdcb(fd, selread, 0);
@@ -839,20 +893,28 @@ read_gossip(int fd)
 	      << " rxseq: " << seq
 	      << " txseq-cur: " << txseq.back()
 	      << " rxID: " << key << "\n";
-	// TODO: check if sizes are the same?
-	//warnx << ", freqList size: " << freqList.size()
-	//warnx << ", weightList size: " << weightList.size() << "\n";
 
-	if (seq < txseq.back()) {
-		warnx << "discarding: rxseq < txseq\n";
-		if (discardmsg == 1) return;
-	} else if (seq > txseq.back()) {
-		warnx << "discarding: rxseq > txseq\n";
-		if (discardmsg == 1) return;
+	// count rounds off by one
+	n = seq - txseq.back();
+	if (n < 0) {
+		warnx << "warning: rxseq<txseq n: " << abs(n) << "\n";
+		if (discardmsg == 1) {
+			if (abs(n) != 1) {
+				warnx << "warning: msg discarded\n";
+				return;
+			}
+		}
+	} else if (n > 0) {
+		warnx << "warning: rxseq>txseq n: " << n << "\n";
+		if (discardmsg == 1) {
+			if (n != 1) {
+				warnx << "warning: msg discarded\n";
+				return;
+			}
+		}
 	}
 
 #ifdef _DEBUG_
-	str sigbuf;
 	for (int i = 0; i < (int) sigList.size(); i++) {
 		sig2str(sigList[i], sigbuf);
 		warnx << "sig[" << i << "]: " << sigbuf << "\n";
@@ -1448,6 +1510,8 @@ usage(void)
 	     << "	-c		discard out-of-round messages\n"
 	     << "	-d		<random prime number for LSH seed>\n"
 	     << "	-G		<gossip socket>\n"
+	     << "	-H		generate chordIDs/POLYs using LSH when gossiping\n"
+					"\t\t\t(requires  -g, -s, -d, -j)\n"
 	     << "      	-i		<how often>\n"
 	     << "      	-j		<irrpoly file>\n"
 	     << "	-L		<log file>\n"
@@ -1460,7 +1524,7 @@ usage(void)
 	     << "	-u		convert multiset to set\n\n"
 	     << "Actions:\n"
 	     << "	-g		gossip (requires -S, -G, -s, -i)\n"
-	     << "	-H		generate chordIDs/POLYs using LSH (requires -s, -d, -j)\n"
+	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j)\n"
 	     << "	-l		listen for gossip (requires -S, -G, -L)\n"
 	     << "	-r		read signatures (requires -s)\n"
 	     << "	-v		print version\n"
