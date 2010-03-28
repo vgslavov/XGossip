@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.23 2010/03/15 20:26:11 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.24 2010/03/17 00:19:14 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -911,25 +911,45 @@ void getKeyValue(const char* buf, str& key, std::vector<POLY>& value)
 	return;
 }
 
-// vsfgd: gpsi (current)
+// vsfgd: xgossip (current)
 int getKeyValueLen(const char* buf)
 {
+	const char *lenPtr;
+	InsertType tmp;
 	int len;
-	memcpy(&len, buf, sizeof(len));
+	lenPtr = buf + sizeof(tmp);
+	memcpy(&len, lenPtr, sizeof(len));
 	return len;
 }
 
-// vsfgd: gpsi (current)
-// format: <total len><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
+// vsfgd: xgossip (current)
+InsertType getKeyValueType(const char* buf)
+{
+	InsertType msgType;
+	memcpy(&msgType, buf, sizeof(msgType));
+	return msgType;
+}
+
+// vsfgd: xgossip (current)
+// format: <msgtype><totallen><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
 int getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sigList, std::vector<double>& freqList, std::vector<double>& weightList, int& seq, int recvlen)
 {
+	// copy msgtype
+	InsertType msgType;
+	memcpy(&msgType, buf, sizeof(msgType));
+
 	// copy len
+	const char *lenPtr;
 	int len;
-	memcpy(&len, buf, sizeof(len));
+	lenPtr = buf + sizeof(msgType);
+	memcpy(&len, lenPtr, sizeof(len));
 	//warnx << "getKeyValue: msglen: " << len << "\n";
 
 	// XXX: InsertType
-	if ((recvlen + (int)sizeof(int)) != len) {
+	//if ((recvlen + (int)sizeof(int)) != len) {
+	if (recvlen != len) {
+		//warnx << "getKeyValue: recvlen: " << recvlen
+		//	<< " len: "<< len << "\n";
 		warnx << "getKeyValue: len doesn't match\n";
 		return -1;
 	}
@@ -937,7 +957,7 @@ int getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sigL
 	// copy keysize
 	const char *keySizePtr;
 	int keySize;
-	keySizePtr = buf + sizeof(len);
+	keySizePtr = lenPtr + sizeof(len);
 	memcpy(&keySize, keySizePtr, sizeof(keySize));
 
 	// copy key
@@ -1002,47 +1022,67 @@ int getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sigL
 	return 0;
 }
 
-// vsfgd: gpsi (old)
+// vsfgd: xgossip+ init (current)
 // format: <size><key><size><sig><size><freq><size><seq>
-void getKeyValue(const char* buf, str& key, std::vector<POLY>& value, double& freq, int& seq)
+// format: <msgtype><msglen><keysize><key><sigsize><sig><freq><weight>
+int getKeyValue(const char* buf, str& key, std::vector<POLY>& sig, double& freq, double& weight, int recvlen)
 {
-	const char *keyPtr;
-	int keySize;
-	memcpy(&keySize, buf, sizeof(keySize));
-	keyPtr = buf + sizeof(keySize);
+	// copy msgtype
+	InsertType msgType;
+	memcpy(&msgType, buf, sizeof(msgType));
 
+	// copy len
+	const char *lenPtr;
+	int len;
+	lenPtr = buf + sizeof(msgType);
+	memcpy(&len, lenPtr, sizeof(len));
+	//warnx << "getKeyValue: msglen: " << len << "\n";
+
+	// XXX: InsertType
+	//if ((recvlen + (int)sizeof(int)) != len) {
+	if (recvlen != len) {
+		//warnx << "getKeyValue: recvlen: " << recvlen
+		//	<< " len: "<< len << "\n";
+		warnx << "getKeyValue: len doesn't match\n";
+		return -1;
+	}
+
+	// copy keysize
+	const char *keySizePtr;
+	int keySize;
+	keySizePtr = lenPtr + sizeof(len);
+	memcpy(&keySize, keySizePtr, sizeof(keySize));
+
+	// copy key
+	const char *keyPtr;
+	keyPtr = keySizePtr + sizeof(keySize);
 	key = str(keyPtr, keySize);
 
-	const char *valPtr;
-	int valLen;
-	valPtr = keyPtr + keySize;
+	// copy siglen
+	const char *sigLenPtr;
+	int sigLen;
+	sigLenPtr = keyPtr + keySize;
+	memcpy(&sigLen, sigLenPtr, sizeof(sigLen));
 
-	memcpy(&valLen, valPtr, sizeof(valLen));
-	valPtr += sizeof(valLen);
+	sigLenPtr += sizeof(sigLen);
 
-	const POLY *ptr = (POLY *) valPtr;
+	const POLY *ptr = (POLY *) sigLenPtr;
 
-	for (int i = 0; i < valLen/(int) sizeof(POLY); i++) {
-		value.push_back(ptr[i]);
+	for (int i = 0; i < sigLen/(int) sizeof(POLY); i++) {
+		sig.push_back(ptr[i]);
 	}
 	
+	// copy freq
 	const char *freqPtr;
-	int freqSize;
-	freqPtr = valPtr + valLen;
-
-	memcpy(&freqSize, freqPtr, sizeof(freqSize));
-	freqPtr += sizeof(freqSize);
+	freqPtr = sigLenPtr + sigLen;
 	memcpy(&freq, freqPtr, sizeof(freq));
 
-	const char *seqPtr;
-	int seqSize;
-	seqPtr = freqPtr + freqSize;
+	// copy weight
+	const char *weightPtr;
+	weightPtr = freqPtr + sizeof(freq);
+	memcpy(&weight, weightPtr, sizeof(weight));
 
-	memcpy(&seqSize, seqPtr, sizeof(seqSize));
-	seqPtr += sizeof(seqSize);
-	memcpy(&seq, seqPtr, sizeof(seq));
-
-	return;
+	return 0;
 }
 
 void makeSigData(str& sigdata, std::vector<std::vector<POLY> >& listOfSigs, 
@@ -1182,14 +1222,14 @@ void makeKeyValue(char **ptr, int& len, str& key, std::vector<POLY>& sig,
 	return;
 }
 
-// vsfgd: gpsi (current)
-// format: <type><total len><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
+// vsfgd: xgossip (current)
+// format: <msgtype><msglen><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
 void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, std::vector<double>, CompareSig>& sigList, int& seq, InsertType type)
 {
 	int keyLen = key.len();
 	//warnx << "LENGTH: ++++ " << keyLen << "\n";
 	
-	// type + total len + keysize + key + seq + siglistlen
+	// msgtype + msglen + keysize + key + seq + siglistlen
 	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(int) + sizeof(int);
 
 	int sigListLen = sigList.size();
@@ -1399,32 +1439,30 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, do
 	return;
 }
 
-// vsfgd: gpsi (old)
-// format: <type><size><key><size><sig><size><freq><size><seq>
-void makeKeyValue(char **ptr, int& len, str& key, std::vector<POLY>& sig, double& freq, int& seq, InsertType type)
+// vsfgd: xgossip+ init (current)
+// format: <msgtype><msglen><keysize><key><sigsize><sig><freq><weight>
+void makeKeyValue(char **ptr, int& len, str& key, std::vector<POLY>& sig, double& freq, double& weight, InsertType type)
 {
 	int keyLen = key.len();
 	//warnx << "LENGTH: ++++ " << keyLen << "\n";
-	int valLen = sig.size() * sizeof(POLY);
-	int freqLen = sizeof(freq);
-	int seqLen = sizeof(seq);
+	int sigLen = sig.size() * sizeof(POLY);
 	
-	if (type == NONE) {
-		len = sizeof(int) + keyLen + sizeof(int) + valLen;
-	} else {
-		// type + keysize + key + sigsize + sig + freqsize + freq + seqsize + seq
-		len = sizeof(int) + sizeof(int) + keyLen + sizeof(int) + valLen + sizeof(int) + freqLen + sizeof(int) + seqLen;
-	}
+	// msgtype + msglen + keysize + key + sigsize + sig + freq + weight
+	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(int) + sigLen + sizeof(double) + sizeof(double);
 	
-	*ptr = new char[len];
+	// TODO: New vs new?
+	*ptr = New char[len];
+	//*ptr = new char[len];
 	assert(ptr);
 	char *buf = *ptr;
 
-	if (type != NONE) {
-		// Copy type
-		memcpy(buf, &type, sizeof(type));
-		buf += sizeof(type);
-	}
+	// Copy msgtype
+	memcpy(buf, &type, sizeof(type));
+	buf += sizeof(type);
+
+	// Copy msglen
+	memcpy(buf, &len, sizeof(len));
+	buf += sizeof(len);
 
 	// Copy key
 	memcpy(buf, &keyLen, sizeof(keyLen));
@@ -1432,26 +1470,23 @@ void makeKeyValue(char **ptr, int& len, str& key, std::vector<POLY>& sig, double
 	memcpy(buf, key.cstr(), keyLen);
 	buf += keyLen;
 
-	// Copy value
-	memcpy(buf, &valLen, sizeof(valLen));
-	buf += sizeof(valLen);
+	// Copy siglen
+	memcpy(buf, &sigLen, sizeof(sigLen));
+	buf += sizeof(sigLen);
 
 	POLY *sigPtr = (POLY *) buf;
 	for (int i = 0; i < (int) sig.size(); i++) {
 		sigPtr[i] = sig[i];
 	}
-	buf += valLen;
+	buf += sigLen;
 
 	// Copy freq
-	memcpy(buf, &freqLen, sizeof(freqLen));
-	buf += sizeof(freqLen);
 	memcpy(buf, &freq, sizeof(freq));
-	buf += freqLen;
+	buf += sizeof(freq);
 
-	// Copy seq
-	memcpy(buf, &seqLen, sizeof(seqLen));
-	buf += sizeof(seqLen);
-	memcpy(buf, &seq, sizeof(seq));
+	// Copy weight
+	memcpy(buf, &weight, sizeof(weight));
+	buf += sizeof(weight);
 
 	return;
 }
