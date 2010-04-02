@@ -1,4 +1,4 @@
-/*	$Id: utils.h,v 1.5 2010/03/17 00:19:37 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.h,v 1.6 2010/03/28 16:30:25 vsfgd Exp dp244 $	*/
 
 // Author: Praveen Rao
 #ifndef _UTILS_H_
@@ -65,7 +65,7 @@ class lsh {
         void getUniqueSet(std::vector<POLY>& inputPols);
 	// new version
 	void multiplyPoly(std::vector<POLY>& result, const std::vector<POLY>& mult, POLY multiplier);
-
+         void multiplyPoly(std::vector<POLY>& result, const std::vector<POLY>& mult, std::vector<POLY> multiplier);
 	// obsolete: instead give prime number when you create LSH object
 	//int getPrimeNumberFromConfig(char* configFileName);
 	// already in utils.C
