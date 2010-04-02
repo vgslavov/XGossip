@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.24 2010/03/17 00:19:14 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.25 2010/03/28 16:30:01 vsfgd Exp dp244 $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -2126,6 +2126,8 @@ lsh::getUniqueSet(std::vector<POLY>& inputPols)
     for ( unsigned int i = 0; i< inputPols.size(); i++){
       polNums.push_back(inputPols[i]);
     }
+//change it apr 1, 2010
+    std::vector<POLY> temp_d;
     std::vector<POLY> result;
     std::vector<POLY>::iterator it;
     it = unique(polNums.begin(), polNums.end());
@@ -2139,7 +2141,11 @@ lsh::getUniqueSet(std::vector<POLY>& inputPols)
                if ( count[i] > 0 ){
 /* for the time being, this operation is withheld*/
                    polManipulate.push_back(inputPols[j]);
-                   multiplyPoly(result,polManipulate,irr[count[i]-1]);
+                   temp_d.push_back(irr[count[i]-1]);
+                   //multiplyPoly(result,polManipulate,irr[count[i]-1]);
+                   multiplyPoly(result,polManipulate,temp_d);
+                    temp_d.clear();
+                   //
                    inputPols[j] = result[0];
                    polManipulate.clear();
                    result.clear();
