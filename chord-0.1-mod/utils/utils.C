@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.26 2010/04/02 04:07:02 dp244 Exp dp244 $	*/
+/*	$Id: utils.C,v 1.27 2010/04/02 04:12:57 dp244 Exp dp244 $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -481,7 +481,7 @@ void gcd(std::vector<POLY>& resPoly, const std::vector<POLY>& f, const std::vect
 }
 
 // Multiply two polynomials
-void lsh::multiplyPoly(std::vector<POLY>& res, const std::vector<POLY>& f,
+void multiplyPoly(std::vector<POLY>& res, const std::vector<POLY>& f,
 									const std::vector<POLY>& g)
 {
 	std::vector<POLY> partialProd;
