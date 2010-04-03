@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.27 2010/04/02 04:12:57 dp244 Exp dp244 $	*/
+/*	$Id: utils.C,v 1.28 2010/04/03 13:26:27 dp244 Exp dp244 $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -2054,8 +2054,9 @@ int enlargement(std::vector<POLY>& entrySig, std::vector<POLY>& sig)
 
 // Polynomial processing functions!
 // Multiply the multiplicand with the multiplier
+/*
 void
-lsh::multiplyPoly(std::vector<POLY>& result, const std::vector<POLY>& mult, POLY multiplier)
+multiplyPoly(std::vector<POLY>& result, const std::vector<POLY>& mult, POLY multiplier)
 {
         std::vector<POLY> res;
         std::vector<POLY> multiplicand;
@@ -2105,7 +2106,7 @@ lsh::multiplyPoly(std::vector<POLY>& result, const std::vector<POLY>& mult, POLY
 		result.push_back(res[i]);
 	}
 }
-
+*/
 //std::vector<POLY>
 void
 lsh::getUniqueSet(std::vector<POLY>& inputPols)
