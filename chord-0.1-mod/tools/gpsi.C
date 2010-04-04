@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.33 2010/03/25 14:06:50 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.34 2010/03/28 16:29:26 vsfgd Exp vsfgd $	*/
 
 #include <cmath>
 #include <cstdio>
@@ -21,6 +21,7 @@
 
 //#include <pthread.h>
 
+#include "../utils/id_utils.h"
 #include "../utils/utils.h"
 #include "nodeparams.h"
 #include "gpsi.h"
@@ -28,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.33 2010/03/25 14:06:50 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.34 2010/03/28 16:29:26 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -38,9 +39,15 @@ chordID maxID;
 static const char* dsock;
 static const char* gsock;
 static char *logfile;
+static char *irrpolyfile;
+int lshseed;
 int plist = 0;
 int discardmsg = 0;
 int peers = 0;
+
+// TODO: command line args?
+int lfuncs = 10;
+int mgroups = 20;
  
 void accept_connection(int);
 void add2vecomap(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
@@ -48,7 +55,11 @@ int getdir(std::string, std::vector<std::string>&);
 void calcfreq(std::vector<std::vector <POLY> >);
 void calcfreqM(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 void calcfreqO(std::vector<std::vector <POLY> >);
+void doublefreq(int);
+void inform_team(std::vector<chordID>);
+void initgossiprecv(std::vector<POLY>, double, double);
 DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
+std::vector<POLY> inverse(std::vector<POLY>);
 void listen_gossip(void);
 //void *listen_gossip(void *);
 void merge_lists(void);
@@ -205,10 +216,9 @@ main(int argc, char *argv[])
 
 	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, uflag;
 
-	int ch, intval, nids, lshseed, valLen;
+	int ch, intval, nids, valLen;
 	int logfd;
 	char *value;
-	char *irrpolyfile;
 	struct stat statbuf;
 	time_t rawtime;
 	chordID ID;
@@ -317,9 +327,11 @@ main(int argc, char *argv[])
 		for (int i = 0; i < nids; i++) {
 			strbuf t;
 			ID = make_randomID();
-			t << ID;
-			str tmpkey(t);
-			warnx << tmpkey << "\n";
+			//t << ID;
+			//str tmpkey(t);
+			//warnx << tmpkey << "\n";
+			warnx << "ID: " << ID << "\n";
+			warnx << "successorID: " << successorID(ID, 0) << "\n";
 			//sleep(5);
 		}
 		return 0;
@@ -403,13 +415,8 @@ main(int argc, char *argv[])
 				sig = itr->first;
 				freq = itr->second[0];
 				weight = itr->second[1];
-				int kc = sig.size();
-				warnx << "kc: " << kc << "\n";
-				int lc = 10;
-				int mc = 20;
-				int nc = lshseed;
 
-				lsh *myLSH = new lsh(kc, lc, mc, nc, irrpolyfile);
+				lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
 
 				// convert multiset to set
 				if (uflag == 1) {
@@ -459,17 +466,20 @@ main(int argc, char *argv[])
 			std::vector<POLY> sig;
 			int col;
 
+			if (gflag == 1) {
+				warnx << "listening for gossip...\n";
+				listen_gossip();		
+				sleep(5);
+				warnx << "gossiping...\n";
+				warnx << "interval: " << intval << "\n";
+			}
+
 			for (mapType::iterator itr = allT[0].begin(); itr != allT[0].end(); itr++) {
 				sig = itr->first;
 				freq = itr->second[0];
 				weight = itr->second[1];
-				int kc = sig.size();
-				warnx << "kc: " << kc << "\n";
-				int lc = 10;
-				int mc = 20;
-				int nc = lshseed;
 
-				lsh *myLSH = new lsh(kc, lc, mc, nc, irrpolyfile);
+				lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
 				minhash = myLSH->getHashCode(sig);
 
 				//warnx << "minhash.size(): " << minhash.size() << "\n";
@@ -489,6 +499,7 @@ main(int argc, char *argv[])
 				warnx << "random col: " << col << "\n";
 				ID = (matrix.back())[col];
 				warnx << "ID in col: " << ID << "\n";
+
 				if (gflag == 1) {
 					strbuf t;
 					t << ID;
@@ -569,6 +580,9 @@ main(int argc, char *argv[])
 			// do not exit if insert FAILs!
 			if (status != SUCC) {
 				warnx << "insert FAILed\n";
+				// to preserve mass conservation:
+				// "send" msg to yourself
+				doublefreq(0);
 			} else {
 				warnx << "insert SUCCeeded\n";
 			}
@@ -867,17 +881,21 @@ read_gossip(int fd)
 		std::vector<POLY> sig;
 		sig.clear();
 		ret = getKeyValue(gmsg.cstr(), key, sig, freq, weight, recvlen);
-		sig2str(sig, sigbuf);
-		warnx << "sig: " << sigbuf;
-		printdouble(" freq: ", freq);
-		printdouble(" weight: ", weight);
-		warnx << "\n";
 		if (ret == -1) {
 			fdcb(fd, selread, 0);
 			close(fd);
 			return;
 		}
 
+		sig2str(sig, sigbuf);
+		warnx << "rxID: " << key;
+		warnx << " sig: " << sigbuf;
+		printdouble(" freq: ", freq);
+		printdouble(" weight: ", weight);
+		warnx << "\n";
+
+		initgossiprecv(sig, freq, weight);
+		
 		return;
 	} else
 		warnx << "invalid";
@@ -1009,6 +1027,72 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 	warnx << "readsig: Size of sig list: " << sigList.size() << "\n";
 	finishTime = getgtod();
 	fclose(sigfp);
+}
+
+void
+initgossiprecv(std::vector<POLY> sig, double freq, double weight)
+{
+	str sigbuf;
+	std::vector<POLY> isig;
+
+	isig.clear();
+	isig = inverse(sig);
+	sig2str(isig, sigbuf);
+	warnx << "isig: " << sigbuf << "\n";
+
+	mapType::iterator itr1 = allT[0].find(sig);
+	mapType::iterator itr2 = allT[0].find(isig);
+	if ((itr1 != allT[0].end()) && (sig[0] != 0)) {
+		// update freq
+		itr1->second[0] += freq;
+	} else if ((itr1 != allT[0].end()) && (itr2 != allT[0].end())) {
+		// delete special multiset tuple
+		allT[0].erase(itr2);
+	} else {
+		if ((sig[0] == 0) && (itr2 != allT[0].end())) {
+			// delete regular multiset tuple
+			allT[0].erase(itr1);
+		} else {
+			allT[0][sig].push_back(freq);
+			allT[0][sig].push_back(weight);
+
+			lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
+			std::vector<chordID> minhash = myLSH->getHashCode(sig);
+
+			inform_team(minhash);
+
+			delete myLSH;
+		}
+	}
+}
+
+void
+inform_team(std::vector<chordID> minhash)
+{
+
+}
+
+// TODO: make more efficient? in-place instead?
+std::vector<POLY>
+inverse(std::vector<POLY> sig)
+{
+	std::vector<POLY> isig;
+	isig.clear();
+
+	if (sig[0] == 0) {
+		// convert to regular multiset
+		for (int i = 1; i < (int) sig.size(); i++)
+			isig.push_back(sig[i]);
+		return isig;
+	} else {
+		// convert to special multiset
+		// TODO: what's faster?
+		sig.insert(sig.begin(), 1, 0);
+		//isig.push_back(0);
+		//for (int i = 0; i < (int) sig.size(); i++)
+		//	isig.push_back(sig[i]);
+		return sig;
+	}
 }
 
 bool
@@ -1241,6 +1325,21 @@ merge_lists()
 }
 
 void
+doublefreq(int listnum)
+{
+	double freq, weight;
+
+	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
+
+		freq = itr->second[0];
+		itr->second[0] = freq * 2;
+		weight = itr->second[1];
+		itr->second[1] = weight * 2;
+	}
+	warnx << "doublefreq: setsize: " << allT[listnum].size() << "\n";
+}
+
+void
 splitfreq(int listnum)
 {
 	double freq, weight;
@@ -1274,6 +1373,7 @@ printlist(int listnum, int seq)
 	double sumavg = 0;
 	double sumsum = 0;
 	std::vector<POLY> sig;
+	std::vector<POLY> isig;
 	str sigbuf;
 
 	warnx << "list T_" << listnum << ": " << seq << " " << allT[listnum].size() << "\n";
@@ -1287,6 +1387,12 @@ printlist(int listnum, int seq)
 		sumavg += avg;
 		sumsum += (avg * peers);
 
+		isig = inverse(sig);
+		sig2str(isig, sigbuf);
+		warnx << "isig" << n << ": " << sigbuf << "\n";
+		isig = inverse(isig);
+		sig2str(isig, sigbuf);
+		warnx << "isig^2" << n << ": " << sigbuf << "\n";
 		sig2str(sig, sigbuf);
 		warnx << "sig" << n << ": " << sigbuf;
 		printdouble(" ", freq);
