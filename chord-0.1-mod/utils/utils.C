@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.29 2010/04/03 13:32:25 dp244 Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.30 2010/04/12 03:35:57 vsfgd Exp dp244 $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -2118,6 +2118,13 @@ void
 lsh::getUniqueSet(std::vector<POLY>& inputPols)
 {
 
+//
+////-- first element 0
+ if ( inputPols[0] == 0 ) {
+          inputPols.erase(inputPols.begin());
+                     }
+         else{
+
     std::ifstream irrpoltxt;
     POLY pol;
     std::vector<POLY> irr;
@@ -2161,6 +2168,7 @@ lsh::getUniqueSet(std::vector<POLY>& inputPols)
           }
         }
       }
+    }// first element 0
 
     //return  inputPols;
 }
