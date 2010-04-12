@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.28 2010/04/03 13:26:27 dp244 Exp dp244 $	*/
+/*	$Id: utils.C,v 1.29 2010/04/03 13:32:25 dp244 Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -911,7 +911,7 @@ void getKeyValue(const char* buf, str& key, std::vector<POLY>& value)
 	return;
 }
 
-// vsfgd: xgossip (current)
+// vsfgd: xgossip
 int getKeyValueLen(const char* buf)
 {
 	const char *lenPtr;
@@ -922,7 +922,7 @@ int getKeyValueLen(const char* buf)
 	return len;
 }
 
-// vsfgd: xgossip (current)
+// vsfgd: xgossip
 InsertType getKeyValueType(const char* buf)
 {
 	InsertType msgType;
@@ -930,7 +930,7 @@ InsertType getKeyValueType(const char* buf)
 	return msgType;
 }
 
-// vsfgd: xgossip (current)
+// vsfgd: xgossip
 // format: <msgtype><totallen><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
 int getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sigList, std::vector<double>& freqList, std::vector<double>& weightList, int& seq, int recvlen)
 {
@@ -1022,7 +1022,7 @@ int getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sigL
 	return 0;
 }
 
-// vsfgd: xgossip+ init (current)
+// vsfgd: xgossip+ init
 // format: <size><key><size><sig><size><freq><size><seq>
 // format: <msgtype><msglen><keysize><key><sigsize><sig><freq><weight>
 int getKeyValue(const char* buf, str& key, std::vector<POLY>& sig, double& freq, double& weight, int recvlen)
@@ -1222,7 +1222,7 @@ void makeKeyValue(char **ptr, int& len, str& key, std::vector<POLY>& sig,
 	return;
 }
 
-// vsfgd: xgossip (current)
+// vsfgd: xgossip
 // format: <msgtype><msglen><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
 void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, std::vector<double>, CompareSig>& sigList, int& seq, InsertType type)
 {
@@ -1439,7 +1439,13 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, do
 	return;
 }
 
-// vsfgd: xgossip+ init (current)
+// vsfgd: xgossip+ inform_team
+void makeKeyValue(char **ptr, int& len, std::vector<chordID>& minhash, InsertType type)
+{
+
+}
+
+// vsfgd: xgossip+ init
 // format: <msgtype><msglen><keysize><key><sigsize><sig><freq><weight>
 void makeKeyValue(char **ptr, int& len, str& key, std::vector<POLY>& sig, double& freq, double& weight, InsertType type)
 {
