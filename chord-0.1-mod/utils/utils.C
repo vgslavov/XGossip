@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.30 2010/04/12 03:35:57 vsfgd Exp dp244 $	*/
+/*	$Id: utils.C,v 1.31 2010/04/12 04:23:39 dp244 Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -1440,9 +1440,33 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, do
 }
 
 // vsfgd: xgossip+ inform_team
+// format: <msgtype><msglen><chordID>
 void makeKeyValue(char **ptr, int& len, std::vector<chordID>& minhash, InsertType type)
 {
+	warnx << "makeKeyValue: start\n";
 
+	// msgtype + msglen + chordID
+	len = sizeof(int) + sizeof(int) + sizeof(chordID);
+
+	// TODO: New vs new?
+	*ptr = New char[len];
+	//*ptr = new char[len];
+	assert(ptr);
+	char *buf = *ptr;
+
+	// Copy msgtype
+	memcpy(buf, &type, sizeof(type));
+	buf += sizeof(type);
+
+	// Copy msglen
+	memcpy(buf, &len, sizeof(len));
+	buf += sizeof(len);
+
+	// Copy chordID
+	chordID ID = minhash[0];
+	memcpy(buf, &ID, sizeof(ID));
+
+	warnx << "makeKeyValue: end\n";
 }
 
 // vsfgd: xgossip+ init
