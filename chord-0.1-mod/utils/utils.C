@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.31 2010/04/12 04:23:39 dp244 Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.32 2010/04/14 04:04:17 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -1443,11 +1443,10 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, do
 // format: <msgtype><msglen><chordID>
 void makeKeyValue(char **ptr, int& len, std::vector<chordID>& minhash, InsertType type)
 {
-	warnx << "makeKeyValue: start\n";
-
 	// msgtype + msglen + chordID
 	len = sizeof(int) + sizeof(int) + sizeof(chordID);
 
+	warnx << "makeKeyValue: len (allocated): " << len << "\n";
 	// TODO: New vs new?
 	*ptr = New char[len];
 	//*ptr = new char[len];
@@ -1465,8 +1464,6 @@ void makeKeyValue(char **ptr, int& len, std::vector<chordID>& minhash, InsertTyp
 	// Copy chordID
 	chordID ID = minhash[0];
 	memcpy(buf, &ID, sizeof(ID));
-
-	warnx << "makeKeyValue: end\n";
 }
 
 // vsfgd: xgossip+ init
@@ -2082,61 +2079,6 @@ int enlargement(std::vector<POLY>& entrySig, std::vector<POLY>& sig)
 
 // dp244: all LSH code
 
-// Polynomial processing functions!
-// Multiply the multiplicand with the multiplier
-/*
-void
-multiplyPoly(std::vector<POLY>& result, const std::vector<POLY>& mult, POLY multiplier)
-{
-        std::vector<POLY> res;
-        std::vector<POLY> multiplicand;
-        for (unsigned int k = 0; k < mult.size(); k++){
-               multiplicand.push_back(mult[k]);
-        }
-	unsigned long long product = 0;
-
-	//assert(result.size() == multiplicand.size());
-	
-	POLY x;
-	unsigned long long y;
-
-	for (int i = multiplicand.size() - 1; i >= 0; i--) {
-		x = multiplier;
-		y = multiplicand[i];
-                //cout<<" x = "<<x<<" y= "<<y<<" "<<i<<endl;
-		while (x > 0) {
-			if (x & 1 > (POLY) 0) {
-				product = product ^ y;
-			}
-			x = x >> 1;
-			y = y << 1;
-		}
-		// copy the lower bit set to the result
-		//res.insert(res.begin(), product & lowerBitsMask);
-		//res[i] = product & lowerBitsMask;
-		//multiplicand[i] = product & lowerBitsMask;
-
-		// dp244
-                std::string temp;
-                int tempi = multiplicand[i];
-                std::stringstream out;
-                out<<tempi;
-                temp = out.str();
-		product = product >> (sizeof(POLY) * temp.length());
-		//cout<<" prod "<<product<<" "<<temp.length()<<endl;
-	}
-	if (product > 0) {
-		//multiplicand.insert(multiplicand.begin(), product & lowerBitsMask);
-		res.insert(res.begin(), product & lowerBitsMask);
-		//cout<<product<<"    "<< " ........ "<<endl;
-	}
-
-	//cout<<res.size()<<endl;
-	for (unsigned int i=0; i<res.size();i++){
-		result.push_back(res[i]);
-	}
-}
-*/
 //std::vector<POLY>
 void
 lsh::getUniqueSet(std::vector<POLY>& inputPols)

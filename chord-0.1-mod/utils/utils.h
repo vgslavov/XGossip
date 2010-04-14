@@ -1,4 +1,4 @@
-/*	$Id: utils.h,v 1.11 2010/04/03 13:31:00 dp244 Exp vsfgd $	*/
+/*	$Id: utils.h,v 1.12 2010/04/12 03:36:21 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #ifndef _UTILS_H_
@@ -63,14 +63,8 @@ class lsh {
 	POLY isMinimum(std::vector<POLY>& v);
 	POLY getIRRPoly();
         void getUniqueSet(std::vector<POLY>& inputPols);
-	// new version
-	//void multiplyPoly(std::vector<POLY>& result, const std::vector<POLY>& mult, POLY multiplier);
-         //void multiplyPoly(std::vector<POLY>& result, const std::vector<POLY>& mult, const std::vector<POLY>& multiplier);
 	// obsolete: instead give prime number when you create LSH object
 	//int getPrimeNumberFromConfig(char* configFileName);
-	// already in utils.C
-	//int getDegree(IRRPOLY);
-	//POLY findMod(void *, int, IRRPOLY);
 
 	// private variables
 	private:
