@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.32 2010/04/14 04:04:17 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.33 2010/04/14 21:58:15 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -1085,6 +1085,44 @@ int getKeyValue(const char* buf, str& key, std::vector<POLY>& sig, double& freq,
 	return 0;
 }
 
+// vsfgd: xgossip+ inform_team
+// format: <msgtype><msglen><keysize><key>
+int getKeyValue(const char* buf, str& key, int recvlen)
+{
+	// copy msgtype
+	InsertType msgType;
+	memcpy(&msgType, buf, sizeof(msgType));
+
+	// copy len
+	const char *lenPtr;
+	int len;
+	lenPtr = buf + sizeof(msgType);
+	memcpy(&len, lenPtr, sizeof(len));
+	//warnx << "getKeyValue: msglen: " << len << "\n";
+
+	// XXX: InsertType
+	//if ((recvlen + (int)sizeof(int)) != len) {
+	if (recvlen != len) {
+		//warnx << "getKeyValue: recvlen: " << recvlen
+		//	<< " len: "<< len << "\n";
+		warnx << "getKeyValue: len doesn't match\n";
+		return -1;
+	}
+
+	// copy keysize
+	const char *keySizePtr;
+	int keySize;
+	keySizePtr = lenPtr + sizeof(len);
+	memcpy(&keySize, keySizePtr, sizeof(keySize));
+
+	// copy key
+	const char *keyPtr;
+	keyPtr = keySizePtr + sizeof(keySize);
+	key = str(keyPtr, keySize);
+
+	return 0;
+}
+
 void makeSigData(str& sigdata, std::vector<std::vector<POLY> >& listOfSigs, 
 	std::vector<POLY>& valSig, enum OPTYPE OP, enum RetrieveType type)
 {
@@ -1440,11 +1478,13 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, do
 }
 
 // vsfgd: xgossip+ inform_team
-// format: <msgtype><msglen><chordID>
-void makeKeyValue(char **ptr, int& len, std::vector<chordID>& minhash, InsertType type)
+// format: <msgtype><msglen><keysize><key><chordID>
+void makeKeyValue(char **ptr, int& len, str& key, std::vector<chordID>& minhash, InsertType type)
 {
-	// msgtype + msglen + chordID
-	len = sizeof(int) + sizeof(int) + sizeof(chordID);
+	int keyLen = key.len();
+
+	// msgtype + msglen + keysize + key + chordID
+	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(chordID);
 
 	warnx << "makeKeyValue: len (allocated): " << len << "\n";
 	// TODO: New vs new?
@@ -1460,6 +1500,12 @@ void makeKeyValue(char **ptr, int& len, std::vector<chordID>& minhash, InsertTyp
 	// Copy msglen
 	memcpy(buf, &len, sizeof(len));
 	buf += sizeof(len);
+
+	// Copy key
+	memcpy(buf, &keyLen, sizeof(keyLen));
+	buf += sizeof(keyLen);
+	memcpy(buf, key.cstr(), keyLen);
+	buf += keyLen;
 
 	// Copy chordID
 	chordID ID = minhash[0];
@@ -2083,13 +2129,9 @@ int enlargement(std::vector<POLY>& entrySig, std::vector<POLY>& sig)
 void
 lsh::getUniqueSet(std::vector<POLY>& inputPols)
 {
-
-//
-////-- first element 0
- if ( inputPols[0] == 0 ) {
-          inputPols.erase(inputPols.begin());
-                     }
-         else{
+    if (inputPols[0] == 0) {
+        inputPols.erase(inputPols.begin());
+    } else {
 
     std::ifstream irrpoltxt;
     POLY pol;
@@ -2104,9 +2146,8 @@ lsh::getUniqueSet(std::vector<POLY>& inputPols)
     irrpoltxt.close();
 
     for ( unsigned int i = 0; i< inputPols.size(); i++){
-      polNums.push_back(inputPols[i]);
+        polNums.push_back(inputPols[i]);
     }
-//change it apr 1, 2010
     std::vector<POLY> temp_d;
     std::vector<POLY> result;
     std::vector<POLY>::iterator it;
@@ -2119,13 +2160,13 @@ lsh::getUniqueSet(std::vector<POLY>& inputPols)
           if ( !(polNums[i] < inputPols[j])&&
                !(polNums[i] > inputPols[j])){
                if ( count[i] > 0 ){
-/* for the time being, this operation is withheld*/
+                   /* for the time being, this operation is withheld*/
                    polManipulate.push_back(inputPols[j]);
                    temp_d.push_back(irr[count[i]-1]);
                    //multiplyPoly(result,polManipulate,irr[count[i]-1]);
                    multiplyPoly(result,polManipulate,temp_d);
-                    temp_d.clear();
-                   //
+                   temp_d.clear();
+                   
                    inputPols[j] = result[0];
                    polManipulate.clear();
                    result.clear();
@@ -2134,7 +2175,7 @@ lsh::getUniqueSet(std::vector<POLY>& inputPols)
           }
         }
       }
-    }// first element 0
+    }
 
     //return  inputPols;
 }
