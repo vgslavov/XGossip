@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.34 2010/05/08 23:31:05 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.35 2010/05/16 14:29:51 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -926,9 +926,9 @@ int getKeyValueLen(const char* buf)
 InsertType getKeyValueType(const char* buf)
 {
 	InsertType msgType;
-	warnx << "getKeyValueType: before memcpy\n";
+	//warnx << "getKeyValueType: before memcpy\n";
 	memcpy(&msgType, buf, sizeof(msgType));
-	warnx << "getKeyValueType: after memcpy\n";
+	//warnx << "getKeyValueType: after memcpy\n";
 	return msgType;
 }
 
