@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.35 2010/05/16 14:29:51 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.36 2010/05/16 16:13:27 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -729,11 +729,21 @@ void lcm(std::vector<POLY>& t, const std::vector<POLY>& s)
 	return;
 }
 
+// range [1 to r]
 int randomNumGen(int r)
 {
 	static unsigned int seed = (unsigned int) getgtod();
 	int j;
 	j = 1 + (int) (1.0 * r * rand_r(&seed)/(RAND_MAX+1.0));
+	return j;
+}
+
+// range [0 to r-1]
+int randomNumGenZ(int r)
+{
+	static unsigned int seed = (unsigned int) getgtod();
+	int j;
+	j = 0 + (int) (1.0 * r * rand_r(&seed)/(RAND_MAX+1.0));
 	return j;
 }
 
@@ -1262,7 +1272,7 @@ void makeKeyValue(char **ptr, int& len, str& key, std::vector<POLY>& sig,
 	return;
 }
 
-// vsfgd: xgossip
+// vsfgd: xgossip/xgossip+ exec
 // format: <msgtype><msglen><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
 void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, std::vector<double>, CompareSig>& sigList, int& seq, InsertType type)
 {
