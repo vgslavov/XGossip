@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.35 2010/04/04 15:06:20 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.36 2010/05/03 00:40:32 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -9,6 +9,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <typeinfo>
 #include <vector>
 
 #include <dirent.h>
@@ -30,7 +31,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.35 2010/04/04 15:06:20 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.36 2010/05/03 00:40:32 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -41,35 +42,50 @@ static const char* dsock;
 static const char* gsock;
 static char *logfile;
 static char *irrpolyfile;
-int lshseed;
+int lshseed = 0;
 int plist = 0;
+int gflag = 0;
+int uflag = 0;
 int discardmsg = 0;
 int peers = 0;
+bool initphase = 0;
 
 // TODO: command line args?
-int lfuncs = 10;
-int mgroups = 20;
- 
-void accept_connection(int);
+int lfuncs = 5;
+int mgroups = 100;
+
+// map sigs to freq and weight
+typedef std::map<std::vector<POLY>, std::vector<double>, CompareSig> mapType;
+typedef std::vector<mapType> vecomap;
+// local list T_m is stored in allT[0];
+vecomap allT;
+
+// map chordIDs/POLYs to sig indices
+typedef std::map<chordID, std::vector<int> > chordID2sig;
+typedef std::map<POLY, std::vector<int> > poly2sig;
+
+void acceptconnection(int);
 void add2vecomap(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 int getdir(std::string, std::vector<std::string>&);
 void calcfreq(std::vector<std::vector <POLY> >);
 void calcfreqM(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
-void calcfreqO(std::vector<std::vector <POLY> >);
 void doublefreq(int);
-void inform_team(chordID, std::vector<chordID>, std::vector<POLY>);
+void doublefreqgroup(int, mapType);
+void informteam(chordID, std::vector<POLY>);
 void initgossiprecv(chordID, std::vector<POLY>, double, double);
 DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
 std::vector<POLY> inverse(std::vector<POLY>);
-void listen_gossip(void);
-//void *listen_gossip(void *);
-void merge_lists(void);
+void listengossip(void);
+//void *listengossip(void *);
+void mergelists(void);
+void mergelistsp(void);
 void printdouble(std::string, double);
 void printlist(int, int);
 chordID randomID(void);
-void read_gossip(int);
+void readgossip(int);
 void readsig(std::string, std::vector<std::vector <POLY> >&);
 //void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
+void delspecial(int);
 bool sig2str(std::vector<POLY>, str&);
 bool sigcmp(const std::vector<POLY>&, const std::vector<POLY>&);
 void splitfreq(int);
@@ -85,11 +101,6 @@ bool insertError;
 bool retrieveError;
 
 //pthread_mutex_t lock;
-
-typedef std::map<std::vector<POLY>, std::vector<double>, CompareSig> mapType;
-typedef std::vector<mapType> vecomap;
-// local list T[0] is stored in allT[0];
-vecomap allT;
 
 //std::vector<std::map<std::vector<POLY>, std::vector<double>, CompareSig> > allT;
 //std::map<std::vector<POLY>, std::vector<double>, CompareSig> uniqueSigList;
@@ -209,33 +220,275 @@ store_cb(dhash_stat status, ptr<insert_info> i)
 	out++;
 }
 
+// TODO: why?
+// error: no match for ‘operator=’ in ‘minhash = lsh::getHashCodeFindMod
+// error: no match for ‘operator=’ in ‘minhash = lsh::getHashCode
+template <class T>
+int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int loseed, InsertType msgtype = 0)
+{
+	std::vector<T> minhash;
+	std::vector<POLY> sig;
+	str sigbuf;
+	chordID ID;
+	//DHTStatus status;
+	//char *value;
+	//int col, valLen;
+	double freq, weight;
+
+	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
+		sig = itr->first;
+		freq = itr->second[0];
+		weight = itr->second[1];
+
+		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
+		// convert multiset to set
+		if (uflag == 1) {
+			sig2str(sig, sigbuf);
+			warnx << "multiset: " << sigbuf << "\n";
+			myLSH->getUniqueSet(sig);
+			sig2str(sig, sigbuf);
+			warnx << "set: " << sigbuf << "\n";
+		}
+
+		// XXX
+		std::vector<POLY> polyhash;
+		std::vector<chordID> idhash;
+		warnx << "typeid: " << typeid(minhash).name() << "\n";
+		if (typeid(minhash) == typeid(polyhash)) {
+			polyhash = myLSH->getHashCodeFindMod(sig, myLSH->getIRRPoly());
+		} else if (typeid(minhash) == typeid(idhash)) {
+			idhash = myLSH->getHashCode(sig);
+		} else {
+			warnx << "invalid type\n";
+			return -1;
+		}
+
+		/*
+		//warnx << "minhash.size(): " << minhash.size() << "\n";
+		if (plist == 1) {
+			warnx << "minhash IDs:\n";
+			for (int i = 0; i < (int)minhash.size(); i++) {
+				warnx << minhash[i] << "\n";
+			}
+		}
+
+		matrix.push_back(minhash);
+		//srand(time(NULL));
+		srand(loseed);
+		int range = (int)minhash.size();
+		col = int((double)range * rand() / (RAND_MAX + 1.0));
+		ID = (matrix.back())[col];
+		warnx << "ID in col " << col << ": " << ID << "\n";
+
+		if (gflag == 1 && msgtype != 0) {
+			strbuf t;
+			t << ID;
+			str key(t);
+			warnx << "inserting INITGOSSIP:\n";
+			makeKeyValue(&value, valLen, key, sig, freq, weight, msgtype);
+			status = insertDHT(ID, value, valLen, MAXRETRIES);
+			cleanup(value);
+
+			// do not exit if insert FAILs!
+			if (status != SUCC) {
+				warnx << "error: insert FAILed\n";
+			} else {
+				warnx << "insert SUCCeeded\n";
+			}
+
+			// TODO: how long (if at all)?
+			warnx << "sleeping...\n";
+			sleep(intval);
+		}
+		*/
+		delete myLSH;
+	}
+	return 0;
+}
+
+// TODO: verify
+int
+lshchordID(int listnum, std::vector<std::vector<chordID> > &matrix, unsigned int loseed = 0, int intval = -1, InsertType msgtype = INVALID)
+{
+	std::vector<chordID> minhash;
+	std::vector<POLY> sig;
+	chordID ID;
+	DHTStatus status;
+	char *value;
+	int valLen;
+	double freq, weight;
+	//str sigbuf;
+
+	sig.clear();
+	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
+		sig = itr->first;
+		freq = itr->second[0];
+		weight = itr->second[1];
+
+		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
+		// convert multiset to set
+		if (uflag == 1) {
+			//sig2str(sig, sigbuf);
+			//warnx << "multiset: " << sigbuf << "\n";
+			myLSH->getUniqueSet(sig);
+			//sig2str(sig, sigbuf);
+			//warnx << "set: " << sigbuf << "\n";
+		}
+
+		minhash = myLSH->getHashCode(sig);
+
+		/*
+		warnx << "minhash.size(): " << minhash.size() << "\n";
+		if (plist == 1) {
+			warnx << "minhash IDs:\n";
+			for (int i = 0; i < (int)minhash.size(); i++) {
+				warnx << minhash[i] << "\n";
+			}
+		}
+		*/
+
+		matrix.push_back(minhash);
+		int range = (int)minhash.size();
+		// randomness verified
+		int col = randomNumGenZ(range-1);
+		ID = (matrix.back())[col];
+		warnx << "ID in col " << col << ": " << ID << "\n";
+
+		if (gflag == 1 && msgtype != INVALID) {
+			strbuf t;
+			t << ID;
+			str key(t);
+			warnx << "inserting " << msgtype << ":\n";
+			makeKeyValue(&value, valLen, key, sig, freq, weight, msgtype);
+			status = insertDHT(ID, value, valLen, MAXRETRIES);
+			cleanup(value);
+
+			// do not exit if insert FAILs!
+			if (status != SUCC) {
+				// TODO: do I care?
+				warnx << "error: insert FAILed\n";
+			} else {
+				warnx << "insert SUCCeeded\n";
+			}
+
+			// TODO: how long (if at all)?
+			warnx << "sleeping (lsh)...\n";
+			sleep(intval);
+		}
+		delete myLSH;
+	}
+	return 0;
+}
+
+// TODO: verify
+int
+lshpoly(int listnum, std::vector<std::vector<POLY> > &matrix, unsigned int loseed = 0, int intval = 0, InsertType msgtype = INVALID)
+{
+	std::vector<POLY> minhash;
+	std::vector<POLY> sig;
+	chordID ID;
+	POLY mypoly;
+	DHTStatus status;
+	char *value;
+	int valLen;
+	double freq, weight;
+	//str sigbuf;
+
+	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
+		sig = itr->first;
+		freq = itr->second[0];
+		weight = itr->second[1];
+
+		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
+		// convert multiset to set
+		if (uflag == 1) {
+			//sig2str(sig, sigbuf);
+			//warnx << "multiset: " << sigbuf << "\n";
+			myLSH->getUniqueSet(sig);
+			//sig2str(sig, sigbuf);
+			//warnx << "set: " << sigbuf << "\n";
+		}
+
+		minhash = myLSH->getHashCodeFindMod(sig, myLSH->getIRRPoly());
+
+		//warnx << "minhash.size(): " << minhash.size() << "\n";
+		/*
+		if (plist == 1) {
+			warnx << "minhash IDs:\n";
+			for (int i = 0; i < (int)minhash.size(); i++) {
+				warnx << minhash[i] << "\n";
+			}
+		}
+		*/
+
+		matrix.push_back(minhash);
+		int range = (int)minhash.size();
+		// randomness verified
+		int col = randomNumGenZ(range-1);
+		mypoly = (matrix.back())[col];
+		warnx << "POLY in col " << col << ": " << mypoly << "\n";
+
+		if (gflag == 1 && msgtype != INVALID) {
+			strbuf mybuf;
+			mybuf << mypoly;
+			str mystr(mybuf);
+			// TODO: verify
+			ID = compute_hash(mystr, mystr.len());
+			warnx << "compute_hash(POLY): " << ID << "\n";
+			strbuf t;
+			t << ID;
+			str key(t);
+			warnx << "inserting " << msgtype << ":\n";
+			makeKeyValue(&value, valLen, key, sig, freq, weight, msgtype);
+			status = insertDHT(ID, value, valLen, MAXRETRIES);
+			cleanup(value);
+
+			// do not exit if insert FAILs!
+			if (status != SUCC) {
+				warnx << "error: insert FAILed\n";
+			} else {
+				warnx << "insert SUCCeeded\n";
+			}
+
+			// TODO: how long (if at all)?
+			warnx << "sleeping (lsh)...\n";
+			sleep(intval);
+		}
+		delete myLSH;
+	}
+	return 0;
+}
+
 int
 main(int argc, char *argv[])
 {
 	//pthread_t thread_ID;
 	//void *exit_status;
 
-	int Gflag, gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, uflag;
-
-	int ch, intval, nids, valLen;
-	int logfd;
+	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag;
+	int ch, gintval, initintval, waitintval, nids, valLen, logfd;
+	double beginTime, endTime;
 	char *value;
 	struct stat statbuf;
 	time_t rawtime;
 	chordID ID;
 	DHTStatus status;
+	str sigbuf;
 	std::string sigdir;
 	std::vector<std::string> sigfiles;
 	std::vector<std::vector<POLY> > sigList;
+	std::vector<POLY> sig;
 
-	Gflag = gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = uflag = 0;
+	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = 0;
 
-	intval = nids = lshseed = 0;
+	gintval = initintval = waitintval = nids = 0;
 	irrpolyfile = NULL;
 	rxseq.clear();
 	txseq.clear();
+	// init or txseq.back() segfaults!
+	txseq.push_back(0);
 
-	while ((ch = getopt(argc, argv, "cd:G:gHhi:j:L:lmn:pq:rS:s:uvz")) != -1)
+	while ((ch = getopt(argc, argv, "cd:G:gHhI:i:j:L:lmn:pq:rS:s:uvw:z")) != -1)
 		switch(ch) {
 		case 'c':
 			discardmsg = 1;
@@ -254,8 +507,11 @@ main(int argc, char *argv[])
 		case 'H':
 			Hflag = 1;
 			break;
+		case 'I':
+			initintval = strtol(optarg, NULL, 10);
+			break;
 		case 'i':
-			intval = strtol(optarg, NULL, 10);
+			gintval = strtol(optarg, NULL, 10);
 			break;
 		case 'j':
 			jflag = 1;
@@ -293,6 +549,9 @@ main(int argc, char *argv[])
 			break;
 		case 'u':
 			uflag = 1;
+			break;
+		case 'w':
+			waitintval = strtol(optarg, NULL, 10);
 			break;
 		case 'z':
 			zflag = 1;
@@ -353,11 +612,18 @@ main(int argc, char *argv[])
 	// sockets are required when listening or gossiping
 	if ((gflag == 1 || lflag == 1) && (Gflag == 0 || Sflag == 0)) usage();
 
-	// TODO: check intval bound
-	if (gflag == 1 && intval == 0 && sflag == 0) usage();
+	if (gflag == 1 && (gintval == 0 || sflag == 0)) usage();
 
-	if (rflag == 1 && sflag == 0) usage();
-	if (Hflag == 1 && sflag == 0 && dflag == 0 && jflag == 0) usage();
+	// action H
+	if (Hflag == 1 && (sflag == 0 || dflag == 0 || jflag == 0))
+		usage();
+
+	// option H (for gossiping)
+	if ((Hflag == 1 && gflag == 1) && (waitintval == 0 || initintval == 0))
+		usage();
+
+	// sigs are required when listening or reading
+	if ((lflag == 1 || rflag == 1) && sflag == 0) usage();
 
 	if (Lflag == 1) {
 		logfd = open(logfile, O_RDWR | O_CREAT, 0666);
@@ -377,25 +643,17 @@ main(int argc, char *argv[])
 		dhash = New dhashclient(dsock);
 	}
 
-	if (rflag == 1 || gflag == 1 || Hflag == 1) {
+	if (rflag == 1 || gflag == 1 || Hflag == 1 || lflag == 1) {
 		getdir(sigdir, sigfiles);
 		sigList.clear();
 
 		// insert dummy
 		// the polynomial "1" has a degree 0
-		dummysig.clear();
-		dummysig.push_back(1);
-		sigList.push_back(dummysig);
-
-		/*
-		std::vector<POLY> testsig;
-		testsig.clear();
-		testsig.push_back(6228403);
-		testsig.push_back(6228403);
-		testsig.push_back(6228403);
-		testsig.push_back(6228403);
-		sigList.push_back(testsig);
-		*/
+		if (Hflag == 0) {
+			dummysig.clear();
+			dummysig.push_back(1);
+			sigList.push_back(dummysig);
+		}
 
 		warnx << "reading signatures from files...\n";
 		for (unsigned int i = 0; i < sigfiles.size(); i++) {
@@ -408,165 +666,6 @@ main(int argc, char *argv[])
 		}
 	}
 
-	// LSH
-	if (Hflag == 1 && dflag != 0 && sflag != 0 && jflag != 0) {
-		// XXX: ugly, use templates
-		// InitGossipSend
-		// (use findMod())
-		double freq, weight;
-		if (mflag == 1) {
-			std::vector<POLY> minhash;
-			std::vector<std::vector<POLY> > matrix;
-			std::vector<POLY> sig;
-			str sigbuf;
-			int col;
-
-			for (mapType::iterator itr = allT[0].begin(); itr != allT[0].end(); itr++) {
-				sig = itr->first;
-				freq = itr->second[0];
-				weight = itr->second[1];
-
-				lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
-
-				// convert multiset to set
-				if (uflag == 1) {
-					/*
-					for (unsigned int i = 0; i < sig.size(); i++) {
-						warnx << "nomod..." << sig[i] << "\n";
-					}
-					for (unsigned int i = 0; i < sig.size(); i++) {
-						warnx << "mod..." << (myLSH->getUniqueSet(sig))[i] << "\n";
-					}
-					*/
-
-					sig2str(sig, sigbuf);
-					warnx << "multiset: " << sigbuf << "\n";
-					myLSH->getUniqueSet(sig);
-					sig2str(sig, sigbuf);
-					warnx << "set: " << sigbuf << "\n";
-				}
-
-				minhash = myLSH->getHashCodeFindMod(sig, myLSH->getIRRPoly());
-
-				//warnx << "minhash.size(): " << minhash.size() << "\n";
-				if (plist == 1) {
-					warnx << "minhash IDs:\n";
-					for (int i = 0; i < (int)minhash.size(); i++) {
-						warnx << minhash[i] << "\n";
-					}
-				}
-
-				matrix.push_back(minhash);
-				delete myLSH;
-			}
-			// call srand/srandom right before calling rand/random
-			//srand(time(NULL));
-			srand(loseed);
-			int range = (int)minhash.size();
-			col = int((double)range * rand() / (RAND_MAX + 1.0));
-
-			warnx << "POLYs in random column " << col << ":\n";
-			for (int i = 0; i < (int)matrix.size(); i++) {
-				warnx << matrix[i][col] << "\n";;
-			}
-		// InitGossipSend
-		// (use compute_hash())
-		} else {
-			std::vector<chordID> minhash;
-			std::vector<std::vector<chordID> > matrix;
-			std::vector<POLY> sig;
-			str sigbuf;
-			int col;
-
-			if (gflag == 1) {
-				warnx << "listening for gossip...\n";
-				listen_gossip();		
-				sleep(5);
-				warnx << "gossiping...\n";
-				warnx << "interval: " << intval << "\n";
-			}
-
-			for (mapType::iterator itr = allT[0].begin(); itr != allT[0].end(); itr++) {
-				sig = itr->first;
-				freq = itr->second[0];
-				weight = itr->second[1];
-
-				lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
-				// convert multiset to set
-				if (uflag == 1) {
-					/*
-					for (unsigned int i = 0; i < sig.size(); i++) {
-						warnx << "nomod..." << sig[i] << "\n";
-					}
-					for (unsigned int i = 0; i < sig.size(); i++) {
-						warnx << "mod..." << (myLSH->getUniqueSet(sig))[i] << "\n";
-					}
-					*/
-
-					sig2str(sig, sigbuf);
-					warnx << "multiset: " << sigbuf << "\n";
-					myLSH->getUniqueSet(sig);
-					sig2str(sig, sigbuf);
-					warnx << "set: " << sigbuf << "\n";
-				}
-
-				minhash = myLSH->getHashCode(sig);
-
-				//warnx << "minhash.size(): " << minhash.size() << "\n";
-				if (plist == 1) {
-					warnx << "minhash IDs:\n";
-					for (int i = 0; i < (int)minhash.size(); i++) {
-						warnx << minhash[i] << "\n";
-					}
-				}
-
-				matrix.push_back(minhash);
-
-				//srand(time(NULL));
-				srand(loseed);
-				int range = (int)minhash.size();
-				col = int((double)range * rand() / (RAND_MAX + 1.0));
-				ID = (matrix.back())[col];
-				warnx << "ID in col " << col << ": " << ID << "\n";
-
-				if (gflag == 1) {
-					strbuf t;
-					t << ID;
-					str key(t);
-					warnx << "inserting INITGOSSIP:\n";
-					makeKeyValue(&value, valLen, key, sig, freq, weight, INITGOSSIP);
-					status = insertDHT(ID, value, valLen, MAXRETRIES);
-					cleanup(value);
-
-					// do not exit if insert FAILs!
-					if (status != SUCC) {
-						warnx << "error: insert FAILed\n";
-					} else {
-						warnx << "insert SUCCeeded\n";
-					}
-
-					// TODO: ?
-					warnx << "sleeping...\n";
-					sleep(intval);
-				}
-
-				delete myLSH;
-			}
-		
-			/*
-			warnx << "chordIDs in random column " << col << ":\n";
-			for (int i = 0; i < (int)matrix.size(); i++) {
-				warnx << matrix[i][col] << "\n";;
-			}
-			*/
-		}
-
-		// continue listening
-		warnx << "done with sigs\n";
-		sleep(360);
-		return 0;
-	}
-
 	time(&rawtime);
 	warnx << "ctime: " << ctime(&rawtime);
 	warnx << "sincepoch: " << time(&rawtime) << "\n";
@@ -575,18 +674,54 @@ main(int argc, char *argv[])
 	warnx << "pid: " << getpid() << "\n";
 	warnx << "peers: " << peers << "\n";
 	warnx << "loseed: " << loseed << "\n";
+	std::vector<std::vector<POLY> > pmatrix;
+	std::vector<std::vector<chordID> > cmatrix;
 
-	if (gflag == 1) {
+	// XGossip+ init phase
+	if (Hflag == 1) {
+		// enter init phase
+		initphase = 1;
+		if (gflag == 1) {
+			warnx << "listening for gossip...\n";
+			listengossip();		
+			sleep(5);
+			warnx << "initgossipsend...\n";
+			warnx << "init interval: " << initintval << "\n";
+		}
+
+		// InitGossipSend: use findMod()
+		if (mflag == 1) {
+			// T_m is 1st list
+			lshpoly(0, pmatrix, loseed, initintval, INITGOSSIP);
+			pmatrix.clear();
+		// InitGossipSend: use compute_hash()
+		} else {
+			lshchordID(0, cmatrix, loseed, initintval, INITGOSSIP);
+			cmatrix.clear();
+		}
+
+		if (gflag == 1) {
+			warnx << "xgossip+ init phase done\n";
+			warnx << "wait interval: " << waitintval << "\n";
+			warnx << "waiting for all peers to finish init phase...\n";
+			sleep(waitintval);
+		}
+
+		// exit init phase
+		initphase = 0;
+	}
+
+	// XGossip exec phase
+	if (gflag == 1 && Hflag == 0) {
 		warnx << "listening for gossip...\n";
 		//pthread_mutex_init(&lock, NULL);
-		//pthread_create(&thread_ID, NULL, listen_gossip, NULL);
-		listen_gossip();		
+		//pthread_create(&thread_ID, NULL, listengossip, NULL);
+		listengossip();		
 		sleep(5);
-		warnx << "gossiping...\n";
-		warnx << "interval: " << intval << "\n";
+		warnx << "xgossip exec...\n";
+		warnx << "gossip interval: " << gintval << "\n";
 
 		srandom(loseed);
-		txseq.push_back(0);
 		while (1) {
 			ID = make_randomID();
 			strbuf z;
@@ -596,18 +731,18 @@ main(int argc, char *argv[])
 			//sig.clear();
 
 			//pthread_mutex_lock(&lock);
-			double beginTime = getgtod();    
-			merge_lists();
-			double endTime = getgtod();    
+			beginTime = getgtod();    
+			mergelists();
+			endTime = getgtod();    
 			printdouble("merge lists time: ", endTime - beginTime);
 			warnx << "\n";
-			warnx << "inserting GOSSIP:\n"
+			warnx << "inserting XGOSSIP:\n"
 			      << "txseq: " << txseq.back()
 			      << " txID: " << ID << "\n";
 			if (plist == 1) {
 				printlist(0, txseq.back());
 			}
-			makeKeyValue(&value, valLen, key, allT[0], txseq.back(), GOSSIP);
+			makeKeyValue(&value, valLen, key, allT[0], txseq.back(), XGOSSIP);
 			//pthread_mutex_unlock(&lock);
 			status = insertDHT(ID, value, valLen, MAXRETRIES);
 			cleanup(value);
@@ -623,20 +758,195 @@ main(int argc, char *argv[])
 			}
 			txseq.push_back(txseq.back() + 1);
 			//pthread_join(thread_ID, &exit_status);
-			warnx << "sleeping...\n";
-			sleep(intval);
+			warnx << "sleeping (gossip)...\n";
+			sleep(gintval);
 		}
+		// when do we destroy the thread?
+		//pthread_mutex_destroy(&lock);
+	// XGossip+ exec phase
+	} else if (gflag == 1 && Hflag == 1) {
+		//pthread_mutex_init(&lock, NULL);
+		//pthread_create(&thread_ID, NULL, listengossip, NULL);
+		warnx << "xgossip+ exec...\n";
+		warnx << "gossip interval: " << gintval << "\n";
 
+		// xgossip+ sigs grouped by lsh chordid/poly
+		vecomap groupedT;
+
+		// needed?
+		//srandom(loseed);
+		while (1) {
+			//pthread_mutex_lock(&lock);
+			beginTime = getgtod();    
+			mergelistsp();
+			endTime = getgtod();    
+			printdouble("merge lists time: ", endTime - beginTime);
+			warnx << "\n";
+			delspecial(0);
+			if (plist == 1) {
+				printlist(0, txseq.back());
+			}
+
+			//srand(loseed);
+			// TODO: the same as minhash.size()?
+			int range = mgroups;
+			//int col = int((double)range * rand() / (RAND_MAX + 1.0));
+			// TODO: verify randomness
+			int col = randomNumGenZ(range-1);
+			// TODO: use findMod()
+			if (mflag == 1) {
+				// don't send anything
+				lshpoly(0, pmatrix);
+				poly2sig polyindex;
+				warnx << "pmatrix.size(): " << pmatrix.size() << "\n";
+				warnx << "POLYs in random column " << col << ":\n";
+				for (int i = 0; i < (int)pmatrix.size(); i++) {
+					warnx << pmatrix[i][col] << "\n";;
+					// store index of signature associated with POLY
+					polyindex[pmatrix[i][col]].push_back(i);
+				}
+				warnx << "POLY: [sig indices].size()\n";
+				for (poly2sig::iterator itr = polyindex.begin();
+				     itr != polyindex.end(); itr++) {
+					warnx << itr->first << ": " << itr->second.size() << "\n";
+				}
+				pmatrix.clear();
+			// use compute_hash()
+			} else {
+				// don't send anything
+				lshchordID(0, cmatrix);
+				chordID2sig idindex;
+				warnx << "cmatrix.size(): " << cmatrix.size() << "\n";
+				warnx << "IDs in random column " << col << ":\n";
+				for (int i = 0; i < (int)cmatrix.size(); i++) {
+					//warnx << cmatrix[i][col] << "\n";;
+					// store index of signature associated with chordID
+					idindex[cmatrix[i][col]].push_back(i);
+					/*
+					chordID2sig::iterator itr = idindex.find(matrix[i][col]);
+					if (itr != idindex.end()) {
+						itr->second[0] += 1;
+					} else {
+						// store index of signature associated with chordID
+						idindex[matrix[i][col]].push_back(i);
+					}
+					*/
+
+				}
+				warnx << "idindex.size(): " << idindex.size() << "\n";
+				warnx << "ID: sigs-per-id sigs-indices\n";
+				int uniqueids = 0;
+				for (chordID2sig::iterator itr = idindex.begin();
+				     itr != idindex.end(); itr++) {
+					uniqueids += itr->second.size();
+					warnx << itr->first << ": " << itr->second.size();
+					if (itr->second.size() > 1) {
+						for (int i = 0; i < (int)itr->second.size(); i++) {
+							warnx << " " << itr->second[i];
+						}
+						warnx << "\n";
+					} else {
+					      warnx << " " << itr->second[0] << "\n";
+					}
+
+					// create a map for each chordID
+					mapType groupbyid;
+					//pthread_mutex_lock(&lock);
+					//warnx << "groupbyid:\n";
+					for (int i = 0; i < (int)itr->second.size(); i++) {
+						mapType::iterator j = allT[0].begin();
+						// point to the nth map element (random access)
+						std::advance(j, itr->second[i]);
+						assert(j != allT[0].end());
+						//sig2str(j->first, sigbuf);
+						//warnx << "sig: " << sigbuf;
+						// copy freq and weight of sig
+						groupbyid[j->first].push_back(j->second[0]);
+						groupbyid[j->first].push_back(j->second[1]);
+						//printdouble(" ", j->second[0]);
+						//printdouble(" ", j->second[1]);
+						//warnx << "\n";
+					}
+					groupedT.push_back(groupbyid);
+					//pthread_mutex_unlock(&lock);
+
+				}
+				warnx << "uniqueids: " << uniqueids << "\n";
+				warnx << "groupedT.size(): " << groupedT.size() << "\n";
+
+				warnx << "inserting XGOSSIPP:\n"
+				      << "txseq: " << txseq.back() << "\n";
+
+				chordID2sig::iterator itr = idindex.begin();
+				for (int i = 0; i < (int)groupedT.size(); i++) {
+					// end addresses the location succeeding the last element 
+					// in a map (not the last element itself)
+					if (itr == idindex.end()) {
+						warnx << "idindex ended\n";
+						break;
+					}
+					/*
+					warnx << "groupedT[" << i << "]:\n";
+					double freq, weight;
+					for (mapType::iterator jitr = groupedT[i].begin(); jitr != groupedT[i].end(); jitr++) {
+						sig = jitr->first;
+						freq = jitr->second[0];
+						weight = jitr->second[1];
+						sig2str(sig, sigbuf);
+						warnx << "sig: " << sigbuf;
+						printdouble(" ", freq);
+						printdouble(" ", weight);
+						warnx << "\n";
+					}
+					*/
+					ID = itr->first;
+					strbuf z;
+					z << ID;
+					str key(z);
+					warnx << "txID: " << ID << "\n";
+
+					// TODO: same round for each group?
+					makeKeyValue(&value, valLen, key, groupedT[i], txseq.back(), XGOSSIPP);
+
+					status = insertDHT(ID, value, valLen, MAXRETRIES);
+					cleanup(value);
+
+					// do not exit if insert FAILs!
+					if (status != SUCC) {
+						warnx << "error: insert FAILed\n";
+						// to preserve mass conservation:
+						// "send" msg to yourself
+						// TODO: needed?
+						doublefreqgroup(0, groupedT[i]);
+					} else {
+						warnx << "insert SUCCeeded\n";
+					}
+
+					++itr;
+
+					warnx << "sleeping (groups)...\n";
+					// TODO: needed?
+					sleep(initintval);
+				}
+				txseq.push_back(txseq.back() + 1);
+				warnx << "sleeping (xgossip+)...\n";
+				cmatrix.clear();
+				sleep(gintval);
+			}
+		}
 		// when do we destroy the thread?
 		//pthread_mutex_destroy(&lock);
 	} else if (rflag == 1) {
 		return 0;
 	} else if (lflag == 1) {
 		warnx << "listening for gossip...\n";
-		listen_gossip();
-		//listen_gossip(NULL);
-	} else
+		listengossip();
+		//listengossip(NULL);
+	} else if (Hflag == 1) {
+		return 0;
+	} else {
 		usage();
+	}
 
 	amain();
 	return 0;
@@ -794,14 +1104,15 @@ randomID(void)
 	return ID;
 }
 
+// verified
 //void *
-//listen_gossip(void *)
+//listengossip(void *)
 void
-listen_gossip(void)
+listengossip(void)
 {
 	unlink(gsock);
 	int fd = unixsocket(gsock);
-	if (fd < 0) fatal << "Error creating GOSSIP socket" << strerror (errno) << "\n";
+	if (fd < 0) fatal << "Error creating gsock" << strerror (errno) << "\n";
 
 	// make socket non-blocking
 	make_async(fd);
@@ -813,13 +1124,14 @@ listen_gossip(void)
 		return;
 	}
 
-	fdcb(fd, selread, wrap(accept_connection, fd));
+	fdcb(fd, selread, wrap(acceptconnection, fd));
 
 	//return NULL;
 }
 
+// verified
 void
-accept_connection(int fd)
+acceptconnection(int fd)
 {
 	sockaddr_in sin;
 	unsigned sinlen = sizeof(sin);
@@ -835,11 +1147,12 @@ accept_connection(int fd)
 		return;
 	}
 	
-	fdcb(cs, selread, wrap(read_gossip, cs));
+	fdcb(cs, selread, wrap(readgossip, cs));
 }
 
+// TODO: verify xgossip+ part
 void
-read_gossip(int fd)
+readgossip(int fd)
 {
 	strbuf buf;
 	strbuf totalbuf;
@@ -860,7 +1173,7 @@ read_gossip(int fd)
 		n = buf.tosuio()->input(fd);
 
 		if (n < 0) {
-			warnx << "read_gossip: read failed\n";
+			warnx << "readgossip: read failed\n";
 			// disable readability callback?
 			fdcb(fd, selread, 0);
 			// do you have to close?
@@ -870,7 +1183,7 @@ read_gossip(int fd)
 
 		// EOF
 		if (n == 0) {
-			warnx << "read_gossip: no more to read\n";
+			warnx << "readgossip: no more to read\n";
 			// 0 or NULL?
 			fdcb(fd, selread, 0);
 			// do you have to close?
@@ -890,8 +1203,8 @@ read_gossip(int fd)
 		recvlen += n;
 
 #ifdef _DEBUG_
-		warnx << "\nread_gossip: n: " << n << "\n";
-		warnx << "read_gossip: recvlen: " << recvlen << "\n";
+		warnx << "\nreadgossip: n: " << n << "\n";
+		warnx << "readgossip: recvlen: " << recvlen << "\n";
 #endif
 
 		totalbuf << buf;
@@ -908,8 +1221,17 @@ read_gossip(int fd)
 
 	msgtype = getKeyValueType(gmsg.cstr());
 	warnx << " type: ";
-	if (msgtype == GOSSIP) {
-		warnx << "GOSSIP";
+	if (msgtype == XGOSSIP || msgtype == XGOSSIPP) {
+		// discard msg if in init phase
+		if (initphase == 1) {
+			warnx << "warning: phase=init, msgtype=" << msgtype << "\n";
+			warnx << "warning: msg discarded\n";
+			return;
+		} else if (msgtype == XGOSSIP) {
+			warnx << "XGOSSIP";
+		} else {
+			warnx << "XGOSSIPP";
+		}
 
 		ret = getKeyValue(gmsg.cstr(), key, sigList, freqList, weightList, seq, recvlen);
 		if (ret == -1) {
@@ -962,10 +1284,17 @@ read_gossip(int fd)
 		rxseq.push_back(seq);
 		add2vecomap(sigList, freqList, weightList);
 	} else if (msgtype == INITGOSSIP || msgtype == INFORMTEAM) {
-		if (msgtype == INITGOSSIP)
+		// discard msg if not in init phase
+		if (initphase == 0) {
+			warnx << "warning: phase=exec, msgtype=" << msgtype << "\n";
+			warnx << "warning: msg discarded\n";
+			return;
+		} else if (msgtype == INITGOSSIP) {
 			warnx << "INITGOSSIP";
-		else
+		} else {
 			warnx << "INFORMTEAM";
+		}
+
 		double freq, weight;
 		std::vector<POLY> sig;
 		sig.clear();
@@ -977,20 +1306,22 @@ read_gossip(int fd)
 			return;
 		}
 
-		sig2str(sig, sigbuf);
 		warnx << " rxID: " << key << "\n";
-		warnx << "sig: " << sigbuf;
-		printdouble(" ", freq);
-		printdouble(" ", weight);
-		warnx << "\n";
+		//sig2str(sig, sigbuf);
+		//warnx << "sig: " << sigbuf;
+		//printdouble(" ", freq);
+		//printdouble(" ", weight);
+		//warnx << "\n";
 		str2chordID(key, ID);
 		initgossiprecv(ID, sig, freq, weight);
-	} else
+	} else {
 		warnx << "error: invalid msgtype\n";
+	}
 }
 
 // based on:
 // http://www.linuxquestions.org/questions/programming-9/c-list-files-in-directory-379323/
+// verified
 int
 getdir(std::string dir, std::vector<std::string> &files)
 {
@@ -1010,6 +1341,7 @@ getdir(std::string dir, std::vector<std::string> &files)
 	return 0;
 }
 
+// TODO: work w/ 0-sized sigs and path w/o trailing slash
 void
 readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 {
@@ -1060,93 +1392,104 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 	sig2str(sig, buf);
 	warnx << buf << "\n";
 	sigList.push_back(sig);
+
+	/*
+	// isig test
+	str sigbuf;
+	std::vector<POLY> isig;
+	isig.clear();
+	isig = inverse(sig);
+	sig2str(isig, sigbuf);
+	sigList.push_back(isig);
+	warnx << "isig: " << sigbuf << "\n";
+	*/
+
 	warnx << "readsig: Size of sig list: " << sigList.size() << "\n";
 	finishTime = getgtod();
 	fclose(sigfp);
 }
 
+// TODO: verify
 void
 initgossiprecv(chordID ID, std::vector<POLY> sig, double freq, double weight)
 {
-	str sigbuf;
 	std::vector<POLY> isig;
+	//str sigbuf;
 
 	isig.clear();
 	isig = inverse(sig);
-	sig2str(isig, sigbuf);
-	warnx << "isig: " << sigbuf << "\n";
+	//sig2str(isig, sigbuf);
+	//warnx << "isig: " << sigbuf << "\n";
 
-	mapType::iterator itr1 = allT[0].find(sig);
-	mapType::iterator itr2 = allT[0].find(isig);
-	if ((itr1 != allT[0].end()) && (sig[0] != 0)) {
-		// update freq
+	mapType::iterator itr = allT[0].find(sig);
+	mapType::iterator iitr = allT[0].find(isig);
+	// s is regular and exists
+	if ((sig[0] != 0) && (itr != allT[0].end())) {
 		warnx << "initgossiprecv: update freq\n";
-		itr1->second[0] += freq;
-	} else if ((itr1 != allT[0].end()) && (itr2 != allT[0].end())) {
-		// delete special multiset tuple
+		itr->second[0] += freq;
+	// s is regular and s' exists
+	} else if ((sig[0] != 0) && (iitr != allT[0].end())) {
 		warnx << "initgossiprecv: delete special multiset tuple\n";
-		// figure out which is the special multiset
-		if (sig[0] == 0) {
-			// TODO: inefficient?
-			allT[0].erase(itr1);
-		} else if (isig[0] == 0) {
-			// TODO: inefficient?
-			allT[0].erase(itr2);
-		} else
-			warnx << "error: no special multiset\n";
+		// TODO: inefficient?
+		allT[0].erase(iitr);
+		allT[0][sig].push_back(freq);
+		allT[0][sig].push_back(weight);
+	// s and s' exist (s is special)
+	} else if ((itr != allT[0].end()) && (iitr != allT[0].end())) {
+		warnx << "initgossiprecv: do nothing\n";
 	} else {
-		// if s (sig) is special, s' (isig) is regular
-		if ((sig[0] == 0) && (itr2 != allT[0].end())) {
-			// delete regular multiset tuple
-			warnx << "initgossiprecv: delete regular multiset tuple\n";
-			// TODO: inefficient?
-			allT[0].erase(itr1);
-		} else {
-			// inform team
-			warnx << "initgossiprecv: inform team\n";
-			allT[0][sig].push_back(freq);
-			allT[0][sig].push_back(weight);
-
-			lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
-			std::vector<chordID> minhash = myLSH->getHashCode(sig);
-
-			inform_team(ID, minhash, sig);
-
-			delete myLSH;
-		}
+		warnx << "initgossiprecv: inserting sig\n";
+		allT[0][sig].push_back(freq);
+		allT[0][sig].push_back(weight);
+		warnx << "initgossiprecv: inform team\n";
+		informteam(ID, sig);
 	}
 }
 
+// TODO: verify
 void
-inform_team(chordID myID, std::vector<chordID> minhash, std::vector<POLY> sig)
+informteam(chordID myID, std::vector<POLY> sig)
 {
 	chordID nextID;
 	std::vector<POLY> isig;
-	str sigbuf;
 	DHTStatus status;
 	char *value;
 	int valLen;
+	//str sigbuf;
+
+	lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
+	// TODO: verify getUniqueSet works right
+	//warnx << "informteam: getUniqueSet\n";
+	myLSH->getUniqueSet(sig);
+	//warnx << "informteam: getHashCode\n";
+	// TODO: findMod vs compute_hash!
+	std::vector<chordID> minhash = myLSH->getHashCode(sig);
 
 	isig.clear();
 	// is sig always a regular multiset?
 	isig = inverse(sig);
-	sig2str(isig, sigbuf);
-	warnx << "inform_team: isig: " << sigbuf << "\n";
+	//sig2str(isig, sigbuf);
+	//warnx << "informteam: isig: " << sigbuf << "\n";
 
 	// O(n logn)
 	sort(minhash.begin(), minhash.end());
-	for (int i = 0; i < (int)minhash.size(); i++) {
-		warnx << "minhash[" << i << "]: "<< minhash[i] << "\n";
-	}
+	//for (int i = 0; i < (int)minhash.size(); i++) {
+	//	warnx << "minhash[" << i << "]: "<< minhash[i] << "\n";
+	//}
+
+	// TODO: verify
 	nextID = myID;
-	for (int i = 0; i < (int)minhash.size(); i++) {
-		if (myID < minhash[i]) {
-			nextID = minhash[i];
-			break;
+	if (myID == minhash.back()) {
+		warnx << "warning: myID is last, using first\n";
+		nextID = minhash.front();
+	} else {
+		for (int i = 0; i < (int)minhash.size(); i++) {
+			if (myID < minhash[i]) {
+				nextID = minhash[i];
+				break;
+			}
 		}
 	}
-	if (nextID == myID)
-		warnx << "warning: no new ID\n";
 
 	strbuf z;
 	z << nextID;
@@ -1154,7 +1497,6 @@ inform_team(chordID myID, std::vector<chordID> minhash, std::vector<POLY> sig)
 	double freq = 0;
 	double weight = 1;
 	makeKeyValue(&value, valLen, key, isig, freq, weight, INFORMTEAM);
-	//makeKeyValue(&value, valLen, key, minhash, INFORMTEAM);
 	// or strlen?
 	//ID = compute_hash(value, sizeof(value));
 	warnx << "inserting INFORMTEAM:\n";
@@ -1163,10 +1505,13 @@ inform_team(chordID myID, std::vector<chordID> minhash, std::vector<POLY> sig)
 	cleanup(value);
 
 	if (status != SUCC) {
+		// TODO: do I care?
 		warnx << "error: insert FAILed\n";
 	} else {
 		warnx << "insert SUCCeeded\n";
 	}
+
+	delete myLSH;
 }
 
 // TODO: make more efficient? in-place instead?
@@ -1192,6 +1537,7 @@ inverse(std::vector<POLY> sig)
 	}
 }
 
+// verified
 bool
 sig2str(std::vector<POLY> sig, str &buf)
 {
@@ -1206,6 +1552,7 @@ sig2str(std::vector<POLY> sig, str &buf)
 	return true;
 }
 
+// verified
 void
 calcfreq(std::vector<std::vector<POLY> > sigList)
 {
@@ -1233,7 +1580,8 @@ calcfreq(std::vector<std::vector<POLY> > sigList)
 	warnx << "calcfreq: setsize: " << allT[0].size() << "\n";
 }
 
-// deprecated: use merge_lists() instead
+// deprecated: use mergelists() instead
+// verified
 void
 calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList, std::vector<double> weightList)
 {
@@ -1255,6 +1603,7 @@ calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList,
 	//pthread_mutex_unlock(&lock);
 }
 
+// verified
 void
 add2vecomap(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList, std::vector<double> weightList)
 {
@@ -1271,25 +1620,31 @@ add2vecomap(std::vector<std::vector<POLY> > sigList, std::vector<double> freqLis
 }
 
 // copied from psi.C
+// return TRUE if s1 < s2
 bool
 sigcmp(const std::vector<POLY>& s1, const std::vector<POLY>& s2)
 {
-	// Return TRUE if s1 < s2
 	//warnx << "sigcmp: S1 size: " << s1.size()
 	//      << ", S2 size: " << s2.size() << "\n";
 
-	if (s1.size() < s2.size()) return true;
-	else if (s1.size() == s2.size()) {
+	if (s1.size() < s2.size()) {
+		return true;
+	} else if (s1.size() == s2.size()) {
 		for (int i = 0; i < (int) s1.size(); i++) {
-			if (s1[i] < s2[i]) return true;
-			else if (s1[i] > s2[i]) return false;
+			if (s1[i] < s2[i])
+				return true;
+			else if (s1[i] > s2[i])
+				return false;
 		}
 		return false;
-	} else return false;
+	} else {
+		return false;
+	}
 }
 
+// verified
 void
-merge_lists()
+mergelists()
 {
 	double sumf, sumw;
 	str sigbuf;
@@ -1366,22 +1721,22 @@ merge_lists()
 		sumf = sumw = 0;
 		// add all f's and w's for a particular sig
 		for (int i = 0; i < n; i++) {
-			// DO NOT skip lists which are done
+			// DO NOT skip lists which are done:
 			// use their dummy
 			if (citr[i] == allT[i].end()) {
-				//warnx << "no minsig in T_" << i
-				//      << " (list ended)\n";
+				warnx << "no minsig in T_" << i
+				      << " (list ended)\n";
 				sumf += allT[i][dummysig][0];
 				sumw += allT[i][dummysig][1];
 				//continue;
 			} else if (citr[i]->first == minsig) {
-				//warnx << "minsig found in T_" << i << "\n";
+				warnx << "minsig found in T_" << i << "\n";
 				sumf += citr[i]->second[0];
 				sumw += citr[i]->second[1];
 				// XXX: itr of T_0 will be incremented later
 				if (i != 0) ++citr[i];
 			} else {
-				//warnx << "no minsig in T_" << i << "\n";
+				warnx << "no minsig in T_" << i << "\n";
 				sumf += allT[i][dummysig][0];
 				sumw += allT[i][dummysig][1];
 			}
@@ -1421,13 +1776,204 @@ merge_lists()
 	//warnx << "allT.size() after pop: " << allT.size() << "\n";
 }
 
+// TODO: verify
+void
+mergelistsp()
+{
+	double sumf, sumw;
+	str sigbuf;
+	std::vector<POLY> minsig;
+	std::vector<POLY> isig;
+	minsig.clear();
+	isig.clear();
+
+	warnx << "merging:\n";
+	int n = allT.size();
+	warnx << "initial allT.size(): " << n << "\n";
+	if (n == 1) {
+		splitfreq(0);
+		return;
+	} else {
+#ifdef _DEBUG_
+		for (int i = 0; i < n; i++)
+			printlist(i, -1);
+#endif
+	}
+
+	// init pointers to beginning of lists
+	std::vector<mapType::iterator> citr;
+	for (int i = 0; i < n; i++) {
+		citr.push_back(allT[i].begin());
+		// skip dummy
+		//++citr[i];
+	}
+
+	while (1) {
+		int j = n;
+		// check if at end of lists
+		for (int i = 0; i < n; i++) {
+			if (citr[i] == allT[i].end()) {
+				//warnx << "end of T_" << i << "\n";
+				--j;
+			}
+		}
+		// done with all lists
+		if (j == 0) {
+			/*
+			sumw = 0;
+			for (int i = 0; i < n; i++) {
+				sumw += allT[i][dummysig][1];
+			}
+			printdouble("new local dummy sumw/2: ", sumw/2);
+			warnx << "\n";
+			allT[0][dummysig][1] = sumw / 2;
+			*/
+			// TODO: split weight of all special multisets or is that done already?
+			break;
+		}
+
+		// find min sig
+		int z = 0;
+		for (int i = 0; i < n; i++) {
+			// skip lists which are done
+			if (citr[i] == allT[i].end()) {
+				continue;
+			// DO NOT skip special multisets?
+			/*
+			} else if (citr[i]->first[0] == 0) {
+				++citr[i];
+				continue;
+			*/
+			} else if (z == 0){
+				minsig = citr[i]->first;
+#ifdef _DEBUG_
+				sig2str(minsig, sigbuf);
+				warnx << "initial minsig: "
+				      << sigbuf << "\n";
+#endif
+				z = 1;
+
+			}
+			if (sigcmp(citr[i]->first, minsig) == 1)
+				minsig = citr[i]->first;
+		}
+
+		sig2str(minsig, sigbuf);
+		warnx << "actual minsig: " << sigbuf << "\n";
+
+		if (minsig[0] == 0) {
+			warnx << "minsig is a special multiset\n";
+		}
+
+		sumf = sumw = 0;
+		// add all f's and w's for a particular sig
+		for (int i = 0; i < n; i++) {
+			// TODO: if end of list, will it segfault?
+			if (citr[i]->first == minsig) {
+				//warnx << "minsig found in T_" << i << "\n";
+				sumf += citr[i]->second[0];
+				sumw += citr[i]->second[1];
+				// XXX: itr of T_0 will be incremented later
+				if (i != 0) ++citr[i];
+			// DO NOT skip lists which are done:
+			// use special multiset
+			// TODO: necessary to check if at end of list?
+			} else if ((citr[i] == allT[i].end()) && (minsig[0] != 0)) {
+				warnx << "no minsig in T_" << i
+				      << " (list ended)\n";
+				isig.clear();
+				isig = inverse(minsig);
+				mapType::iterator itr = allT[i].find(isig);
+				if (itr != allT[i].end()) {
+					warnx << "special minsig found in T_" << i << "\n";
+					sumf += allT[i][isig][0];
+					sumw += allT[i][isig][1];
+				}
+			}
+			// DO NOT skip special multisets?
+			/*
+			} else if (citr[i]->first[0] == 0) {
+				++citr[i];
+				continue;
+			} else if (minsig[0] != 0) {
+				// use special multiset based on LSH (instead of isig)
+				//tmpsig = minsig;
+				//lsh *myLSH = new lsh(tmpsig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
+				// TODO: verify getUniqueSet works right
+				//myLSH->getUniqueSet(tmpsig);
+				//std::vector<chordID> minhash = myLSH->getHashCode(tmpsig);
+
+				isig.clear();
+				isig = inverse(minsig);
+				mapType::iterator itr = allT[i].find(isig);
+				if (itr != allT[i].end()) {
+					warnx << "no minsig in T_" << i << "\n";
+					sumf += allT[i][isig][0];
+					sumw += allT[i][isig][1];
+				}
+			}
+			*/
+		}
+
+#ifdef _DEBUG_
+		printdouble("sumf: ", sumf);
+		printdouble(", sumw: ", sumw);
+		warnx << "\n";
+#endif
+
+		// update allT[0]
+		if (citr[0]->first == minsig) {
+			// update sums of existing sig
+			//warnx << "updating sums of minsig\n";
+			allT[0][minsig][0] = sumf/2;
+			allT[0][minsig][1] = sumw/2;
+			// XXX: see above XXX
+			++citr[0];
+		} else {
+			// insert new sig
+			//warnx << "inserting minsig...\n";
+			allT[0][minsig].push_back(sumf/2);
+			allT[0][minsig].push_back(sumw/2);
+
+			// not needed:
+			// if the minsig was missing in T_i,
+			// itr already points to the next sig
+			//citr[0] = allT[0].find(minsig);
+			//++citr[0];
+
+		}
+	}
+
+	// delete all except first (doesn't free memory but it's O(1))
+	while (allT.size() > 1) allT.pop_back();
+	//warnx << "allT.size() after pop: " << allT.size() << "\n";
+}
+
+// TODO: verify
+void
+doublefreqgroup(int listnum, mapType groupbyid)
+{
+	double freq, weight;
+
+	warnx << "doublefreqgroup: setsize: " << groupbyid.size() << "\n";
+	for (mapType::iterator itr = groupbyid.begin(); itr != groupbyid.end(); itr++) {
+		mapType::iterator jitr = allT[listnum].find(itr->first);
+		if (jitr != allT[listnum].end()) {
+			freq = itr->second[0];
+			jitr->second[0] = freq * 2;
+			weight = itr->second[1];
+			jitr->second[1] = weight * 2;
+		}
+	}
+}
+
+// verified
 void
 doublefreq(int listnum)
 {
 	double freq, weight;
 
 	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
-
 		freq = itr->second[0];
 		itr->second[0] = freq * 2;
 		weight = itr->second[1];
@@ -1436,6 +1982,7 @@ doublefreq(int listnum)
 	warnx << "doublefreq: setsize: " << allT[listnum].size() << "\n";
 }
 
+// verified
 void
 splitfreq(int listnum)
 {
@@ -1451,6 +1998,28 @@ splitfreq(int listnum)
 	warnx << "splitfreq: setsize: " << allT[listnum].size() << "\n";
 }
 
+// verified
+void
+delspecial(int listnum)
+{
+	std::vector<POLY> isig;
+	isig.clear();
+
+	warnx << "delspecial: setsize before: " << allT[listnum].size() << "\n";
+	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
+		if (itr->first[0] == 0) {
+			isig = inverse(itr->first);
+			mapType::iterator regitr = allT[listnum].find(isig);
+			if (regitr != allT[listnum].end()) {
+				// itr is special multiset
+				allT[listnum].erase(itr);
+			}
+		}
+	}
+	warnx << "delspecial: setsize after: " << allT[listnum].size() << "\n";
+}
+
+// verified
 void
 printdouble(std::string fmt, double num)
 {
@@ -1462,6 +2031,7 @@ printdouble(std::string fmt, double num)
 	warnx << fmt.c_str() << ss.c_str();
 }
 
+// verified
 void
 printlist(int listnum, int seq)
 {
@@ -1470,13 +2040,13 @@ printlist(int listnum, int seq)
 	double sumavg = 0;
 	double sumsum = 0;
 	std::vector<POLY> sig;
+	//sig.clear();
 	//std::vector<POLY> isig;
 	str sigbuf;
 
 	warnx << "list T_" << listnum << ": " << seq << " " << allT[listnum].size() << "\n";
 	warnx << "hdrB: freq weight avg avg*p\n";
 	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
-
 		sig = itr->first;
 		freq = itr->second[0];
 		weight = itr->second[1];
@@ -1507,206 +2077,6 @@ printlist(int listnum, int seq)
 	warnx << " setsize: " << allT[listnum].size() << "\n";
 }
 
-// copied from psi.C
-void
-calcfreqO(std::vector<std::vector <POLY> > sigList)
-{
-	std::vector<int> group1;
-	std::vector<int> group2;
-	std::vector<POLY> lcm1;
-	std::vector<POLY> lcm2;
-	std::multimap<int, int> sortedSigList;
-
-#ifdef _ELIMINATE_DUP_
-	std::map<std::vector<POLY>, std::vector<int>, CompareSig> uniqueSigList;
-	std::map<int, std::map<std::vector<POLY>, std::vector<int>, CompareSig>::const_iterator > duplicateList;
-
-	// Sort them based on degree
-	for (int i = 0; i < (int) sigList.size(); i++) {
-		std::map<std::vector<POLY>, std::vector<int> >::iterator itr = uniqueSigList.find(sigList[i]);
-		if (itr != uniqueSigList.end()) {
-			itr->second.push_back(i+1);
-		} else {
-			int deg = getDegree(sigList[i]);
-			//warnx << "Check degree: " << deg << "\n";
-			sortedSigList.insert(std::pair<int, int>(deg, i));
-			std::vector<int> e;
-			e.clear();
-			e.push_back(i+1);
-			uniqueSigList[sigList[i]] = e;
-
-			std::map<std::vector<POLY>, std::vector<int>, CompareSig>:: const_iterator uitr = 
-			uniqueSigList.find(sigList[i]);
-			//warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
-			assert(uitr != uniqueSigList.end());
-
-			duplicateList[i+1] = uniqueSigList.find(sigList[i]);
-		}
-	}
-	assert(uniqueSigList.size() > 0);
-
-	// If all are identical
-	if (uniqueSigList.size() == 1) {
-		for (int i = 0; i < (int) floor(MAXENTRIES/2.0); i++) {
-			group1.push_back(i+1);
-		}
-		lcm1 = uniqueSigList.begin()->first;
-
-		for (int i = (int) floor(MAXENTRIES/2.0); i < MAXENTRIES; i++) {
-			group2.push_back(i+1);
-		}
-		lcm2 = uniqueSigList.begin()->first;
-		return;
-	}
-	warnx << "Size of unique sig list: " << uniqueSigList.size() << "\n";
-	warnx << "Size of dup sig list: " << duplicateList.size() << "\n";
-#else
-	// Sort them based on degree
-	for (int i = 0; i < (int) sigList.size(); i++) {
-		int deg = getDegree(sigList[i]);
-		//warnx << "Check degree: " << deg << "\n";
-		sortedSigList.insert(std::pair<int, int>(deg, i));
-	}
-#endif
-
-	warnx << "Size of sorted sig list: " << sortedSigList.size() << "\n";
-
-	int seed1 = -1, seed2 = -1;
-	std::vector<POLY> gcdPoly;
-	int minDeg = INT_MAX;
-
-	// Find the two most dissimilar
-	std::multimap<int, int>::reverse_iterator endItrI = sortedSigList.rbegin();
-	int i = 0;
-	int MAXSIGS = 10;
-	// Adjust the last sig to be checked
-	while (i < MAXSIGS && endItrI != sortedSigList.rend()) {
-		endItrI++;
-		i++;
-	}		
-
-	for (std::multimap<int, int>::reverse_iterator itrI = sortedSigList.rbegin();
-	     itrI != endItrI; itrI++) {
-
-		std::multimap<int, int>::reverse_iterator itrJ = itrI;
-		itrJ++;
-
-		for (; itrJ != endItrI; itrJ++) {
-			gcdPoly.clear();
-			gcdSpecial(gcdPoly, sigList[itrI->second], sigList[itrJ->second]);
-			std::vector<POLY> mylcm;
-			mylcm = sigList[itrI->second];
-
-			//int deg = pSim(sigList[itrI->second], sigList[itrJ->second], gcdPoly,
-			//    metric);
-			int deg = pSimOpt(mylcm, sigList[itrJ->second], gcdPoly, metric);
-			//warnx << "Degree: " << deg << "\n";
-			if (deg < minDeg) {
-				seed1 = itrI->second;
-				seed2 = itrJ->second;
-				minDeg = deg;
-			}
-
-			if (deg < 0) break;
-		}
-	}
-
-	//warnx << "MINDEGREE: " << minDeg << "\n";
-	group1.push_back(seed1+1);
-	group2.push_back(seed2+1);
-
-	//warnx << "SEED1 : " << seed1
-	//      << "  SEED2 : " << seed2
-	//      << "\n";
-	lcm1 = sigList[seed1];
-	lcm2 = sigList[seed2];
-
-	std::vector<POLY> gcd1, gcd2;
-	std::vector<POLY> testLCM1, testLCM2;
-
-	for (std::multimap<int, int>::iterator itr = sortedSigList.begin();
-	     itr != sortedSigList.end(); itr++) {
-		if (itr->second == seed1 || itr->second == seed2) continue;
-
-		gcd1.clear();
-		gcd2.clear();
-
-		gcdSpecial(gcd1, lcm1, sigList[itr->second]);
-		gcdSpecial(gcd2, lcm2, sigList[itr->second]);
-
-		testLCM1 = lcm1;
-		testLCM2 = lcm2;
-
-		//int deg1 = getDegree(gcd1);
-		//int deg2 = getDegree(gcd2);
-		int deg1 = pSimOpt(testLCM1, sigList[itr->second], gcd1, metric);
-		int deg2 = pSimOpt(testLCM2, sigList[itr->second], gcd2, metric);
-
-		if (deg1 > deg2) {
-			//lcm(lcm1, sigList[itr->second]);
-			lcm1 = testLCM1;
-			group1.push_back(itr->second+1);
-		}
-		else if (deg1 < deg2) {
-			//lcm(lcm2, sigList[itr->second]);
-			lcm2 = testLCM2;
-			group2.push_back(itr->second+1);
-		} else {
-			if (group1.size() <= group2.size()) {
-				//lcm(lcm1, sigList[itr->second]);
-				lcm1 = testLCM1;
-				group1.push_back(itr->second+1);
-			} else {
-				//lcm(lcm2, sigList[itr->second]);
-				lcm2 = testLCM2;
-				group2.push_back(itr->second+1);
-			}
-		}		
-	}
-
-#ifdef _ELIMINATE_DUP_
-	int group1Size = group1.size();
-	int group2Size = group2.size();
-	warnx << "Group1 size: " << group1Size << "\n";
-
-	for (int i = 0; i < group1Size; i++) {
-		std::map<int, std::map<std::vector<POLY>, std::vector<int>, CompareSig>::const_iterator >::const_iterator itr = 
-		duplicateList.find(group1[i]);
-
-		assert(itr != duplicateList.end());
-
-		std::map<std::vector<POLY>, std::vector<int>, CompareSig>::const_iterator ditr = itr->second;
-		//warnx << "--> " << ditr->second.size() << "\n";
-		// Skip the first entry -- already in group1
-		for (int k = 1; k < (int) ditr->second.size(); k++) {
-			group1.push_back(ditr->second[k]);	
-		}
-	}
-
-	warnx << "Group2 size: " << group2Size << "\n";
-
-	for (int i = 0; i < group2Size; i++) {
-		std::map<int, std::map<std::vector<POLY>, std::vector<int>, CompareSig>::const_iterator >::const_iterator itr = 
-		duplicateList.find(group2[i]);
-
-		assert(itr != duplicateList.end());
-
-		std::map<std::vector<POLY>, std::vector<int>, CompareSig>::const_iterator ditr = itr->second;
-
-		//warnx << "--> " << ditr->second.size() << "\n";
-		// Skip the first entry -- already in group2
-		for (int k = 1; k < (int) ditr->second.size(); k++) {
-			group2.push_back(ditr->second[k]);	
-		}
-	}
-	warnx << "Sig list size: " << sigList.size() << "\nTotal size: " << group1.size() + group2.size() << "\n";
-	// Header is absent - one less
-	//assert(group1.size() + group2.size() == (size_t) MAXENTRIES);
-#endif
-
-	return;
-}
-
 void
 usage(void)
 {
@@ -1716,22 +2086,27 @@ usage(void)
 	     << "	-d		<random prime number for LSH seed>\n"
 	     << "	-G		<gossip socket>\n"
 	     << "	-H		generate chordIDs/POLYs using LSH when gossiping\n"
-					"\t\t\t(requires  -g, -s, -d, -j)\n"
+					"\t\t\t(requires -g, -s, -d, -j, -I -w)\n"
+	     << "      	-I		<how often>\n"
+					"\t\t\t(init interval)\n"
 	     << "      	-i		<how often>\n"
+					"\t\t\t(gossip interval)\n"
 	     << "      	-j		<irrpoly file>\n"
 	     << "	-L		<log file>\n"
 	     << "      	-m		use findMod instead of compute_hash\n"
 					"\t\t\t(vector of POLYs instead of chordIDs)\n"
 	     << "      	-n		<how many>\n"
-	     << "      	-p		print list of signatures\n"
+	     << "      	-p		verbose (print list of signatures)\n"
 	     << "      	-q		<estimate of # of peers in DHT>\n"
 	     << "	-S		<dhash socket>\n"
 	     << "	-s		<dir with sigs>\n"
-	     << "	-u		convert multiset to set\n\n"
+	     << "	-u		make POLYs unique (convert multiset to set)\n"
+	     << "      	-w		<how long>\n"
+					"\t\t\t(wait interval b/w init and exec phase)\n\n"
 	     << "Actions:\n"
 	     << "	-g		gossip (requires -S, -G, -s, -i)\n"
 	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j)\n"
-	     << "	-l		listen for gossip (requires -S, -G, -L)\n"
+	     << "	-l		listen for gossip (requires -S, -G, -s)\n"
 	     << "	-r		read signatures (requires -s)\n"
 	     << "	-v		print version\n"
 	     << "	-z		generate random chordID (requires -n)\n";
