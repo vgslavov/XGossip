@@ -1,4 +1,4 @@
-/*	$Id: dhblock_noauth_srv.C,v 1.3 2010/03/25 19:01:03 vsfgd Exp vsfgd $	*/
+/*	$Id: dhblock_noauth_srv.C,v 1.4 2010/03/28 16:31:06 vsfgd Exp vsfgd $	*/
 
 #include <iostream>
 
@@ -88,7 +88,7 @@ dhblock_noauth_srv::real_store (chordID dbkey,
 
   str dprep = adjust_data (dbkey, new_data, old_data, resStatus);
 
-  // TODO: display only if not GOSSIP
+  // TODO: display only if not XGOSSIP
   //if (dprep.len() == 0) warnx << "Avoiding replica storage.\n";
 
   if (resStatus == DHASH_CORRUPTHDR) {
@@ -169,26 +169,18 @@ dhblock_noauth_srv::adjust_data (chordID key, str new_data, str prev_data,
         new_data.len());
 
 	// vsfgd
-	InsertType gtype;
+	InsertType msgtype;
 	str gKey;
-	memcpy(&gtype, new_elems[0].cstr(), sizeof(gtype));
+	memcpy(&msgtype, new_elems[0].cstr(), sizeof(msgtype));
 
-	if ((gtype == GOSSIP) || (gtype == INITGOSSIP)) {
+	if ((msgtype == XGOSSIP) || (msgtype == XGOSSIPP) ||
+	    (msgtype == INITGOSSIP) || (msgtype == INFORMTEAM)) {
 		extern str gsock;
-		warnx << "TYPE = " << gtype << "\n";
-		// strip GOSSIP msg type
-    		//str gElem(new_elems[0].cstr()+sizeof(gtype),
-		//	  new_elems[0].len()-sizeof(gtype));
+		warnx << "msgtype: " << msgtype << "\n";
 		str gElem(new_elems[0].cstr(), new_elems[0].len());
-
-                //getKeyValue(gElem.cstr(), gKey, sum, weight);
-		//std::cout << ", KEY: " << gKey << ", VALUE (s, w): (" << sum
-		//	  << ", " << weight << ")\n";
 
 		int fd = unixsocket_connect(gsock);
 		if (fd < 0) {
-			//fatal("gossip: Error connecting to %s: %s\n",
-			//       gsock.cstr (), strerror(errno));
 			warnx << "gossip: Error connecting to "
 			      << gsock.cstr() << ": " << strerror(errno) << "\n";
 			resStatus = DHASH_OK;
@@ -198,16 +190,11 @@ dhblock_noauth_srv::adjust_data (chordID key, str new_data, str prev_data,
 		//make_async(fd);
 		strbuf buf;
 		buf << gElem;
-		//warnx << "gossip: buf.len: " << buf.len() << "\n";
 		//warnx << "gossip: gElem.len(): " << gElem.len() << "\n";
-		//buf << "KEY:" << gKey << ",VALUE:" << gValue;
 		fdcb(fd, selwrite, wrap(write_gossip, fd, buf));
 
 		resStatus = DHASH_OK;
 		return "";
-		//new_elems.push_back(gElem);
-		//str marshalled_block = dhblock_noauth::marshal_block(new_elems);
-		//return marshalled_block;
 	}
 
     // if new_elems.size() > 1, then we need to merge old and new as before!!!!
