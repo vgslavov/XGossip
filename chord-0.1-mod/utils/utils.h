@@ -1,4 +1,4 @@
-/*	$Id: utils.h,v 1.13 2010/04/14 21:58:22 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.h,v 1.14 2010/05/08 23:31:25 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #ifndef _UTILS_H_
@@ -242,5 +242,6 @@ void makeSigData(str& sigdata, std::vector<std::vector<POLY> >& listOfSigs, enum
 void makeSigData(str& sigdata, std::vector<std::vector<POLY> >& listOfSigs, std::vector<POLY>&, enum OPTYPE, enum RetrieveType type);
 void makeSigData(str& sigdata, std::vector<POLY>& mySig, enum RetrieveType type);
 int randomNumGen(int r);
+int randomNumGenZ(int r);
 bool isStrValue(std::string& input);
 #endif
