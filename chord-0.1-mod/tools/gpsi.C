@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.36 2010/05/03 00:40:32 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.37 2010/06/07 01:35:09 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -31,7 +31,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.36 2010/05/03 00:40:32 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.37 2010/06/07 01:35:09 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -488,8 +488,14 @@ main(int argc, char *argv[])
 	// init or txseq.back() segfaults!
 	txseq.push_back(0);
 
-	while ((ch = getopt(argc, argv, "cd:G:gHhI:i:j:L:lmn:pq:rS:s:uvw:z")) != -1)
+	while ((ch = getopt(argc, argv, "B:cd:G:gHhI:i:j:L:lmn:pq:R:rS:s:uvw:z")) != -1)
 		switch(ch) {
+		case 'B':
+			mgroups = strtol(optarg, NULL, 10);
+			break;
+		case 'R':
+			lfuncs = strtol(optarg, NULL, 10);
+			break;
 		case 'c':
 			discardmsg = 1;
 			break;
@@ -674,6 +680,8 @@ main(int argc, char *argv[])
 	warnx << "pid: " << getpid() << "\n";
 	warnx << "peers: " << peers << "\n";
 	warnx << "loseed: " << loseed << "\n";
+	warnx << "mgroups: " << mgroups << "\n";
+	warnx << "lfuncs: " << lfuncs << "\n";
 	std::vector<std::vector<POLY> > pmatrix;
 	std::vector<std::vector<chordID> > cmatrix;
 
@@ -2082,6 +2090,8 @@ usage(void)
 {
 	warn << "Usage: " << __progname << " [-h] [options...]\n\n";
 	warn << "Options:\n"
+	     << "	-B		bands for LSH (a.k.a. m groups)\n"
+	     << "	-R		rows for LSH (a.k.a. l hash functions)\n"
 	     << "	-c		discard out-of-round messages\n"
 	     << "	-d		<random prime number for LSH seed>\n"
 	     << "	-G		<gossip socket>\n"
