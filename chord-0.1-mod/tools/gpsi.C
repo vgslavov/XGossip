@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.37 2010/06/07 01:35:09 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.38 2010/06/07 01:51:21 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -31,7 +31,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.37 2010/06/07 01:35:09 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.38 2010/06/07 01:51:21 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -689,6 +689,7 @@ main(int argc, char *argv[])
 	if (Hflag == 1) {
 		// enter init phase
 		initphase = 1;
+		beginTime = getgtod();    
 		if (gflag == 1) {
 			warnx << "listening for gossip...\n";
 			listengossip();		
@@ -708,8 +709,9 @@ main(int argc, char *argv[])
 			cmatrix.clear();
 		}
 
+		endTime = getgtod();    
+		printdouble("xgossip+ init phase time: ", endTime - beginTime);
 		if (gflag == 1) {
-			warnx << "xgossip+ init phase done\n";
 			warnx << "wait interval: " << waitintval << "\n";
 			warnx << "waiting for all peers to finish init phase...\n";
 			sleep(waitintval);
@@ -777,6 +779,7 @@ main(int argc, char *argv[])
 		//pthread_create(&thread_ID, NULL, listengossip, NULL);
 		warnx << "xgossip+ exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
+		warnx << "execsincepoch: " << time(&rawtime) << "\n";
 
 		// xgossip+ sigs grouped by lsh chordid/poly
 		vecomap groupedT;
