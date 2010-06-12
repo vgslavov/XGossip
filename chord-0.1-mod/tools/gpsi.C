@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.38 2010/06/07 01:51:21 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.39 2010/06/09 02:23:55 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -31,7 +31,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.38 2010/06/07 01:51:21 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.39 2010/06/09 02:23:55 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -87,7 +87,7 @@ void readsig(std::string, std::vector<std::vector <POLY> >&);
 //void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 void delspecial(int);
 bool sig2str(std::vector<POLY>, str&);
-bool sigcmp(const std::vector<POLY>&, const std::vector<POLY>&);
+bool sigcmp(std::vector<POLY>, std::vector<POLY>);
 void splitfreq(int);
 void usage(void);
 
@@ -711,6 +711,7 @@ main(int argc, char *argv[])
 
 		endTime = getgtod();    
 		printdouble("xgossip+ init phase time: ", endTime - beginTime);
+		warnx << "\n";
 		if (gflag == 1) {
 			warnx << "wait interval: " << waitintval << "\n";
 			warnx << "waiting for all peers to finish init phase...\n";
@@ -1633,10 +1634,24 @@ add2vecomap(std::vector<std::vector<POLY> > sigList, std::vector<double> freqLis
 // copied from psi.C
 // return TRUE if s1 < s2
 bool
-sigcmp(const std::vector<POLY>& s1, const std::vector<POLY>& s2)
+sigcmp(std::vector<POLY> s1, std::vector<POLY> s2)
 {
-	//warnx << "sigcmp: S1 size: " << s1.size()
-	//      << ", S2 size: " << s2.size() << "\n";
+	std::vector<POLY> isig1, isig2;
+
+	// if both special, treat them as regular
+	if (s1[0] == 0 && s2[0] == 0) {
+		isig1.clear();
+		isig2.clear();
+		isig1 = inverse(s1);
+		isig2 = inverse(s2);
+		s1 = isig1;
+		s2 = isig2;
+	// special multisets are greater than any regular multiset
+	} else if (s1[0] == 0 && s2[0] != 0) {
+		return false;
+	} else if (s1[0] != 0 && s2[0] == 0) {
+		return true;
+	}
 
 	if (s1.size() < s2.size()) {
 		return true;
@@ -1849,7 +1864,7 @@ mergelistsp()
 			// skip lists which are done
 			if (citr[i] == allT[i].end()) {
 				continue;
-			// DO NOT skip special multisets?
+			// DO NOT skip special multisets
 			/*
 			} else if (citr[i]->first[0] == 0) {
 				++citr[i];
@@ -1879,17 +1894,10 @@ mergelistsp()
 		sumf = sumw = 0;
 		// add all f's and w's for a particular sig
 		for (int i = 0; i < n; i++) {
-			// TODO: if end of list, will it segfault?
-			if (citr[i]->first == minsig) {
-				//warnx << "minsig found in T_" << i << "\n";
-				sumf += citr[i]->second[0];
-				sumw += citr[i]->second[1];
-				// XXX: itr of T_0 will be incremented later
-				if (i != 0) ++citr[i];
-			// DO NOT skip lists which are done:
-			// use special multiset
-			// TODO: necessary to check if at end of list?
-			} else if ((citr[i] == allT[i].end()) && (minsig[0] != 0)) {
+			// TODO:
+			// necessary to check if at end of list?
+			// does revese order of if/else matter?
+			if ((citr[i] == allT[i].end()) && (minsig[0] != 0)) {
 				warnx << "no minsig in T_" << i
 				      << " (list ended)\n";
 				isig.clear();
@@ -1900,7 +1908,16 @@ mergelistsp()
 					sumf += allT[i][isig][0];
 					sumw += allT[i][isig][1];
 				}
+			} else if (citr[i]->first == minsig) {
+				//warnx << "minsig found in T_" << i << "\n";
+				sumf += citr[i]->second[0];
+				sumw += citr[i]->second[1];
+				// XXX: itr of T_0 will be incremented later
+				if (i != 0) ++citr[i];
 			}
+			// DO NOT skip lists which are done:
+			// use special multiset
+		
 			// DO NOT skip special multisets?
 			/*
 			} else if (citr[i]->first[0] == 0) {
