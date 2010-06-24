@@ -1,10 +1,9 @@
-/*	$Id: gpsi.C,v 1.39 2010/06/09 02:23:55 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.40 2010/06/12 23:36:35 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
-#include <fstream>
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -31,7 +30,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.39 2010/06/09 02:23:55 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.40 2010/06/12 23:36:35 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -42,6 +41,7 @@ static const char* dsock;
 static const char* gsock;
 static char *logfile;
 static char *irrpolyfile;
+static char *initfile;
 int lshseed = 0;
 int plist = 0;
 int gflag = 0;
@@ -77,8 +77,12 @@ DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
 std::vector<POLY> inverse(std::vector<POLY>);
 void listengossip(void);
 //void *listengossip(void *);
+void loginitstate(FILE *);
+void loadinitstate(FILE *);
 void mergelists(void);
 void mergelistsp(void);
+char *netstring_decode(FILE *);
+void netstring_encode(const char *, FILE *);
 void printdouble(std::string, double);
 void printlist(int, int);
 chordID randomID(void);
@@ -87,8 +91,10 @@ void readsig(std::string, std::vector<std::vector <POLY> >&);
 //void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 void delspecial(int);
 bool sig2str(std::vector<POLY>, str&);
+bool string2sig(std::string, std::vector<POLY> &);
 bool sigcmp(std::vector<POLY>, std::vector<POLY>);
 void splitfreq(int);
+void tokenize(const std::string &, std::vector<std::string> &, const std::string &);
 void usage(void);
 
 DHTStatus insertStatus;
@@ -465,7 +471,7 @@ main(int argc, char *argv[])
 	//pthread_t thread_ID;
 	//void *exit_status;
 
-	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag;
+	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag;
 	int ch, gintval, initintval, waitintval, nids, valLen, logfd;
 	double beginTime, endTime;
 	char *value;
@@ -479,16 +485,16 @@ main(int argc, char *argv[])
 	std::vector<std::vector<POLY> > sigList;
 	std::vector<POLY> sig;
 
-	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = 0;
+	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = 0;
 
 	gintval = initintval = waitintval = nids = 0;
-	irrpolyfile = NULL;
+	//irrpolyfile = initfile = logfile = NULL;
 	rxseq.clear();
 	txseq.clear();
 	// init or txseq.back() segfaults!
 	txseq.push_back(0);
 
-	while ((ch = getopt(argc, argv, "B:cd:G:gHhI:i:j:L:lmn:pq:R:rS:s:uvw:z")) != -1)
+	while ((ch = getopt(argc, argv, "B:cd:EG:gHhIj:L:lmn:P:pq:R:rS:s:T:t:uvw:z")) != -1)
 		switch(ch) {
 		case 'B':
 			mgroups = strtol(optarg, NULL, 10);
@@ -503,6 +509,12 @@ main(int argc, char *argv[])
 			dflag = 1;
 			lshseed = strtol(optarg, NULL, 10);
 			break;
+		case 'E':
+			Eflag = 1;
+			break;
+		case 'I':
+			Iflag = 1;
+			break;
 		case 'G':
 			Gflag = 1;
 			gsock = optarg;
@@ -513,10 +525,10 @@ main(int argc, char *argv[])
 		case 'H':
 			Hflag = 1;
 			break;
-		case 'I':
+		case 'T':
 			initintval = strtol(optarg, NULL, 10);
 			break;
-		case 'i':
+		case 't':
 			gintval = strtol(optarg, NULL, 10);
 			break;
 		case 'j':
@@ -535,6 +547,10 @@ main(int argc, char *argv[])
 			break;
 		case 'n':
 			nids = strtol(optarg, NULL, 10);
+			break;
+		case 'P':
+			Pflag = 1;
+			initfile = optarg;
 			break;
 		case 'p':
 			plist = 1;
@@ -618,24 +634,41 @@ main(int argc, char *argv[])
 	// sockets are required when listening or gossiping
 	if ((gflag == 1 || lflag == 1) && (Gflag == 0 || Sflag == 0)) usage();
 
-	if (gflag == 1 && (gintval == 0 || sflag == 0)) usage();
+	// TODO: handle sflag & Pflag
+	if (gflag == 1 && gintval == 0) usage();
 
-	// action H
-	if (Hflag == 1 && (sflag == 0 || dflag == 0 || jflag == 0))
+	// action H (for testing)
+	if (Hflag == 1 && (dflag == 0 || jflag == 0))
 		usage();
 
 	// option H (for gossiping)
-	if ((Hflag == 1 && gflag == 1) && (waitintval == 0 || initintval == 0))
+	// TODO: handle sflag & Pflag
+	if ((Hflag == 1 && gflag == 1) && (waitintval == 0 || initintval == 0) &&
+	    (Eflag == 1 || Iflag == 1))
 		usage();
 
 	// sigs are required when listening or reading
 	if ((lflag == 1 || rflag == 1) && sflag == 0) usage();
 
 	if (Lflag == 1) {
+		// TODO: overwrite existing file
 		logfd = open(logfile, O_RDWR | O_CREAT, 0666);
 		if (logfd < 0) fatal << "can't open log file " << logfile << "\n";
 		lseek(logfd, 0, SEEK_END);
 		errfd = logfd;
+	}
+
+	FILE *initfp = NULL;
+	std::string acc;
+	if (Pflag == 1) {
+		if (Iflag == 1)
+			acc = "w+";
+		else
+			acc = "r";
+
+		if ((initfp = fopen(initfile, acc.c_str())) == NULL) {
+			fatal << "can't open init file" << initfile << "\n";
+		}
 	}
 
 	if (jflag == 1) {
@@ -649,7 +682,7 @@ main(int argc, char *argv[])
 		dhash = New dhashclient(dsock);
 	}
 
-	if (rflag == 1 || gflag == 1 || Hflag == 1 || lflag == 1) {
+	if ((rflag == 1 || gflag == 1 || Hflag == 1 || lflag == 1) && sflag == 1) {
 		getdir(sigdir, sigfiles);
 		sigList.clear();
 
@@ -685,19 +718,21 @@ main(int argc, char *argv[])
 	std::vector<std::vector<POLY> > pmatrix;
 	std::vector<std::vector<chordID> > cmatrix;
 
+	if (gflag == 1 || lflag == 1) {
+		warnx << "listening for gossip...\n";
+		listengossip();		
+		sleep(5);
+	}
+
 	// XGossip+ init phase
-	if (Hflag == 1) {
+	if (Hflag == 1 && Iflag == 1) {
+		warnx << "initgossipsend...\n";
+		warnx << "init interval: " << initintval << "\n";
+
 		// enter init phase
 		initphase = 1;
 		beginTime = getgtod();    
-		if (gflag == 1) {
-			warnx << "listening for gossip...\n";
-			listengossip();		
-			sleep(5);
-			warnx << "initgossipsend...\n";
-			warnx << "init interval: " << initintval << "\n";
-		}
-
+	
 		// InitGossipSend: use findMod()
 		if (mflag == 1) {
 			// T_m is 1st list
@@ -712,10 +747,14 @@ main(int argc, char *argv[])
 		endTime = getgtod();    
 		printdouble("xgossip+ init phase time: ", endTime - beginTime);
 		warnx << "\n";
+
 		if (gflag == 1) {
 			warnx << "wait interval: " << waitintval << "\n";
 			warnx << "waiting for all peers to finish init phase...\n";
 			sleep(waitintval);
+			warnx << "writing " << initfile << "...\n";
+			loginitstate(initfp);
+			fclose(initfp);
 		}
 
 		// exit init phase
@@ -724,11 +763,8 @@ main(int argc, char *argv[])
 
 	// XGossip exec phase
 	if (gflag == 1 && Hflag == 0) {
-		warnx << "listening for gossip...\n";
 		//pthread_mutex_init(&lock, NULL);
 		//pthread_create(&thread_ID, NULL, listengossip, NULL);
-		listengossip();		
-		sleep(5);
 		warnx << "xgossip exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
 
@@ -775,7 +811,17 @@ main(int argc, char *argv[])
 		// when do we destroy the thread?
 		//pthread_mutex_destroy(&lock);
 	// XGossip+ exec phase
-	} else if (gflag == 1 && Hflag == 1) {
+	} else if (gflag == 1 && Hflag == 1 && Eflag == 1) {
+		if (Pflag == 1) {
+			warnx << "loading init state from file...\n";
+			loadinitstate(initfp);
+			printlist(0, -1);
+		} else if (Iflag != 1 || Eflag != 1) {
+			fatal << "no init state available\n";
+		} else {
+			warnx << "using state from init phase\n";
+		}
+
 		//pthread_mutex_init(&lock, NULL);
 		//pthread_create(&thread_ID, NULL, listengossip, NULL);
 		warnx << "xgossip+ exec...\n";
@@ -950,10 +996,6 @@ main(int argc, char *argv[])
 		//pthread_mutex_destroy(&lock);
 	} else if (rflag == 1) {
 		return 0;
-	} else if (lflag == 1) {
-		warnx << "listening for gossip...\n";
-		listengossip();
-		//listengossip(NULL);
 	} else if (Hflag == 1) {
 		return 0;
 	} else {
@@ -1331,6 +1373,108 @@ readgossip(int fd)
 	}
 }
 
+void
+loadinitstate(FILE *initfp)
+{
+	mapType uniqueSigList;
+	std::vector<POLY> sig;
+	std::vector<std::string> tokens;
+	std::string linestr;
+	char *line = NULL;
+	size_t len = 0;
+	ssize_t read;
+	double freq, weight;
+
+	while ((read = getline(&line, &len, initfp)) != -1) {
+		linestr.clear();
+		linestr.assign(line);
+		tokens.clear();
+		tokenize(linestr, tokens, ":");
+		sig.clear();
+		string2sig(tokens[0], sig);
+		freq = strtod(tokens[1].c_str(), NULL);
+		weight = strtod(tokens[2].c_str(), NULL);
+		uniqueSigList[sig].push_back(freq);
+		uniqueSigList[sig].push_back(weight);
+	}
+
+	if (line) free(line);
+
+	warnx << "allT.size(): " << allT.size() << "\n";
+	allT.push_back(uniqueSigList);
+}
+
+void
+loginitstate(FILE *initfp)
+{
+	std::vector<POLY> sig;
+	sig.clear();
+	str sigbuf;
+	int listnum = 0;
+	double freq, weight;
+
+	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
+		sig = itr->first;
+		freq = itr->second[0];
+		weight = itr->second[1];
+		sig2str(sig, sigbuf);
+		fprintf(initfp, "%s:", sigbuf.cstr());
+		fprintf(initfp, "%f:", freq);
+		fprintf(initfp, "%f\n", weight);
+	}
+}
+
+char *
+netstring_decode(FILE *f)
+{
+	int n, len;
+	char *buf;
+
+	/* FIXME: invalid length edge case */
+	if (fscanf(f, "%d", &len) < 1) {
+		return NULL;
+	}
+
+	if (fgetc(f) != ':') {
+		warnx << "bad format\n";
+		return NULL;
+	}
+
+	if ((buf = (char *)malloc(len + 1)) == NULL) {
+		warnx << "out of memory\n";
+		exit(1);
+	}
+
+	if (!buf) {
+		warnx << "can't allocate memory\n";
+		return NULL;
+	}
+
+	/* fread: is this the best way? */
+	if ((n = fread(buf, 1, len, f)) < len) {
+		warnx << "error reading value\n";
+		return NULL;
+	}
+
+	if (fgetc(f) != ',') {
+		warnx << "bad format\n";
+		return NULL;
+	}
+
+	return buf;
+}
+
+void
+netstring_encode(const char *buf, FILE *f)
+{
+	int len;
+
+	len = strlen(buf);
+	if (fprintf(f, "%d:", len) < 0) warnx << "invalid length\n";
+	if (fwrite(buf, 1, len, f) < (unsigned int)len) warnx << "can't write to stream\n";
+	if (fputc(',', f) < 0) warnx << "can't write to stream\n";
+}
+
 // based on:
 // http://www.linuxquestions.org/questions/programming-9/c-list-files-in-directory-379323/
 // verified
@@ -1359,8 +1503,6 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 {
 	double startTime, finishTime;
 	FILE *sigfp;
-	//FILE *tagsfp;
-	//std::string tagsfile;
 	chordID rootNodeID;
 
 	startTime = getgtod();
@@ -1549,6 +1691,39 @@ inverse(std::vector<POLY> sig)
 	}
 }
 
+// copied from http://oopweb.com/CPP/Documents/CPPHOWTO/Volume/C++Programming-HOWTO-7.html
+void
+tokenize(const std::string& str, std::vector<std::string>& tokens, const std::string& delimiters = " ")
+{
+	// Skip delimiters at beginning.
+	std::string::size_type lastPos = str.find_first_not_of(delimiters, 0);
+	// Find first "non-delimiter".
+	std::string::size_type pos = str.find_first_of(delimiters, lastPos);
+
+	while (std::string::npos != pos || std::string::npos != lastPos) {
+		// Found a token, add it to the vector.
+		tokens.push_back(str.substr(lastPos, pos - lastPos));
+		// Skip delimiters.  Note the "not_of"
+		lastPos = str.find_first_not_of(delimiters, pos);
+		// Find next "non-delimiter"
+		pos = str.find_first_of(delimiters, lastPos);
+	}
+}
+ 
+bool
+string2sig(std::string buf, std::vector<POLY> &sig)
+{
+	std::vector<std::string> tokens;
+
+	if (buf.length() == 0) return false;
+
+	tokenize(buf, tokens, "-");
+	for (int i = 0; i < (int)tokens.size(); i++)
+		sig.push_back(strtol(tokens[i].c_str(), NULL, 10));
+
+	return true;
+}
+
 // verified
 bool
 sig2str(std::vector<POLY> sig, str &buf)
@@ -1557,7 +1732,7 @@ sig2str(std::vector<POLY> sig, str &buf)
 
 	if (sig.size() <= 0) return false;
 
-	for (int i = 0; i < (int) sig.size(); i++)
+	for (int i = 0; i < (int)sig.size(); i++)
 		s << sig[i] << "-";
 
 	buf = s;
@@ -2108,34 +2283,45 @@ printlist(int listnum, int seq)
 void
 usage(void)
 {
-	warn << "Usage: " << __progname << " [-h] [options...]\n\n";
+	warn << "Usage: " << __progname << " [-h] [actions...] [options...]\n\n";
+	warn << "Examples:\n\n";
+	warn << "XGossip:\n";
+	warn << "\t" << __progname << " -S dhash-sock -G g-sock -L log.gpsi -s sigdir -g -t 120 -q 165 -p\n\n";
+	warn << "XGossip+:\n";
+	warn << "\t" << __progname << " -S dhash-sock -G g-sock -L log.gpsi -s sigdir -g -t 120 -T 1 -w 900\n"
+	     << "\t     -H -d 1122941 -j irrpoly-deg9.dat -u -B 50 -R 10 -I -E -P initfile -p\n\n";
 	warn << "Options:\n"
 	     << "	-B		bands for LSH (a.k.a. m groups)\n"
 	     << "	-R		rows for LSH (a.k.a. l hash functions)\n"
 	     << "	-c		discard out-of-round messages\n"
-	     << "	-d		<random prime number for LSH seed>\n"
+	     << "	-E		exec phase of XGossip+ (requires -H)\n"
+	     << "	-I		init phase of XGossip+ (requires -H)\n"
 	     << "	-G		<gossip socket>\n"
+	     << "	-S		<dhash socket>\n"
 	     << "	-H		generate chordIDs/POLYs using LSH when gossiping\n"
 					"\t\t\t(requires -g, -s, -d, -j, -I -w)\n"
-	     << "      	-I		<how often>\n"
-					"\t\t\t(init interval)\n"
-	     << "      	-i		<how often>\n"
-					"\t\t\t(gossip interval)\n"
+	     << "	-d		<random prime number for LSH seed>\n"
 	     << "      	-j		<irrpoly file>\n"
 	     << "	-L		<log file>\n"
 	     << "      	-m		use findMod instead of compute_hash\n"
 					"\t\t\t(vector of POLYs instead of chordIDs)\n"
+	     << "	-u		make POLYs unique (convert multiset to set)\n"
 	     << "      	-n		<how many>\n"
+	     << "      	-P		<init phase file>\n"
+					"\t\t\t(after XGossip+ init state is complete)\n"
 	     << "      	-p		verbose (print list of signatures)\n"
 	     << "      	-q		<estimate of # of peers in DHT>\n"
-	     << "	-S		<dhash socket>\n"
 	     << "	-s		<dir with sigs>\n"
-	     << "	-u		make POLYs unique (convert multiset to set)\n"
+	     << "      	-T		<how often>\n"
+					"\t\t\t(init interval)\n"
+	     << "      	-t		<how often>\n"
+					"\t\t\t(gossip interval in exec phase)\n"
 	     << "      	-w		<how long>\n"
-					"\t\t\t(wait interval b/w init and exec phase)\n\n"
+					"\t\t\t(wait interval after init phase is done)\n\n"
 	     << "Actions:\n"
 	     << "	-g		gossip (requires -S, -G, -s, -i)\n"
 	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j)\n"
+					"\t\t\t(XGossip+)\n"
 	     << "	-l		listen for gossip (requires -S, -G, -s)\n"
 	     << "	-r		read signatures (requires -s)\n"
 	     << "	-v		print version\n"
