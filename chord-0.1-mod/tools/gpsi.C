@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.40 2010/06/12 23:36:35 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.41 2010/06/24 03:38:55 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -30,7 +30,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.40 2010/06/12 23:36:35 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.41 2010/06/24 03:38:55 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -755,6 +755,9 @@ main(int argc, char *argv[])
 			warnx << "writing " << initfile << "...\n";
 			loginitstate(initfp);
 			fclose(initfp);
+			if (plist == 1) {
+				printlist(0, -1);
+			}
 		}
 
 		// exit init phase
@@ -2238,7 +2241,7 @@ printdouble(std::string fmt, double num)
 void
 printlist(int listnum, int seq)
 {
-	int n = 0;
+	int n, nsig, nisig;
 	double freq, weight, avg;
 	double sumavg = 0;
 	double sumsum = 0;
@@ -2247,6 +2250,7 @@ printlist(int listnum, int seq)
 	//std::vector<POLY> isig;
 	str sigbuf;
 
+	n = nsig = nisig = 0;
 	warnx << "list T_" << listnum << ": " << seq << " " << allT[listnum].size() << "\n";
 	warnx << "hdrB: freq weight avg avg*p\n";
 	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
@@ -2257,14 +2261,11 @@ printlist(int listnum, int seq)
 		sumavg += avg;
 		sumsum += (avg * peers);
 
-		/*
-		isig = inverse(sig);
-		sig2str(isig, sigbuf);
-		warnx << "isig" << n << ": " << sigbuf << "\n";
-		isig = inverse(isig);
-		sig2str(isig, sigbuf);
-		warnx << "isig^2" << n << ": " << sigbuf << "\n";
-		*/
+		if (sig[0] == 0)
+			++nisig;
+		else
+			++nsig;
+
 		sig2str(sig, sigbuf);
 		warnx << "sig" << n << ": " << sigbuf;
 		printdouble(" ", freq);
@@ -2277,7 +2278,9 @@ printlist(int listnum, int seq)
 	warnx << "hdrE: freq weight avg avg*p\n";
 	printdouble("printlist: sumavg: ", sumavg);
 	printdouble(" multisetsize: ", sumsum);
-	warnx << " setsize: " << allT[listnum].size() << "\n";
+	warnx << " setsize: " << allT[listnum].size();
+	warnx << " setsig: " << nsig;
+	warnx << " setisig: " << nisig << "\n";
 }
 
 void
