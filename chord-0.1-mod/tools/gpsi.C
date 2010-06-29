@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.41 2010/06/24 03:38:55 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.42 2010/06/24 13:34:06 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -30,7 +30,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.41 2010/06/24 03:38:55 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.42 2010/06/24 13:34:06 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -651,8 +651,8 @@ main(int argc, char *argv[])
 	if ((lflag == 1 || rflag == 1) && sflag == 0) usage();
 
 	if (Lflag == 1) {
-		// TODO: overwrite existing file
-		logfd = open(logfile, O_RDWR | O_CREAT, 0666);
+		// overwrite existing file
+		logfd = open(logfile, O_CREAT|O_WRONLY|O_TRUNC, 0644);
 		if (logfd < 0) fatal << "can't open log file " << logfile << "\n";
 		lseek(logfd, 0, SEEK_END);
 		errfd = logfd;
