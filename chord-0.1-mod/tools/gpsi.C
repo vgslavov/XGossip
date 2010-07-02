@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.42 2010/06/24 13:34:06 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.43 2010/06/29 01:59:35 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -30,7 +30,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.42 2010/06/24 13:34:06 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.43 2010/06/29 01:59:35 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -706,8 +706,8 @@ main(int argc, char *argv[])
 	}
 
 	time(&rawtime);
-	warnx << "ctime: " << ctime(&rawtime);
-	warnx << "sincepoch: " << time(&rawtime) << "\n";
+	warnx << "init ctime: " << ctime(&rawtime);
+	warnx << "init sincepoch: " << time(&rawtime) << "\n";
 	warnx << "rcsid: " << rcsid << "\n";
 	warnx << "host: " << host << "\n";
 	warnx << "pid: " << getpid() << "\n";
@@ -829,7 +829,8 @@ main(int argc, char *argv[])
 		//pthread_create(&thread_ID, NULL, listengossip, NULL);
 		warnx << "xgossip+ exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
-		warnx << "execsincepoch: " << time(&rawtime) << "\n";
+		warnx << "exec ctime: " << ctime(&rawtime);
+		warnx << "exec sincepoch: " << time(&rawtime) << "\n";
 
 		// xgossip+ sigs grouped by lsh chordid/poly
 		vecomap groupedT;
