@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.43 2010/06/29 01:59:35 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.44 2010/07/02 03:51:11 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -30,11 +30,12 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.43 2010/06/29 01:59:35 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.44 2010/07/02 03:51:11 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
 int out;
+int sleepnow;
 
 chordID maxID;
 static const char* dsock;
@@ -137,6 +138,13 @@ chordID myGuess;
 
 // retrieve TIMEOUT
 const int RTIMEOUT = 20;
+
+void
+wakeupnow()
+{
+	warnx << "sleep interval is up\n";
+	++sleepnow;
+}
 
 // copied from psi.C
 // Fetch callback for NOAUTH...
@@ -751,7 +759,12 @@ main(int argc, char *argv[])
 		if (gflag == 1) {
 			warnx << "wait interval: " << waitintval << "\n";
 			warnx << "waiting for all peers to finish init phase...\n";
-			sleep(waitintval);
+
+			//sleep(waitintval);
+			delaycb(waitintval, 0, wrap(wakeupnow));
+			while (sleepnow == 0) acheck();
+			//sleepnow = 0;
+
 			warnx << "writing " << initfile << "...\n";
 			loginitstate(initfp);
 			fclose(initfp);
