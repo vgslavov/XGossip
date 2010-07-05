@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.44 2010/07/02 03:51:11 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.45 2010/07/03 21:11:21 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -30,7 +30,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.44 2010/07/02 03:51:11 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.45 2010/07/03 21:11:21 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -495,7 +495,8 @@ main(int argc, char *argv[])
 
 	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = 0;
 
-	gintval = initintval = waitintval = nids = 0;
+	gintval = waitintval = nids = 0;
+	initintval = -1;
 	//irrpolyfile = initfile = logfile = NULL;
 	rxseq.clear();
 	txseq.clear();
@@ -651,7 +652,7 @@ main(int argc, char *argv[])
 
 	// option H (for gossiping)
 	// TODO: handle sflag & Pflag
-	if ((Hflag == 1 && gflag == 1) && (waitintval == 0 || initintval == 0) &&
+	if ((Hflag == 1 && gflag == 1) && (waitintval == 0 || initintval == -1) &&
 	    (Eflag == 1 || Iflag == 1))
 		usage();
 
