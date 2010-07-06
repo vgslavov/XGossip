@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.45 2010/07/03 21:11:21 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.46 2010/07/05 00:40:38 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -30,12 +30,13 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.45 2010/07/03 21:11:21 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.46 2010/07/05 00:40:38 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
 int out;
-int sleepnow;
+int waitsleep;
+int initsleep;
 
 chordID maxID;
 static const char* dsock;
@@ -140,10 +141,17 @@ chordID myGuess;
 const int RTIMEOUT = 20;
 
 void
-wakeupnow()
+waitsleepnow()
 {
-	warnx << "sleep interval is up\n";
-	++sleepnow;
+	warnx << "wait sleep interval is up\n";
+	++waitsleep;
+}
+
+void
+initsleepnow()
+{
+	warnx << "init sleep interval is up\n";
+	++initsleep;
 }
 
 // copied from psi.C
@@ -387,7 +395,12 @@ lshchordID(int listnum, std::vector<std::vector<chordID> > &matrix, unsigned int
 
 			// TODO: how long (if at all)?
 			warnx << "sleeping (lsh)...\n";
-			sleep(intval);
+			//sleep(intval);
+
+			initsleep = 0;
+			delaycb(intval, 0, wrap(initsleepnow));
+			while (initsleep == 0) acheck();
+
 		}
 		delete myLSH;
 	}
@@ -762,9 +775,9 @@ main(int argc, char *argv[])
 			warnx << "waiting for all peers to finish init phase...\n";
 
 			//sleep(waitintval);
-			delaycb(waitintval, 0, wrap(wakeupnow));
-			while (sleepnow == 0) acheck();
-			//sleepnow = 0;
+			waitsleep = 0;
+			delaycb(waitintval, 0, wrap(waitsleepnow));
+			while (waitsleep == 0) acheck();
 
 			warnx << "writing " << initfile << "...\n";
 			loginitstate(initfp);
