@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.46 2010/07/05 00:40:38 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.47 2010/07/06 03:25:21 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -30,7 +30,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.46 2010/07/05 00:40:38 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.47 2010/07/06 03:25:21 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1262,7 +1262,7 @@ readgossip(int fd)
 			// disable readability callback?
 			fdcb(fd, selread, 0);
 			// do you have to close?
-			//close(fd);
+			close(fd);
 			return;
 		}
 
@@ -1273,6 +1273,8 @@ readgossip(int fd)
 			fdcb(fd, selread, 0);
 			// do you have to close?
 			close(fd);
+			// TODO: ?
+			break;
 			// what's the difference and should we continue?
 			//exit(0);
 			//return;
@@ -1402,6 +1404,9 @@ readgossip(int fd)
 	} else {
 		warnx << "error: invalid msgtype\n";
 	}
+
+	// TODO: ?
+	close(fd);
 }
 
 void
