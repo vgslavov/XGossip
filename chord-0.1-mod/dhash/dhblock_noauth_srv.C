@@ -1,4 +1,4 @@
-/*	$Id: dhblock_noauth_srv.C,v 1.4 2010/03/28 16:31:06 vsfgd Exp vsfgd $	*/
+/*	$Id: dhblock_noauth_srv.C,v 1.5 2010/06/07 01:34:22 vsfgd Exp vsfgd $	*/
 
 #include <iostream>
 
@@ -183,11 +183,12 @@ dhblock_noauth_srv::adjust_data (chordID key, str new_data, str prev_data,
 		if (fd < 0) {
 			warnx << "gossip: Error connecting to "
 			      << gsock.cstr() << ": " << strerror(errno) << "\n";
+			// TODO: return different status?
 			resStatus = DHASH_OK;
 			return "";
 		}
 		// needed?
-		//make_async(fd);
+		make_async(fd);
 		strbuf buf;
 		buf << gElem;
 		//warnx << "gossip: gElem.len(): " << gElem.len() << "\n";
