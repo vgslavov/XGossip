@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.48 2010/07/07 16:45:03 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.49 2010/07/07 17:57:54 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -30,7 +30,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.48 2010/07/07 16:45:03 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.49 2010/07/07 17:57:54 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -66,7 +66,7 @@ vecomap allT;
 typedef std::map<chordID, std::vector<int> > chordID2sig;
 typedef std::map<POLY, std::vector<int> > poly2sig;
 
-void acceptconnection(int);
+void acceptconn(int);
 void add2vecomap(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 int getdir(std::string, std::vector<std::string>&);
 void calcfreq(std::vector<std::vector <POLY> >);
@@ -1197,36 +1197,37 @@ listengossip(void)
 {
 	unlink(gsock);
 	int fd = unixsocket(gsock);
-	if (fd < 0) fatal << "Error creating gsock" << strerror (errno) << "\n";
+	if (fd < 0) fatal << "listen: error creating socket: " << strerror(errno) << "\n";
 
 	// make socket non-blocking
 	make_async(fd);
 
 	if (listen(fd, MAXCONN) < 0) {
 		// TODO: what's %m?
-		fatal("Error from listen: %m\n");
+		fatal("listen: error listening: %m\n");
 		close(fd);
 		return;
 	}
 
-	fdcb(fd, selread, wrap(acceptconnection, fd));
+	fdcb(fd, selread, wrap(acceptconn, fd));
 
 	//return NULL;
 }
 
 // verified
 void
-acceptconnection(int fd)
+acceptconn(int lfd)
 {
-	sockaddr_in sin;
-	unsigned sinlen = sizeof(sin);
+	sockaddr_un sun;
+	bzero(&sun, sizeof(sun));
+	socklen_t sunlen = sizeof(sun);
 
-	//bzero(&sin, sizeof(sin));
-	int cs = accept(fd, (struct sockaddr *) &sin, &sinlen);
+	//int cs = accept(lfd, (struct sockaddr *) &sin, &sinlen);
+	int cs = accept(lfd, reinterpret_cast<sockaddr *> (&sun), &sunlen);
 	if (cs >= 0) {
 		warnx << "accept: connection on local socket: cs=" << cs << "\n";
 	} else if (errno != EAGAIN) {
-		warnx << "accept: error: " << strerror(errno) << "\n";
+		warnx << "accept: error accepting: " << strerror(errno) << "\n";
 		// disable readability callback?
 		//fdcb(fd, selread, 0);
 		return;
@@ -1273,7 +1274,7 @@ readgossip(int fd)
 			fdcb(fd, selread, 0);
 			// do you have to close?
 			close(fd);
-			// TODO: ?
+			// do you have to break?
 			break;
 			// what's the difference and should we continue?
 			//exit(0);
@@ -1297,9 +1298,13 @@ readgossip(int fd)
 		totalbuf << buf;
 		buf.tosuio()->clear();
 
-	// XXX: InsertType
-	//} while ((recvlen + (int)sizeof(int)) < msglen);
 	} while (recvlen < msglen);
+
+	if (recvlen == 0) {
+		warnx << "readgossip: nothing received\n";
+		close(fd);
+		return;
+	}
 
 	str gmsg(totalbuf);
 	sigList.clear();
