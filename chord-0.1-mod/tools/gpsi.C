@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.49 2010/07/07 17:57:54 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.50 2010/07/08 23:29:58 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -30,13 +30,15 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.49 2010/07/07 17:57:54 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.50 2010/07/08 23:29:58 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
 int out;
 int waitsleep;
 int initsleep;
+int openfd = 0;
+int closefd = 0;
 
 chordID maxID;
 static const char* dsock;
@@ -785,6 +787,8 @@ main(int argc, char *argv[])
 			if (plist == 1) {
 				printlist(0, -1);
 			}
+			warnx << "openfd: " << openfd << "\n";
+			warnx << "closefd: " << closefd << "\n";
 		}
 
 		// exit init phase
@@ -1206,6 +1210,7 @@ listengossip(void)
 		// TODO: what's %m?
 		fatal("listen: error listening: %m\n");
 		close(fd);
+		++closefd;
 		return;
 	}
 
@@ -1226,6 +1231,7 @@ acceptconn(int lfd)
 	int cs = accept(lfd, reinterpret_cast<sockaddr *> (&sun), &sunlen);
 	if (cs >= 0) {
 		warnx << "accept: connection on local socket: cs=" << cs << "\n";
+		++openfd;
 	} else if (errno != EAGAIN) {
 		warnx << "accept: error accepting: " << strerror(errno) << "\n";
 		// disable readability callback?
@@ -1264,6 +1270,7 @@ readgossip(int fd)
 			fdcb(fd, selread, 0);
 			// do you have to close?
 			close(fd);
+			++closefd;
 			return;
 		}
 
@@ -1274,6 +1281,7 @@ readgossip(int fd)
 			fdcb(fd, selread, 0);
 			// do you have to close?
 			close(fd);
+			++closefd;
 			// do you have to break?
 			break;
 			// what's the difference and should we continue?
@@ -1303,6 +1311,7 @@ readgossip(int fd)
 	if (recvlen == 0) {
 		warnx << "readgossip: nothing received\n";
 		close(fd);
+		++closefd;
 		return;
 	}
 
@@ -1330,6 +1339,7 @@ readgossip(int fd)
 			warnx << "error: getKeyValue failed\n";
 			fdcb(fd, selread, 0);
 			close(fd);
+			++closefd;
 			return;
 		}
 
@@ -1395,6 +1405,7 @@ readgossip(int fd)
 			warnx << "error: getKeyValue failed\n";
 			fdcb(fd, selread, 0);
 			close(fd);
+			++closefd;
 			return;
 		}
 
