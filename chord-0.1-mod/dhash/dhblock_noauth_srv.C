@@ -1,4 +1,4 @@
-/*	$Id: dhblock_noauth_srv.C,v 1.5 2010/06/07 01:34:22 vsfgd Exp vsfgd $	*/
+/*	$Id: dhblock_noauth_srv.C,v 1.6 2010/07/08 11:28:13 vsfgd Exp vsfgd $	*/
 
 #include <iostream>
 
@@ -132,15 +132,18 @@ write_gossip(int fd, strbuf buf)
 	if (n < 0) {
 		warnx << "gossip: write_gossip failed\n";
 		// disable writability callback?
-		fdcb(fd, selwrite, 0);
+		fdcb(fd, selwrite, NULL);
+		close(fd);
 		return;
 	}
 
 	// still writing
 	if (buf.tosuio()->resid()) return;
 
+	warnx << "gossip: closing socket\n";
 	// done writing (0 or NULL?)
-	fdcb(fd, selwrite, 0);
+	fdcb(fd, selwrite, NULL);
+	close(fd);
 }
 
 // Added by Praveen Rao
@@ -186,7 +189,10 @@ dhblock_noauth_srv::adjust_data (chordID key, str new_data, str prev_data,
 			// TODO: return different status?
 			resStatus = DHASH_OK;
 			return "";
+		} else {
+			warnx << "gossip: opening socket\n";
 		}
+
 		// needed?
 		make_async(fd);
 		strbuf buf;
