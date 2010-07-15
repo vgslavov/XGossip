@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.51 2010/07/14 20:48:40 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.52 2010/07/15 02:19:17 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -20,8 +20,6 @@
 #include <dhashclient.h>
 #include <dhblock.h>
 
-//#include <pthread.h>
-
 #include "../utils/id_utils.h"
 #include "../utils/utils.h"
 #include "nodeparams.h"
@@ -30,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.51 2010/07/14 20:48:40 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.52 2010/07/15 02:19:17 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -109,8 +107,6 @@ vec<str> nodeEntries;
 
 bool insertError;
 bool retrieveError;
-
-//pthread_mutex_t lock;
 
 //std::vector<std::map<std::vector<POLY>, std::vector<double>, CompareSig> > allT;
 //std::map<std::vector<POLY>, std::vector<double>, CompareSig> uniqueSigList;
@@ -491,9 +487,6 @@ lshpoly(int listnum, std::vector<std::vector<POLY> > &matrix, unsigned int losee
 int
 main(int argc, char *argv[])
 {
-	//pthread_t thread_ID;
-	//void *exit_status;
-
 	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag;
 	int ch, gintval, initintval, waitintval, nids, valLen, logfd;
 	double beginTime, endTime;
@@ -797,8 +790,6 @@ main(int argc, char *argv[])
 
 	// XGossip exec phase
 	if (gflag == 1 && Hflag == 0) {
-		//pthread_mutex_init(&lock, NULL);
-		//pthread_create(&thread_ID, NULL, listengossip, NULL);
 		warnx << "xgossip exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
 
@@ -811,7 +802,6 @@ main(int argc, char *argv[])
 			//std::vector<POLY> sig;
 			//sig.clear();
 
-			//pthread_mutex_lock(&lock);
 			beginTime = getgtod();    
 			mergelists();
 			endTime = getgtod();    
@@ -824,7 +814,6 @@ main(int argc, char *argv[])
 				printlist(0, txseq.back());
 			}
 			makeKeyValue(&value, valLen, key, allT[0], txseq.back(), XGOSSIP);
-			//pthread_mutex_unlock(&lock);
 			status = insertDHT(ID, value, valLen, MAXRETRIES);
 			cleanup(value);
 
@@ -838,12 +827,9 @@ main(int argc, char *argv[])
 				warnx << "insert SUCCeeded\n";
 			}
 			txseq.push_back(txseq.back() + 1);
-			//pthread_join(thread_ID, &exit_status);
 			warnx << "sleeping (gossip)...\n";
 			sleep(gintval);
 		}
-		// when do we destroy the thread?
-		//pthread_mutex_destroy(&lock);
 	// XGossip+ exec phase
 	} else if (gflag == 1 && Hflag == 1 && Eflag == 1) {
 		if (Pflag == 1) {
@@ -856,8 +842,6 @@ main(int argc, char *argv[])
 			warnx << "using state from init phase\n";
 		}
 
-		//pthread_mutex_init(&lock, NULL);
-		//pthread_create(&thread_ID, NULL, listengossip, NULL);
 		warnx << "xgossip+ exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
 		warnx << "exec ctime: " << ctime(&rawtime);
@@ -869,7 +853,6 @@ main(int argc, char *argv[])
 		// needed?
 		//srandom(loseed);
 		while (1) {
-			//pthread_mutex_lock(&lock);
 			beginTime = getgtod();    
 			mergelistsp();
 			endTime = getgtod();    
@@ -944,7 +927,6 @@ main(int argc, char *argv[])
 
 					// create a map for each chordID
 					mapType groupbyid;
-					//pthread_mutex_lock(&lock);
 					//warnx << "groupbyid:\n";
 					for (int i = 0; i < (int)itr->second.size(); i++) {
 						mapType::iterator j = allT[0].begin();
@@ -961,7 +943,6 @@ main(int argc, char *argv[])
 						//warnx << "\n";
 					}
 					groupedT.push_back(groupbyid);
-					//pthread_mutex_unlock(&lock);
 
 				}
 				warnx << "uniqueids: " << uniqueids << "\n";
@@ -1027,8 +1008,6 @@ main(int argc, char *argv[])
 				sleep(gintval);
 			}
 		}
-		// when do we destroy the thread?
-		//pthread_mutex_destroy(&lock);
 	} else if (rflag == 1) {
 		return 0;
 	} else if (Hflag == 1) {
@@ -1823,7 +1802,6 @@ calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList,
 {
 	//int deg;
 
-	//pthread_mutex_lock(&lock);
 	// skip dummy
 	for (int i = 1; i < (int) sigList.size(); i++) {
 		mapType::iterator itr = allT[0].find(sigList[i]);
@@ -1836,7 +1814,6 @@ calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList,
 		}
 	}
 	warnx << "calcfreqM: Size of unique sig list: " << allT[0].size() << "\n";
-	//pthread_mutex_unlock(&lock);
 }
 
 // verified
@@ -1845,13 +1822,11 @@ add2vecomap(std::vector<std::vector<POLY> > sigList, std::vector<double> freqLis
 {
 	mapType uniqueSigList;
 
-	//pthread_mutex_lock(&lock);
 	for (int i = 0; i < (int) sigList.size(); i++) {
 		uniqueSigList[sigList[i]].push_back(freqList[i]);
 		uniqueSigList[sigList[i]].push_back(weightList[i]);
 	}
 	allT.push_back(uniqueSigList);
-	//pthread_mutex_unlock(&lock);
 	warnx << "add2vecomap: allT.size(): " << allT.size() << "\n";
 }
 
