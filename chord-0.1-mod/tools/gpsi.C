@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.50 2010/07/08 23:29:58 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.51 2010/07/14 20:48:40 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -30,7 +30,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.50 2010/07/08 23:29:58 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.51 2010/07/14 20:48:40 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1194,8 +1194,6 @@ randomID(void)
 }
 
 // verified
-//void *
-//listengossip(void *)
 void
 listengossip(void)
 {
@@ -1211,12 +1209,9 @@ listengossip(void)
 		fatal("listen: error listening: %m\n");
 		close(fd);
 		++closefd;
-		return;
+	} else {
+		fdcb(fd, selread, wrap(acceptconn, fd));
 	}
-
-	fdcb(fd, selread, wrap(acceptconn, fd));
-
-	//return NULL;
 }
 
 // verified
@@ -1232,10 +1227,11 @@ acceptconn(int lfd)
 	if (cs >= 0) {
 		warnx << "accept: connection on local socket: cs=" << cs << "\n";
 		++openfd;
-	} else if (errno != EAGAIN) {
+	//} else if (errno != EAGAIN) {
+	} else {
 		warnx << "accept: error accepting: " << strerror(errno) << "\n";
 		// disable readability callback?
-		//fdcb(fd, selread, 0);
+		fdcb(lfd, selread, NULL);
 		return;
 	}
 	
@@ -1267,7 +1263,7 @@ readgossip(int fd)
 		if (n < 0) {
 			warnx << "readgossip: read failed\n";
 			// disable readability callback?
-			fdcb(fd, selread, 0);
+			fdcb(fd, selread, NULL);
 			// do you have to close?
 			close(fd);
 			++closefd;
@@ -1278,7 +1274,7 @@ readgossip(int fd)
 		if (n == 0) {
 			warnx << "readgossip: no more to read\n";
 			// 0 or NULL?
-			fdcb(fd, selread, 0);
+			fdcb(fd, selread, NULL);
 			// do you have to close?
 			close(fd);
 			++closefd;
@@ -1310,8 +1306,6 @@ readgossip(int fd)
 
 	if (recvlen == 0) {
 		warnx << "readgossip: nothing received\n";
-		close(fd);
-		++closefd;
 		return;
 	}
 
@@ -1337,7 +1331,7 @@ readgossip(int fd)
 		ret = getKeyValue(gmsg.cstr(), key, sigList, freqList, weightList, seq, recvlen);
 		if (ret == -1) {
 			warnx << "error: getKeyValue failed\n";
-			fdcb(fd, selread, 0);
+			fdcb(fd, selread, NULL);
 			close(fd);
 			++closefd;
 			return;
@@ -1403,7 +1397,7 @@ readgossip(int fd)
 		ret = getKeyValue(gmsg.cstr(), key, sig, freq, weight, recvlen);
 		if (ret == -1) {
 			warnx << "error: getKeyValue failed\n";
-			fdcb(fd, selread, 0);
+			fdcb(fd, selread, NULL);
 			close(fd);
 			++closefd;
 			return;
@@ -1421,8 +1415,11 @@ readgossip(int fd)
 		warnx << "error: invalid msgtype\n";
 	}
 
-	// TODO: ?
-	//close(fd);
+	// always disable readability callback before closing a f*cking fd
+	warnx << "readgossip: done reading\n";
+	fdcb(fd, selread, NULL);
+	close(fd);
+	++closefd;
 }
 
 void
