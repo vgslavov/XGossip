@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.52 2010/07/15 02:19:17 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.53 2010/07/15 06:37:58 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.52 2010/07/15 02:19:17 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.53 2010/07/15 06:37:58 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1241,9 +1241,7 @@ readgossip(int fd)
 
 		if (n < 0) {
 			warnx << "readgossip: read failed\n";
-			// disable readability callback?
 			fdcb(fd, selread, NULL);
-			// do you have to close?
 			close(fd);
 			++closefd;
 			return;
@@ -1251,17 +1249,11 @@ readgossip(int fd)
 
 		// EOF
 		if (n == 0) {
-			warnx << "readgossip: no more to read\n";
-			// 0 or NULL?
+			warnx << "readgossip: nothing received\n";
 			fdcb(fd, selread, NULL);
-			// do you have to close?
 			close(fd);
 			++closefd;
-			// do you have to break?
-			break;
-			// what's the difference and should we continue?
-			//exit(0);
-			//return;
+			return;
 		}
 
 		// run 1st time only
@@ -1282,11 +1274,6 @@ readgossip(int fd)
 		buf.tosuio()->clear();
 
 	} while (recvlen < msglen);
-
-	if (recvlen == 0) {
-		warnx << "readgossip: nothing received\n";
-		return;
-	}
 
 	str gmsg(totalbuf);
 	sigList.clear();
@@ -1394,7 +1381,7 @@ readgossip(int fd)
 		warnx << "error: invalid msgtype\n";
 	}
 
-	// always disable readability callback before closing a f*cking fd
+	// always disable readability callback before closing a f*cking fd!
 	warnx << "readgossip: done reading\n";
 	fdcb(fd, selread, NULL);
 	close(fd);
