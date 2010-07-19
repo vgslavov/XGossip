@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.53 2010/07/15 06:37:58 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.54 2010/07/16 17:50:15 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -28,13 +28,14 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.53 2010/07/15 06:37:58 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.54 2010/07/16 17:50:15 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
 int out;
 int waitsleep;
 int initsleep;
+int gossipsleep;
 int openfd = 0;
 int closefd = 0;
 
@@ -150,6 +151,13 @@ initsleepnow()
 {
 	warnx << "init sleep interval is up\n";
 	++initsleep;
+}
+
+void
+gossipsleepnow()
+{
+	warnx << "gossip sleep interval is up\n";
+	++gossipsleep;
 }
 
 // copied from psi.C
@@ -392,13 +400,12 @@ lshchordID(int listnum, std::vector<std::vector<chordID> > &matrix, unsigned int
 			}
 
 			// TODO: how long (if at all)?
-			warnx << "sleeping (lsh)...\n";
 			//sleep(intval);
+			warnx << "sleeping (lsh)...\n";
 
 			initsleep = 0;
 			delaycb(intval, 0, wrap(initsleepnow));
 			while (initsleep == 0) acheck();
-
 		}
 		delete myLSH;
 	}
@@ -476,8 +483,12 @@ lshpoly(int listnum, std::vector<std::vector<POLY> > &matrix, unsigned int losee
 			}
 
 			// TODO: how long (if at all)?
+			//sleep(intval);
 			warnx << "sleeping (lsh)...\n";
-			sleep(intval);
+
+			initsleep = 0;
+			delaycb(intval, 0, wrap(initsleepnow));
+			while (initsleep == 0) acheck();
 		}
 		delete myLSH;
 	}
@@ -828,7 +839,10 @@ main(int argc, char *argv[])
 			}
 			txseq.push_back(txseq.back() + 1);
 			warnx << "sleeping (gossip)...\n";
-			sleep(gintval);
+			//sleep(gintval);
+			gossipsleep = 0;
+			delaycb(gintval, 0, wrap(gossipsleepnow));
+			while (gossipsleep == 0) acheck();
 		}
 	// XGossip+ exec phase
 	} else if (gflag == 1 && Hflag == 1 && Eflag == 1) {
@@ -1005,7 +1019,10 @@ main(int argc, char *argv[])
 				txseq.push_back(txseq.back() + 1);
 				warnx << "sleeping (xgossip+)...\n";
 				cmatrix.clear();
-				sleep(gintval);
+				//sleep(gintval);
+				gossipsleep = 0;
+				delaycb(gintval, 0, wrap(gossipsleepnow));
+				while (gossipsleep == 0) acheck();
 			}
 		}
 	} else if (rflag == 1) {
@@ -1230,10 +1247,10 @@ readgossip(int fd)
 	std::vector<double> freqList;
 	std::vector<double> weightList;
 	InsertType msgtype;
-	int n, msglen, recvlen; 
+	int n, msglen, recvlen, nothing;
 	int ret, seq;
 
-	msglen = recvlen = 0;
+	msglen = recvlen = nothing = 0;
 	warnx << "reading from socket:\n";
 
 	do {
@@ -1249,11 +1266,21 @@ readgossip(int fd)
 
 		// EOF
 		if (n == 0) {
+			warnx << "readgossip: recvlen=" << recvlen << "\n";
 			warnx << "readgossip: nothing received\n";
 			fdcb(fd, selread, NULL);
-			close(fd);
-			++closefd;
 			return;
+			/*
+			++nothing;
+			if (nothing == 5) {
+				warnx << "readgossip: giving up\n";
+				fdcb(fd, selread, NULL);
+				close(fd);
+				++closefd;
+				return;
+			}
+			continue;
+			*/
 		}
 
 		// run 1st time only
@@ -1266,8 +1293,8 @@ readgossip(int fd)
 		recvlen += n;
 
 #ifdef _DEBUG_
-		warnx << "\nreadgossip: n: " << n << "\n";
-		warnx << "readgossip: recvlen: " << recvlen << "\n";
+		warnx << "\nreadgossip: n=" << n << "\n";
+		warnx << "readgossip: recvlen=" << recvlen << "\n";
 #endif
 
 		totalbuf << buf;
@@ -1933,22 +1960,30 @@ mergelists()
 		sumf = sumw = 0;
 		// add all f's and w's for a particular sig
 		for (int i = 0; i < n; i++) {
+			// TODO: combine 1st and 3rd cases
 			// DO NOT skip lists which are done:
 			// use their dummy
+			/*
 			if (citr[i] == allT[i].end()) {
-				warnx << "no minsig in T_" << i
-				      << " (list ended)\n";
+				//warnx << "no minsig in T_" << i
+				//      << " (list ended)\n";
 				sumf += allT[i][dummysig][0];
 				sumw += allT[i][dummysig][1];
 				//continue;
 			} else if (citr[i]->first == minsig) {
-				warnx << "minsig found in T_" << i << "\n";
+			*/
+			if (citr[i]->first == minsig) {
+				//warnx << "minsig found in T_" << i << "\n";
 				sumf += citr[i]->second[0];
 				sumw += citr[i]->second[1];
 				// XXX: itr of T_0 will be incremented later
 				if (i != 0) ++citr[i];
 			} else {
-				warnx << "no minsig in T_" << i << "\n";
+				warnx << "no minsig in T_" << i;
+				if (citr[i] == allT[i].end()) {
+					warnx << " (list ended)";
+				}
+				warnx << "\n";
 				sumf += allT[i][dummysig][0];
 				sumw += allT[i][dummysig][1];
 			}
@@ -2080,10 +2115,14 @@ mergelistsp()
 		sumf = sumw = 0;
 		// add all f's and w's for a particular sig
 		for (int i = 0; i < n; i++) {
-			// TODO:
-			// necessary to check if at end of list?
-			// does revese order of if/else matter?
-			if ((citr[i] == allT[i].end()) && (minsig[0] != 0)) {
+			if (citr[i]->first == minsig) {
+				//warnx << "minsig found in T_" << i << "\n";
+				sumf += citr[i]->second[0];
+				sumw += citr[i]->second[1];
+				// XXX: itr of T_0 will be incremented later
+				if (i != 0) ++citr[i];
+			// TODO: do not check if at end of list?
+			} else if (minsig[0] != 0) {
 				warnx << "no minsig in T_" << i
 				      << " (list ended)\n";
 				isig.clear();
@@ -2094,12 +2133,6 @@ mergelistsp()
 					sumf += allT[i][isig][0];
 					sumw += allT[i][isig][1];
 				}
-			} else if (citr[i]->first == minsig) {
-				//warnx << "minsig found in T_" << i << "\n";
-				sumf += citr[i]->second[0];
-				sumw += citr[i]->second[1];
-				// XXX: itr of T_0 will be incremented later
-				if (i != 0) ++citr[i];
 			}
 			// DO NOT skip lists which are done:
 			// use special multiset
