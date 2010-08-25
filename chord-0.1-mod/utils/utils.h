@@ -1,4 +1,4 @@
-/*	$Id: utils.h,v 1.14 2010/05/08 23:31:25 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.h,v 1.15 2010/06/07 01:33:05 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #ifndef _UTILS_H_
@@ -31,11 +31,12 @@ class lsh {
 	// l = number of independent hash functions in each group (r rows)
 	// m = number of groups (b bands)
 	// n = random number seed
-	lsh(int kc, int lc, int mc, int nc, std::string fileName) {
+	lsh(int kc, int lc, int mc, int nc, int colc = 0, std::string fileName) {
 		k = kc;
 		l = lc;
 		m = mc;
 		n = nc;
+		col = colc;
 
 		// loading poly's
 		std::ifstream txt;
@@ -72,6 +73,7 @@ class lsh {
 	int l;
 	int m;
 	int n;
+	int col;
         POLY selected_poly;
 	std::string irrpoly;
 };

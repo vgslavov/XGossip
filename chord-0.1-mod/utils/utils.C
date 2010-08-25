@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.36 2010/05/16 16:13:27 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.37 2010/06/07 01:32:02 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -2311,6 +2311,8 @@ lsh::getHashCode(std::vector<POLY>& S)
 		pre_hash.push_back(temp);
 		temp.clear();
 		min_hash.clear();
+		// only one column is needed
+		if (col != 0) break;
 	}
 	//warnx << "pre_hash.size(): " << pre_hash.size() << "\n";
 
