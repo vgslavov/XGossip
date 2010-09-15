@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.54 2010/07/16 17:50:15 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.55 2010/07/19 14:29:14 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.54 2010/07/16 17:50:15 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.55 2010/07/19 14:29:14 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -53,7 +53,6 @@ int discardmsg = 0;
 int peers = 0;
 bool initphase = 0;
 
-// TODO: command line args?
 int lfuncs = 5;
 int mgroups = 100;
 
@@ -268,7 +267,7 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 		freq = itr->second[0];
 		weight = itr->second[1];
 
-		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
+		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, 0, irrpolyfile);
 		// convert multiset to set
 		if (uflag == 1) {
 			sig2str(sig, sigbuf);
@@ -336,7 +335,7 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 
 // TODO: verify
 int
-lshchordID(int listnum, std::vector<std::vector<chordID> > &matrix, unsigned int loseed = 0, int intval = -1, InsertType msgtype = INVALID)
+lshchordID(int listnum, std::vector<std::vector<chordID> > &matrix, unsigned int loseed = 0, int intval = -1, int col = 0, InsertType msgtype = INVALID)
 {
 	std::vector<chordID> minhash;
 	std::vector<POLY> sig;
@@ -353,7 +352,7 @@ lshchordID(int listnum, std::vector<std::vector<chordID> > &matrix, unsigned int
 		freq = itr->second[0];
 		weight = itr->second[1];
 
-		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
+		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrpolyfile);
 		// convert multiset to set
 		if (uflag == 1) {
 			//sig2str(sig, sigbuf);
@@ -365,8 +364,8 @@ lshchordID(int listnum, std::vector<std::vector<chordID> > &matrix, unsigned int
 
 		minhash = myLSH->getHashCode(sig);
 
+		//warnx << "minhash.size(): " << minhash.size() << "\n";
 		/*
-		warnx << "minhash.size(): " << minhash.size() << "\n";
 		if (plist == 1) {
 			warnx << "minhash IDs:\n";
 			for (int i = 0; i < (int)minhash.size(); i++) {
@@ -376,13 +375,13 @@ lshchordID(int listnum, std::vector<std::vector<chordID> > &matrix, unsigned int
 		*/
 
 		matrix.push_back(minhash);
-		int range = (int)minhash.size();
-		// randomness verified
-		int col = randomNumGenZ(range-1);
-		ID = (matrix.back())[col];
-		warnx << "ID in col " << col << ": " << ID << "\n";
-
+		
 		if (gflag == 1 && msgtype != INVALID) {
+			int range = (int)minhash.size();
+			// randomness verified
+			int col = randomNumGenZ(range-1);
+			ID = (matrix.back())[col];
+			//warnx << "ID in col " << col << ": " << ID << "\n";
 			strbuf t;
 			t << ID;
 			str key(t);
@@ -414,7 +413,7 @@ lshchordID(int listnum, std::vector<std::vector<chordID> > &matrix, unsigned int
 
 // TODO: verify
 int
-lshpoly(int listnum, std::vector<std::vector<POLY> > &matrix, unsigned int loseed = 0, int intval = 0, InsertType msgtype = INVALID)
+lshpoly(int listnum, std::vector<std::vector<POLY> > &matrix, unsigned int loseed = 0, int intval = 0, int col = 0, InsertType msgtype = INVALID)
 {
 	std::vector<POLY> minhash;
 	std::vector<POLY> sig;
@@ -431,7 +430,7 @@ lshpoly(int listnum, std::vector<std::vector<POLY> > &matrix, unsigned int losee
 		freq = itr->second[0];
 		weight = itr->second[1];
 
-		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
+		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrpolyfile);
 		// convert multiset to set
 		if (uflag == 1) {
 			//sig2str(sig, sigbuf);
@@ -482,10 +481,7 @@ lshpoly(int listnum, std::vector<std::vector<POLY> > &matrix, unsigned int losee
 				warnx << "insert SUCCeeded\n";
 			}
 
-			// TODO: how long (if at all)?
-			//sleep(intval);
 			warnx << "sleeping (lsh)...\n";
-
 			initsleep = 0;
 			delaycb(intval, 0, wrap(initsleepnow));
 			while (initsleep == 0) acheck();
@@ -845,15 +841,19 @@ main(int argc, char *argv[])
 			while (gossipsleep == 0) acheck();
 		}
 	// XGossip+ exec phase
-	} else if (gflag == 1 && Hflag == 1 && Eflag == 1) {
+	} else if (Hflag == 1 && Eflag == 1) {
 		if (Pflag == 1) {
-			warnx << "loading init state from file...\n";
+			warnx << "state: loading from init file...\n";
 			loadinitstate(initfp);
-			printlist(0, -1);
+			if (plist == 1) {
+				printlist(0, -1);
+			}
+		} else if (sflag == 1) {
+			warnx << "state: signature files\n";
 		} else if (Iflag != 1 || Eflag != 1) {
-			fatal << "no init state available\n";
+			fatal << "state: none available\n";
 		} else {
-			warnx << "using state from init phase\n";
+			warnx << "state: init phase\n";
 		}
 
 		warnx << "xgossip+ exec...\n";
@@ -886,6 +886,7 @@ main(int argc, char *argv[])
 			// TODO: use findMod()
 			if (mflag == 1) {
 				// don't send anything
+				//lshpoly(0, pmatrix, 0, -1, col);
 				lshpoly(0, pmatrix);
 				poly2sig polyindex;
 				warnx << "pmatrix.size(): " << pmatrix.size() << "\n";
@@ -903,11 +904,18 @@ main(int argc, char *argv[])
 				pmatrix.clear();
 			// use compute_hash()
 			} else {
+				warnx << "running lshchordID...\n";
+				beginTime = getgtod();    
 				// don't send anything
+				//lshchordID(0, cmatrix, 0, -1, col);
 				lshchordID(0, cmatrix);
+				endTime = getgtod();    
+				printdouble("lshchordID time: ", endTime - beginTime);
+				warnx << "\n";
 				chordID2sig idindex;
 				warnx << "cmatrix.size(): " << cmatrix.size() << "\n";
-				warnx << "IDs in random column " << col << ":\n";
+				//warnx << "IDs in random column " << col << ":\n";
+				col = 0;
 				for (int i = 0; i < (int)cmatrix.size(); i++) {
 					//warnx << cmatrix[i][col] << "\n";;
 					// store index of signature associated with chordID
@@ -936,7 +944,7 @@ main(int argc, char *argv[])
 						}
 						warnx << "\n";
 					} else {
-					      warnx << " " << itr->second[0] << "\n";
+						warnx << " " << itr->second[0] << "\n";
 					}
 
 					// create a map for each chordID
@@ -962,67 +970,68 @@ main(int argc, char *argv[])
 				warnx << "uniqueids: " << uniqueids << "\n";
 				warnx << "groupedT.size(): " << groupedT.size() << "\n";
 
-				warnx << "inserting XGOSSIPP:\n"
-				      << "txseq: " << txseq.back() << "\n";
+				if (gflag == 1) {
+					warnx << "inserting XGOSSIPP:\n"
+					      << "txseq: " << txseq.back() << "\n";
 
-				chordID2sig::iterator itr = idindex.begin();
-				for (int i = 0; i < (int)groupedT.size(); i++) {
-					// end addresses the location succeeding the last element 
-					// in a map (not the last element itself)
-					if (itr == idindex.end()) {
-						warnx << "idindex ended\n";
-						break;
+					chordID2sig::iterator itr = idindex.begin();
+					for (int i = 0; i < (int)groupedT.size(); i++) {
+						// end addresses the location succeeding the last element 
+						// in a map (not the last element itself)
+						if (itr == idindex.end()) {
+							warnx << "idindex ended\n";
+							break;
+						}
+						/*
+						warnx << "groupedT[" << i << "]:\n";
+						double freq, weight;
+						for (mapType::iterator jitr = groupedT[i].begin(); jitr != groupedT[i].end(); jitr++) {
+							sig = jitr->first;
+							freq = jitr->second[0];
+							weight = jitr->second[1];
+							sig2str(sig, sigbuf);
+							warnx << "sig: " << sigbuf;
+							printdouble(" ", freq);
+							printdouble(" ", weight);
+							warnx << "\n";
+						}
+						*/
+						ID = itr->first;
+						strbuf z;
+						z << ID;
+						str key(z);
+						warnx << "txID: " << ID << "\n";
+
+						makeKeyValue(&value, valLen, key, groupedT[i], txseq.back(), XGOSSIPP);
+
+						status = insertDHT(ID, value, valLen, MAXRETRIES);
+						cleanup(value);
+
+						// do not exit if insert FAILs!
+						if (status != SUCC) {
+							warnx << "error: insert FAILed\n";
+							// to preserve mass conservation:
+							// "send" msg to yourself
+							doublefreqgroup(0, groupedT[i]);
+						} else {
+							warnx << "insert SUCCeeded\n";
+						}
+
+						++itr;
+
+						warnx << "sleeping (groups)...\n";
+						sleep(initintval);
 					}
-					/*
-					warnx << "groupedT[" << i << "]:\n";
-					double freq, weight;
-					for (mapType::iterator jitr = groupedT[i].begin(); jitr != groupedT[i].end(); jitr++) {
-						sig = jitr->first;
-						freq = jitr->second[0];
-						weight = jitr->second[1];
-						sig2str(sig, sigbuf);
-						warnx << "sig: " << sigbuf;
-						printdouble(" ", freq);
-						printdouble(" ", weight);
-						warnx << "\n";
-					}
-					*/
-					ID = itr->first;
-					strbuf z;
-					z << ID;
-					str key(z);
-					warnx << "txID: " << ID << "\n";
-
-					// TODO: same round for each group?
-					makeKeyValue(&value, valLen, key, groupedT[i], txseq.back(), XGOSSIPP);
-
-					status = insertDHT(ID, value, valLen, MAXRETRIES);
-					cleanup(value);
-
-					// do not exit if insert FAILs!
-					if (status != SUCC) {
-						warnx << "error: insert FAILed\n";
-						// to preserve mass conservation:
-						// "send" msg to yourself
-						// TODO: needed?
-						doublefreqgroup(0, groupedT[i]);
-					} else {
-						warnx << "insert SUCCeeded\n";
-					}
-
-					++itr;
-
-					warnx << "sleeping (groups)...\n";
-					// TODO: needed?
-					sleep(initintval);
+					txseq.push_back(txseq.back() + 1);
+					warnx << "sleeping (xgossip+)...\n";
+					cmatrix.clear();
+					//sleep(gintval);
+					gossipsleep = 0;
+					delaycb(gintval, 0, wrap(gossipsleepnow));
+					while (gossipsleep == 0) acheck();
+				} else {
+					return 0;
 				}
-				txseq.push_back(txseq.back() + 1);
-				warnx << "sleeping (xgossip+)...\n";
-				cmatrix.clear();
-				//sleep(gintval);
-				gossipsleep = 0;
-				delaycb(gintval, 0, wrap(gossipsleepnow));
-				while (gossipsleep == 0) acheck();
 			}
 		}
 	} else if (rflag == 1) {
@@ -1442,7 +1451,7 @@ loadinitstate(FILE *initfp)
 
 	if (line) free(line);
 
-	warnx << "allT.size(): " << allT.size() << "\n";
+	warnx << "before loadinitstate allT.size(): " << allT.size() << "\n";
 	allT.push_back(uniqueSigList);
 }
 
@@ -1526,7 +1535,6 @@ getdir(std::string dir, std::vector<std::string> &files)
 	DIR *dp;
 	struct dirent *dirp;
 
-	// TODO: move to main
 	if ((dp = opendir(dir.c_str())) == NULL) {
 		fatal("can't read dir\n");
 		return errno;
@@ -1653,7 +1661,7 @@ informteam(chordID myID, std::vector<POLY> sig)
 	int valLen;
 	//str sigbuf;
 
-	lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, irrpolyfile);
+	lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, 0, irrpolyfile);
 	// TODO: verify getUniqueSet works right
 	//warnx << "informteam: getUniqueSet\n";
 	myLSH->getUniqueSet(sig);
@@ -1960,18 +1968,6 @@ mergelists()
 		sumf = sumw = 0;
 		// add all f's and w's for a particular sig
 		for (int i = 0; i < n; i++) {
-			// TODO: combine 1st and 3rd cases
-			// DO NOT skip lists which are done:
-			// use their dummy
-			/*
-			if (citr[i] == allT[i].end()) {
-				//warnx << "no minsig in T_" << i
-				//      << " (list ended)\n";
-				sumf += allT[i][dummysig][0];
-				sumw += allT[i][dummysig][1];
-				//continue;
-			} else if (citr[i]->first == minsig) {
-			*/
 			if (citr[i]->first == minsig) {
 				//warnx << "minsig found in T_" << i << "\n";
 				sumf += citr[i]->second[0];
