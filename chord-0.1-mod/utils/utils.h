@@ -1,4 +1,4 @@
-/*	$Id: utils.h,v 1.15 2010/06/07 01:33:05 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.h,v 1.16 2010/08/25 00:21:48 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #ifndef _UTILS_H_
@@ -55,6 +55,26 @@ class lsh {
 
 		selected_poly = numbers[rand_index];
 		irrpoly = fileName;
+
+		// initialize l hash functions
+		int random_integer_a;
+	        int random_integer_b;
+        	int lowest_a = 1, highest_a = -9;
+		int lowest_b = 0, highest_b = -9;
+		highest = highest_a = highest_b = n;
+		int range_a = (highest_a - lowest_a) + 1;
+		int range_b = (highest_b - lowest_b) + 1;
+		randa.clear();
+		randb.clear();
+		for (int i = 0; i < l; i++) {
+			random_integer_a  = lowest_a +
+				int((double)range_a*rand()/(RAND_MAX + 1.0));
+			random_integer_b  = lowest_b +
+				int((double)range_b*rand()/(RAND_MAX + 1.0)); 
+			randa.push_back(random_integer_a);
+			randb.push_back(random_integer_b);
+		}
+
 	}
 
 	// destructor
@@ -76,6 +96,9 @@ class lsh {
 	int col;
         POLY selected_poly;
 	std::string irrpoly;
+	std::vector<int> randa;
+	std::vector<int> randb;
+	int highest;
 };
 
 enum OPTYPE {

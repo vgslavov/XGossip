@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.37 2010/06/07 01:32:02 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.38 2010/08/25 00:21:15 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -2249,6 +2249,7 @@ lsh::getHashCode(std::vector<POLY>& S)
 	std::vector<std::string> pre_hash;
 	std::vector<chordID> hash;
 
+	/*
 	// random number generation using seeds from constructor argument "n"
 	srand(n); 
 	int random_integer_a; 
@@ -2275,6 +2276,7 @@ lsh::getHashCode(std::vector<POLY>& S)
 
 	int range_a = (highest_a - lowest_a) + 1;
 	int range_b = (highest_b - lowest_b) + 1;
+	*/
 
 	// group from ctor arg m
 	for (int ik = 0; ik < m; ik++) {
@@ -2282,13 +2284,16 @@ lsh::getHashCode(std::vector<POLY>& S)
 		for (int j = 0; j < l; j++) {
 			// loop over S which is read from external file sig.txt
 			for (int i = 0; i < k; i++) {
+				/*
 				random_integer_a  = lowest_a +
 					int((double)range_a*rand()/(RAND_MAX + 1.0));
 				random_integer_b  = lowest_b +
 					int((double)range_b*rand()/(RAND_MAX + 1.0));  
+				*/
 				//warnx << "random_integer_a: " << random_integer_a << "\n";
 				//warnx << "random_integer_b: " << random_integer_b << "\n";
-				POLY htmp = (random_integer_a * S[i] + random_integer_b) % highest_a;
+				//POLY htmp = (random_integer_a * S[i] + random_integer_b) % highest_a;
+				POLY htmp = (randa[j] * S[i] + randb[j]) % highest;
 				//warnx << "h[k]: " << htmp << "\n";
 				h.push_back(htmp);
 			}
@@ -2352,6 +2357,7 @@ lsh::getHashCodeFindMod(std::vector<POLY>& S, POLY polNumber)
 	std::vector<std::string> pre_hash;
 	std::vector<POLY> hash;
 
+	/*
 	// random number generation using seeds from constructor argument "n"
 	srand(n); 
 	int random_integer_a; 
@@ -2378,6 +2384,7 @@ lsh::getHashCodeFindMod(std::vector<POLY>& S, POLY polNumber)
 
 	int range_a = (highest_a - lowest_a) + 1;
 	int range_b = (highest_b - lowest_b) + 1;
+	*/
 
 	// group from ctor arg m
 	for (int ik = 0; ik < m; ik++) {
@@ -2385,13 +2392,16 @@ lsh::getHashCodeFindMod(std::vector<POLY>& S, POLY polNumber)
 		for (int j = 0; j < l; j++) {
 			// loop over S which is read from external file sig.txt
 			for (int i = 0; i < k; i++) {
+				/*
 				random_integer_a  = lowest_a +
 					int((double)range_a*rand()/(RAND_MAX + 1.0));
 				random_integer_b  = lowest_b +
 					int((double)range_b*rand()/(RAND_MAX + 1.0));  
+				*/
 				//warnx << "random_integer_a: " << random_integer_a << "\n";
 				//warnx << "random_integer_b: " << random_integer_b << "\n";
-				POLY htmp = (random_integer_a * S[i] + random_integer_b) % highest_a;
+				//POLY htmp = (random_integer_a * S[i] + random_integer_b) % highest_a;
+				POLY htmp = (randa[j] * S[i] + randb[j]) % highest;
 				//warnx << "h[k]: " << htmp << "\n";
 				h.push_back(htmp);
 			}
