@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.55 2010/07/19 14:29:14 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.56 2010/09/15 00:35:20 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.55 2010/07/19 14:29:14 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.56 2010/09/15 00:35:20 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -335,7 +335,7 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 
 // TODO: verify
 int
-lshchordID(int listnum, std::vector<std::vector<chordID> > &matrix, unsigned int loseed = 0, int intval = -1, int col = 0, InsertType msgtype = INVALID)
+lshchordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, InsertType msgtype = INVALID, int listnum = 0, int col = 0)
 {
 	std::vector<chordID> minhash;
 	std::vector<POLY> sig;
@@ -413,7 +413,7 @@ lshchordID(int listnum, std::vector<std::vector<chordID> > &matrix, unsigned int
 
 // TODO: verify
 int
-lshpoly(int listnum, std::vector<std::vector<POLY> > &matrix, unsigned int loseed = 0, int intval = 0, int col = 0, InsertType msgtype = INVALID)
+lshpoly(std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msgtype = INVALID, int listnum = 0, int col = 0)
 {
 	std::vector<POLY> minhash;
 	std::vector<POLY> sig;
@@ -760,11 +760,11 @@ main(int argc, char *argv[])
 		// InitGossipSend: use findMod()
 		if (mflag == 1) {
 			// T_m is 1st list
-			lshpoly(0, pmatrix, loseed, initintval, INITGOSSIP);
+			lshpoly(pmatrix, initintval, INITGOSSIP);
 			pmatrix.clear();
 		// InitGossipSend: use compute_hash()
 		} else {
-			lshchordID(0, cmatrix, loseed, initintval, INITGOSSIP);
+			lshchordID(cmatrix, initintval, INITGOSSIP);
 			cmatrix.clear();
 		}
 
@@ -887,7 +887,7 @@ main(int argc, char *argv[])
 			if (mflag == 1) {
 				// don't send anything
 				//lshpoly(0, pmatrix, 0, -1, col);
-				lshpoly(0, pmatrix);
+				lshpoly(pmatrix);
 				poly2sig polyindex;
 				warnx << "pmatrix.size(): " << pmatrix.size() << "\n";
 				warnx << "POLYs in random column " << col << ":\n";
@@ -908,7 +908,7 @@ main(int argc, char *argv[])
 				beginTime = getgtod();    
 				// don't send anything
 				//lshchordID(0, cmatrix, 0, -1, col);
-				lshchordID(0, cmatrix);
+				lshchordID(cmatrix);
 				endTime = getgtod();    
 				printdouble("lshchordID time: ", endTime - beginTime);
 				warnx << "\n";
