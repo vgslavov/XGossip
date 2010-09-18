@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.56 2010/09/15 00:35:20 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.57 2010/09/17 01:54:01 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.56 2010/09/15 00:35:20 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.57 2010/09/17 01:54:01 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -906,8 +906,6 @@ main(int argc, char *argv[])
 			} else {
 				warnx << "running lshchordID...\n";
 				beginTime = getgtod();    
-				// don't send anything
-				//lshchordID(0, cmatrix, 0, -1, col);
 				lshchordID(cmatrix);
 				endTime = getgtod();    
 				printdouble("lshchordID time: ", endTime - beginTime);
@@ -917,7 +915,11 @@ main(int argc, char *argv[])
 				//warnx << "IDs in random column " << col << ":\n";
 				col = 0;
 				for (int i = 0; i < (int)cmatrix.size(); i++) {
-					//warnx << cmatrix[i][col] << "\n";;
+					//for (int j = 0; j < (int)cmatrix[i].size(); j++) {
+					//	warnx << cmatrix[i][j] << " ";
+					//}
+					//warnx << "\n";
+					//warnx << cmatrix[i][col] << "\n";
 					// store index of signature associated with chordID
 					idindex[cmatrix[i][col]].push_back(i);
 					/*
@@ -1023,8 +1025,10 @@ main(int argc, char *argv[])
 						sleep(initintval);
 					}
 					txseq.push_back(txseq.back() + 1);
-					warnx << "sleeping (xgossip+)...\n";
 					cmatrix.clear();
+					// CLEAR ME!
+					groupedT.clear();
+					warnx << "sleeping (xgossip+)...\n";
 					//sleep(gintval);
 					gossipsleep = 0;
 					delaycb(gintval, 0, wrap(gossipsleepnow));
@@ -1975,11 +1979,13 @@ mergelists()
 				// XXX: itr of T_0 will be incremented later
 				if (i != 0) ++citr[i];
 			} else {
+#ifdef _DEBUG_
 				warnx << "no minsig in T_" << i;
 				if (citr[i] == allT[i].end()) {
 					warnx << " (list ended)";
 				}
 				warnx << "\n";
+#endif
 				sumf += allT[i][dummysig][0];
 				sumw += allT[i][dummysig][1];
 			}
@@ -2101,12 +2107,14 @@ mergelistsp()
 				minsig = citr[i]->first;
 		}
 
+#ifdef _DEBUG_
 		sig2str(minsig, sigbuf);
 		warnx << "actual minsig: " << sigbuf << "\n";
 
 		if (minsig[0] == 0) {
 			warnx << "minsig is a special multiset\n";
 		}
+#endif
 
 		sumf = sumw = 0;
 		// add all f's and w's for a particular sig
@@ -2119,13 +2127,17 @@ mergelistsp()
 				if (i != 0) ++citr[i];
 			// TODO: do not check if at end of list?
 			} else if (minsig[0] != 0) {
+#ifdef _DEBUG_
 				warnx << "no minsig in T_" << i
 				      << " (list ended)\n";
+#endif
 				isig.clear();
 				isig = inverse(minsig);
 				mapType::iterator itr = allT[i].find(isig);
 				if (itr != allT[i].end()) {
+#ifdef _DEBUG_
 					warnx << "special minsig found in T_" << i << "\n";
+#endif
 					sumf += allT[i][isig][0];
 					sumw += allT[i][isig][1];
 				}
