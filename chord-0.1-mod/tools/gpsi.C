@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.57 2010/09/17 01:54:01 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.58 2010/09/18 21:43:56 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -28,11 +28,12 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.57 2010/09/17 01:54:01 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.58 2010/09/18 21:43:56 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
 int out;
+int groupsleep;
 int waitsleep;
 int initsleep;
 int gossipsleep;
@@ -137,6 +138,13 @@ chordID myGuess;
 
 // retrieve TIMEOUT
 const int RTIMEOUT = 20;
+
+void
+groupsleepnow()
+{
+	warnx << "group sleep interval is up\n";
+	++groupsleep;
+}
 
 void
 waitsleepnow()
@@ -745,7 +753,7 @@ main(int argc, char *argv[])
 	if (gflag == 1 || lflag == 1) {
 		warnx << "listening for gossip...\n";
 		listengossip();		
-		sleep(5);
+		//sleep(5);
 	}
 
 	// XGossip+ init phase
@@ -1022,7 +1030,10 @@ main(int argc, char *argv[])
 						++itr;
 
 						warnx << "sleeping (groups)...\n";
-						sleep(initintval);
+						//sleep(initintval);
+						groupsleep = 0;
+						delaycb(initintval, 0, wrap(groupsleepnow));
+						while (groupsleep == 0) acheck();
 					}
 					txseq.push_back(txseq.back() + 1);
 					cmatrix.clear();
