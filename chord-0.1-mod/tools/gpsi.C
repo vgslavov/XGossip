@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.58 2010/09/18 21:43:56 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.59 2010/09/19 23:54:15 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.58 2010/09/18 21:43:56 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.59 2010/09/19 23:54:15 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -502,7 +502,7 @@ lshpoly(std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msg
 int
 main(int argc, char *argv[])
 {
-	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag;
+	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag;
 	int ch, gintval, initintval, waitintval, nids, valLen, logfd;
 	double beginTime, endTime;
 	char *value;
@@ -511,12 +511,14 @@ main(int argc, char *argv[])
 	chordID ID;
 	DHTStatus status;
 	str sigbuf;
+	std::string initdir;
 	std::string sigdir;
+	std::vector<std::string> initfiles;
 	std::vector<std::string> sigfiles;
 	std::vector<std::vector<POLY> > sigList;
 	std::vector<POLY> sig;
 
-	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = 0;
+	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = 0;
 
 	gintval = waitintval = nids = 0;
 	initintval = -1;
@@ -526,7 +528,7 @@ main(int argc, char *argv[])
 	// init or txseq.back() segfaults!
 	txseq.push_back(0);
 
-	while ((ch = getopt(argc, argv, "B:cd:EG:gHhIj:L:lmn:P:pq:R:rS:s:T:t:uvw:z")) != -1)
+	while ((ch = getopt(argc, argv, "B:cD:d:EG:gHhIj:L:lMmn:P:pq:R:rS:s:T:t:uvw:z")) != -1)
 		switch(ch) {
 		case 'B':
 			mgroups = strtol(optarg, NULL, 10);
@@ -536,6 +538,10 @@ main(int argc, char *argv[])
 			break;
 		case 'c':
 			discardmsg = 1;
+			break;
+		case 'D':
+			Dflag = 1;
+			initdir = optarg;
 			break;
 		case 'd':
 			dflag = 1;
@@ -573,6 +579,9 @@ main(int argc, char *argv[])
 			break;
 		case 'l':
 			lflag = 1;
+			break;
+		case 'M':
+			Mflag = 1;
 			break;
 		case 'm':
 			mflag = 1;
@@ -661,7 +670,7 @@ main(int argc, char *argv[])
 
 	// TODO: make sure only one flag is set at a time
 	// read, gossip, LSH or listen
-	if (rflag == 0 && gflag == 0 && lflag == 0 && Hflag == 0) usage();
+	if (rflag == 0 && gflag == 0 && lflag == 0 && Hflag == 0 && Mflag == 0) usage();
 
 	// sockets are required when listening or gossiping
 	if ((gflag == 1 || lflag == 1) && (Gflag == 0 || Sflag == 0)) usage();
@@ -669,9 +678,10 @@ main(int argc, char *argv[])
 	// TODO: handle sflag & Pflag
 	if (gflag == 1 && gintval == 0) usage();
 
+	if (Mflag == 1 && Dflag == 0) usage();
+
 	// action H (for testing)
-	if (Hflag == 1 && (dflag == 0 || jflag == 0))
-		usage();
+	if (Hflag == 1 && (dflag == 0 || jflag == 0)) usage();
 
 	// option H (for gossiping)
 	// TODO: handle sflag & Pflag
@@ -1052,6 +1062,28 @@ main(int argc, char *argv[])
 	} else if (rflag == 1) {
 		return 0;
 	} else if (Hflag == 1) {
+		return 0;
+	} else if (Mflag == 1) {
+		warnx << "testing merging...\n";
+		getdir(initdir, initfiles);
+		acc = "r";
+		warnx << "loading lists from files...\n";
+		for (unsigned int i = 0; i < initfiles.size(); i++) {
+			if ((initfp = fopen(initfiles[i].c_str(), acc.c_str())) == NULL) {
+				warnx << "can't open init file" << initfiles[i].c_str() << "\n";
+				continue;
+			}
+			loadinitstate(initfp);
+			fclose(initfp);
+		}
+		beginTime = getgtod();    
+		mergelistsp();
+		endTime = getgtod();    
+		printdouble("merge lists time: ", endTime - beginTime);
+		warnx << "\n";
+		if (plist == 1) {
+			printlist(0, -1);
+		}
 		return 0;
 	} else {
 		usage();
@@ -1476,6 +1508,7 @@ loginitstate(FILE *initfp)
 	std::vector<POLY> sig;
 	sig.clear();
 	str sigbuf;
+	// merged list is first
 	int listnum = 0;
 	double freq, weight;
 
@@ -1983,7 +2016,8 @@ mergelists()
 		sumf = sumw = 0;
 		// add all f's and w's for a particular sig
 		for (int i = 0; i < n; i++) {
-			if (citr[i]->first == minsig) {
+			// TODO: verify
+			if ((citr[i] != allT[i].end()) && (citr[i]->first == minsig)) {
 				//warnx << "minsig found in T_" << i << "\n";
 				sumf += citr[i]->second[0];
 				sumw += citr[i]->second[1];
@@ -2055,8 +2089,8 @@ mergelistsp()
 		return;
 	} else {
 #ifdef _DEBUG_
-		for (int i = 0; i < n; i++)
-			printlist(i, -1);
+		//for (int i = 0; i < n; i++)
+			//printlist(i, -1);
 #endif
 	}
 
@@ -2089,6 +2123,7 @@ mergelistsp()
 			allT[0][dummysig][1] = sumw / 2;
 			*/
 			// TODO: split weight of all special multisets or is that done already?
+			warnx << "done with all lists\n";
 			break;
 		}
 
@@ -2104,7 +2139,7 @@ mergelistsp()
 				++citr[i];
 				continue;
 			*/
-			} else if (z == 0){
+			} else if (z == 0) {
 				minsig = citr[i]->first;
 #ifdef _DEBUG_
 				sig2str(minsig, sigbuf);
@@ -2114,6 +2149,7 @@ mergelistsp()
 				z = 1;
 
 			}
+
 			if (sigcmp(citr[i]->first, minsig) == 1)
 				minsig = citr[i]->first;
 		}
@@ -2130,13 +2166,12 @@ mergelistsp()
 		sumf = sumw = 0;
 		// add all f's and w's for a particular sig
 		for (int i = 0; i < n; i++) {
-			if (citr[i]->first == minsig) {
+			if ((citr[i] != allT[i].end()) && (citr[i]->first == minsig)) {
 				//warnx << "minsig found in T_" << i << "\n";
 				sumf += citr[i]->second[0];
 				sumw += citr[i]->second[1];
 				// XXX: itr of T_0 will be incremented later
 				if (i != 0) ++citr[i];
-			// TODO: do not check if at end of list?
 			} else if (minsig[0] != 0) {
 #ifdef _DEBUG_
 				warnx << "no minsig in T_" << i
@@ -2212,7 +2247,7 @@ mergelistsp()
 
 	// delete all except first (doesn't free memory but it's O(1))
 	while (allT.size() > 1) allT.pop_back();
-	//warnx << "allT.size() after pop: " << allT.size() << "\n";
+	warnx << "allT.size() after pop: " << allT.size() << "\n";
 }
 
 // TODO: verify
@@ -2355,30 +2390,31 @@ usage(void)
 	     << "\t     -H -d 1122941 -j irrpoly-deg9.dat -u -B 50 -R 10 -I -E -P initfile -p\n\n";
 	warn << "Options:\n"
 	     << "	-B		bands for LSH (a.k.a. m groups)\n"
-	     << "	-R		rows for LSH (a.k.a. l hash functions)\n"
 	     << "	-c		discard out-of-round messages\n"
+	     << "	-D		<dir with init files>\n"
+	     << "	-d		<random prime number for LSH seed>\n"
 	     << "	-E		exec phase of XGossip+ (requires -H)\n"
-	     << "	-I		init phase of XGossip+ (requires -H)\n"
 	     << "	-G		<gossip socket>\n"
-	     << "	-S		<dhash socket>\n"
 	     << "	-H		generate chordIDs/POLYs using LSH when gossiping\n"
 					"\t\t\t(requires -g, -s, -d, -j, -I -w)\n"
-	     << "	-d		<random prime number for LSH seed>\n"
+	     << "	-I		init phase of XGossip+ (requires -H)\n"
 	     << "      	-j		<irrpoly file>\n"
 	     << "	-L		<log file>\n"
 	     << "      	-m		use findMod instead of compute_hash\n"
 					"\t\t\t(vector of POLYs instead of chordIDs)\n"
-	     << "	-u		make POLYs unique (convert multiset to set)\n"
 	     << "      	-n		<how many>\n"
 	     << "      	-P		<init phase file>\n"
 					"\t\t\t(after XGossip+ init state is complete)\n"
 	     << "      	-p		verbose (print list of signatures)\n"
 	     << "      	-q		<estimate of # of peers in DHT>\n"
+	     << "	-R		rows for LSH (a.k.a. l hash functions)\n"
+	     << "	-S		<dhash socket>\n"
 	     << "	-s		<dir with sigs>\n"
 	     << "      	-T		<how often>\n"
 					"\t\t\t(init interval)\n"
 	     << "      	-t		<how often>\n"
 					"\t\t\t(gossip interval in exec phase)\n"
+	     << "	-u		make POLYs unique (convert multiset to set)\n"
 	     << "      	-w		<how long>\n"
 					"\t\t\t(wait interval after init phase is done)\n\n"
 	     << "Actions:\n"
@@ -2386,6 +2422,7 @@ usage(void)
 	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j)\n"
 					"\t\t\t(XGossip+)\n"
 	     << "	-l		listen for gossip (requires -S, -G, -s)\n"
+	     << "	-M		test mergelists(p) (requires -D)\n"
 	     << "	-r		read signatures (requires -s)\n"
 	     << "	-v		print version\n"
 	     << "	-z		generate random chordID (requires -n)\n";
