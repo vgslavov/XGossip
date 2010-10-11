@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.59 2010/09/19 23:54:15 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.60 2010/09/21 05:09:20 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -28,7 +28,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.59 2010/09/19 23:54:15 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.60 2010/09/21 05:09:20 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -43,9 +43,10 @@ int closefd = 0;
 chordID maxID;
 static const char* dsock;
 static const char* gsock;
-static char *logfile;
+static char *hashfile;
 static char *irrpolyfile;
 static char *initfile;
+static char *logfile;
 int lshseed = 0;
 int plist = 0;
 int gflag = 0;
@@ -275,7 +276,7 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 		freq = itr->second[0];
 		weight = itr->second[1];
 
-		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, 0, irrpolyfile);
+		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, 0, irrpolyfile, hashfile);
 		// convert multiset to set
 		if (uflag == 1) {
 			sig2str(sig, sigbuf);
@@ -360,7 +361,7 @@ lshchordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, InsertTy
 		freq = itr->second[0];
 		weight = itr->second[1];
 
-		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrpolyfile);
+		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrpolyfile, hashfile);
 		// convert multiset to set
 		if (uflag == 1) {
 			//sig2str(sig, sigbuf);
@@ -387,9 +388,9 @@ lshchordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, InsertTy
 		if (gflag == 1 && msgtype != INVALID) {
 			int range = (int)minhash.size();
 			// randomness verified
-			int col = randomNumGenZ(range-1);
-			ID = (matrix.back())[col];
-			//warnx << "ID in col " << col << ": " << ID << "\n";
+			int randcol = randomNumGenZ(range-1);
+			ID = (matrix.back())[randcol];
+			//warnx << "ID in randcol " << randcol << ": " << ID << "\n";
 			strbuf t;
 			t << ID;
 			str key(t);
@@ -438,7 +439,7 @@ lshpoly(std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msg
 		freq = itr->second[0];
 		weight = itr->second[1];
 
-		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrpolyfile);
+		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrpolyfile, hashfile);
 		// convert multiset to set
 		if (uflag == 1) {
 			//sig2str(sig, sigbuf);
@@ -463,9 +464,9 @@ lshpoly(std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msg
 		matrix.push_back(minhash);
 		int range = (int)minhash.size();
 		// randomness verified
-		int col = randomNumGenZ(range-1);
-		mypoly = (matrix.back())[col];
-		warnx << "POLY in col " << col << ": " << mypoly << "\n";
+		int randcol = randomNumGenZ(range-1);
+		mypoly = (matrix.back())[randcol];
+		warnx << "POLY in randcol " << randcol << ": " << mypoly << "\n";
 
 		if (gflag == 1 && msgtype != INVALID) {
 			strbuf mybuf;
@@ -502,7 +503,7 @@ lshpoly(std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msg
 int
 main(int argc, char *argv[])
 {
-	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag;
+	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag;
 	int ch, gintval, initintval, waitintval, nids, valLen, logfd;
 	double beginTime, endTime;
 	char *value;
@@ -518,17 +519,16 @@ main(int argc, char *argv[])
 	std::vector<std::vector<POLY> > sigList;
 	std::vector<POLY> sig;
 
-	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = 0;
+	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = 0;
 
 	gintval = waitintval = nids = 0;
 	initintval = -1;
-	//irrpolyfile = initfile = logfile = NULL;
 	rxseq.clear();
 	txseq.clear();
 	// init or txseq.back() segfaults!
 	txseq.push_back(0);
 
-	while ((ch = getopt(argc, argv, "B:cD:d:EG:gHhIj:L:lMmn:P:pq:R:rS:s:T:t:uvw:z")) != -1)
+	while ((ch = getopt(argc, argv, "B:cD:d:EF:G:gHhIj:L:lMmn:P:pq:R:rS:s:T:t:uvw:z")) != -1)
 		switch(ch) {
 		case 'B':
 			mgroups = strtol(optarg, NULL, 10);
@@ -549,6 +549,10 @@ main(int argc, char *argv[])
 			break;
 		case 'E':
 			Eflag = 1;
+			break;
+		case 'F':
+			Fflag = 1;
+			hashfile = optarg;
 			break;
 		case 'I':
 			Iflag = 1;
@@ -684,7 +688,7 @@ main(int argc, char *argv[])
 	if (Hflag == 1 && (dflag == 0 || jflag == 0)) usage();
 
 	// option H (for gossiping)
-	// TODO: handle sflag & Pflag
+	// TODO: handle sflag & Pflag & Fflag
 	if ((Hflag == 1 && gflag == 1) && (waitintval == 0 || initintval == -1) &&
 	    (Eflag == 1 || Iflag == 1))
 		usage();
@@ -703,14 +707,60 @@ main(int argc, char *argv[])
 	FILE *initfp = NULL;
 	std::string acc;
 	if (Pflag == 1) {
-		if (Iflag == 1)
+		if (Iflag == 1 || rflag == 1)
 			acc = "w+";
 		else
 			acc = "r";
 
 		if ((initfp = fopen(initfile, acc.c_str())) == NULL) {
-			fatal << "can't open init file" << initfile << "\n";
+			fatal << "can't open init file " << initfile << "\n";
 		}
+	}
+
+	FILE *hashfp = NULL;
+	if (Fflag == 1) {
+		// init phase
+		if (Iflag == 1)
+			acc = "w+";
+		// generate chordIDs using LSH (no gossip)
+		else if (gflag == 0)
+			acc = "w+";
+		// exec phase
+		else
+			acc = "r";
+
+		if ((hashfp = fopen(hashfile, acc.c_str())) == NULL) {
+			fatal << "can't open hash file " << hashfile << "\n";
+		}
+
+		int random_integer_a;
+		int random_integer_b;
+		int lowest_a = 1, highest_a = -9;
+		int lowest_b = 0, highest_b = -9;
+		highest_a = highest_b = lshseed;
+		int range_a = (highest_a - lowest_a) + 1;
+		int range_b = (highest_b - lowest_b) + 1;
+		std::vector<int> randa;
+		std::vector<int> randb;
+		randa.clear();
+		randb.clear();
+		srand(lshseed);
+		for (int i = 0; i < lfuncs; i++) {
+			// TODO: verify randomness
+			random_integer_a  = lowest_a + int((double)range_a*rand()/(RAND_MAX + 1.0));
+			random_integer_b  = lowest_b + int((double)range_b*rand()/(RAND_MAX + 1.0));
+			randa.push_back(random_integer_a);
+			randb.push_back(random_integer_b);
+		}
+
+		for (int i = 0; i < (int)randa.size(); i++) {
+			fprintf(hashfp, "%d\n", randa[i]);
+		}
+
+		for (int i = 0; i < (int)randb.size(); i++) {
+			fprintf(hashfp, "%d\n", randb[i]);
+		}
+		fclose(hashfp);
 	}
 
 	if (jflag == 1) {
@@ -744,6 +794,13 @@ main(int argc, char *argv[])
 		calcfreq(sigList);
 		if (plist == 1) {
 			printlist(0, -1);
+		}
+
+		// create log.init of sigs
+		if (Pflag == 1) {
+			warnx << "writing " << initfile << "...\n";
+			loginitstate(initfp);
+			fclose(initfp);
 		}
 	}
 
@@ -898,21 +955,21 @@ main(int argc, char *argv[])
 			//srand(loseed);
 			// TODO: the same as minhash.size()?
 			int range = mgroups;
-			//int col = int((double)range * rand() / (RAND_MAX + 1.0));
+			//int randcol = int((double)range * rand() / (RAND_MAX + 1.0));
 			// TODO: verify randomness
-			int col = randomNumGenZ(range-1);
+			int randcol = randomNumGenZ(range-1);
 			// TODO: use findMod()
 			if (mflag == 1) {
 				// don't send anything
-				//lshpoly(0, pmatrix, 0, -1, col);
+				//lshpoly(0, pmatrix, 0, -1, randcol);
 				lshpoly(pmatrix);
 				poly2sig polyindex;
 				warnx << "pmatrix.size(): " << pmatrix.size() << "\n";
-				warnx << "POLYs in random column " << col << ":\n";
+				warnx << "POLYs in random column " << randcol << ":\n";
 				for (int i = 0; i < (int)pmatrix.size(); i++) {
-					warnx << pmatrix[i][col] << "\n";;
+					warnx << pmatrix[i][randcol] << "\n";;
 					// store index of signature associated with POLY
-					polyindex[pmatrix[i][col]].push_back(i);
+					polyindex[pmatrix[i][randcol]].push_back(i);
 				}
 				warnx << "POLY: [sig indices].size()\n";
 				for (poly2sig::iterator itr = polyindex.begin();
@@ -924,29 +981,34 @@ main(int argc, char *argv[])
 			} else {
 				warnx << "running lshchordID...\n";
 				beginTime = getgtod();    
+				//lshchordID(cmatrix, -1, INVALID, 0, randcol);
 				lshchordID(cmatrix);
 				endTime = getgtod();    
 				printdouble("lshchordID time: ", endTime - beginTime);
 				warnx << "\n";
 				chordID2sig idindex;
 				warnx << "cmatrix.size(): " << cmatrix.size() << "\n";
-				//warnx << "IDs in random column " << col << ":\n";
-				col = 0;
+				warnx << "cmatrix[0].size(): " << cmatrix[0].size() << "\n";
+				warnx << "IDs in random column " << randcol << ":\n";
+				//col = 0;
 				for (int i = 0; i < (int)cmatrix.size(); i++) {
-					//for (int j = 0; j < (int)cmatrix[i].size(); j++) {
-					//	warnx << cmatrix[i][j] << " ";
-					//}
-					//warnx << "\n";
-					//warnx << cmatrix[i][col] << "\n";
-					// store index of signature associated with chordID
-					idindex[cmatrix[i][col]].push_back(i);
 					/*
-					chordID2sig::iterator itr = idindex.find(matrix[i][col]);
+					for (int j = 0; j < (int)cmatrix[i].size(); j++) {
+						warnx << cmatrix[i][j] << " ";
+					}
+					warnx << "\n";
+					warnx << cmatrix[i][randcol] << "\n";
+					*/
+					// store index of signature associated with chordID
+					idindex[cmatrix[i][randcol]].push_back(i);
+					//idindex[cmatrix[i][0]].push_back(i);
+					/*
+					chordID2sig::iterator itr = idindex.find(matrix[i][randcol]);
 					if (itr != idindex.end()) {
 						itr->second[0] += 1;
 					} else {
 						// store index of signature associated with chordID
-						idindex[matrix[i][col]].push_back(i);
+						idindex[matrix[i][randcol]].push_back(i);
 					}
 					*/
 
@@ -1709,7 +1771,7 @@ informteam(chordID myID, std::vector<POLY> sig)
 	int valLen;
 	//str sigbuf;
 
-	lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, 0, irrpolyfile);
+	lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, 0, irrpolyfile, hashfile);
 	// TODO: verify getUniqueSet works right
 	//warnx << "informteam: getUniqueSet\n";
 	myLSH->getUniqueSet(sig);
@@ -2383,6 +2445,12 @@ usage(void)
 {
 	warn << "Usage: " << __progname << " [-h] [actions...] [options...]\n\n";
 	warn << "Examples:\n\n";
+	warn << "LSH on sig dir:\n";
+	warn << "\t" << __progname << " -H -E -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16\n\n";
+	warn << "LSH on init file:\n";
+	warn << "\t" << __progname << " -H -E -P initfile -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16\n\n";
+	warn << "Generate init file for sigdir:\n";
+	warn << "\t" << __progname << " -r -s sigdir -P initfile\n\n";
 	warn << "XGossip:\n";
 	warn << "\t" << __progname << " -S dhash-sock -G g-sock -L log.gpsi -s sigdir -g -t 120 -q 165 -p\n\n";
 	warn << "XGossip+:\n";
@@ -2394,9 +2462,10 @@ usage(void)
 	     << "	-D		<dir with init files>\n"
 	     << "	-d		<random prime number for LSH seed>\n"
 	     << "	-E		exec phase of XGossip+ (requires -H)\n"
+	     << "      	-F		<hash funcs file>\n"
 	     << "	-G		<gossip socket>\n"
 	     << "	-H		generate chordIDs/POLYs using LSH when gossiping\n"
-					"\t\t\t(requires -g, -s, -d, -j, -I -w)\n"
+					"\t\t\t(requires -g, -s, -d, -j, -I, -w, -F)\n"
 	     << "	-I		init phase of XGossip+ (requires -H)\n"
 	     << "      	-j		<irrpoly file>\n"
 	     << "	-L		<log file>\n"
