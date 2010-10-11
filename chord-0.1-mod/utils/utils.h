@@ -1,4 +1,4 @@
-/*	$Id: utils.h,v 1.16 2010/08/25 00:21:48 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.h,v 1.17 2010/09/15 00:35:45 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #ifndef _UTILS_H_
@@ -31,7 +31,7 @@ class lsh {
 	// l = number of independent hash functions in each group (r rows)
 	// m = number of groups (b bands)
 	// n = random number seed
-	lsh(int kc, int lc, int mc, int nc, int colc = 0, std::string fileName) {
+	lsh(int kc, int lc, int mc, int nc, int colc = 0, std::string irrfile, std::string hashfile) {
 		k = kc;
 		l = lc;
 		m = mc;
@@ -39,14 +39,14 @@ class lsh {
 		col = colc;
 
 		// loading poly's
-		std::ifstream txt;
-		txt.open(fileName.c_str());
+		std::ifstream polystream;
+		polystream.open(irrfile.c_str());
 		POLY number;
 		std::vector<POLY> numbers;
-		while (txt >> number) {
+		while (polystream >> number) {
 			numbers.push_back(number);
 		}
-		txt.close();
+		polystream.close();
 
 		//randomly choose a poly
 		srand(n);
@@ -54,26 +54,27 @@ class lsh {
 		int rand_index = int((double)range*rand()/(RAND_MAX + 1.0));
 
 		selected_poly = numbers[rand_index];
-		irrpoly = fileName;
+		irrpolyf = irrfile;
+		hashf = hashfile;
 
-		// initialize l hash functions
-		int random_integer_a;
-	        int random_integer_b;
-        	int lowest_a = 1, highest_a = -9;
-		int lowest_b = 0, highest_b = -9;
-		highest = highest_a = highest_b = n;
-		int range_a = (highest_a - lowest_a) + 1;
-		int range_b = (highest_b - lowest_b) + 1;
+		// loading hash funcs
+		highest = n;
+		std::ifstream hashstream;
+		hashstream.open(hashfile.c_str());
+		int hashnum;
 		randa.clear();
 		randb.clear();
-		for (int i = 0; i < l; i++) {
-			random_integer_a  = lowest_a +
-				int((double)range_a*rand()/(RAND_MAX + 1.0));
-			random_integer_b  = lowest_b +
-				int((double)range_b*rand()/(RAND_MAX + 1.0)); 
-			randa.push_back(random_integer_a);
-			randb.push_back(random_integer_b);
+		int z = 0;
+		while (hashstream >> hashnum) {
+			++z;
+			if (z <= l)
+				randa.push_back(hashnum);
+			else
+				randb.push_back(hashnum);
 		}
+		assert(randa.size() == randb.size());
+		assert((int)randa.size() == l);
+		hashstream.close();
 
 	}
 
@@ -95,7 +96,8 @@ class lsh {
 	int n;
 	int col;
         POLY selected_poly;
-	std::string irrpoly;
+	std::string irrpolyf;
+	std::string hashf;
 	std::vector<int> randa;
 	std::vector<int> randb;
 	int highest;

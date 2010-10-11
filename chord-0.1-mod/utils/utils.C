@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.38 2010/08/25 00:21:15 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.39 2010/09/15 00:35:39 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -2151,7 +2151,7 @@ lsh::getUniqueSet(std::vector<POLY>& inputPols)
     std::vector<POLY> polManipulate;
     std::vector<POLY> polNums;
 
-    irrpoltxt.open(irrpoly.c_str());
+    irrpoltxt.open(irrpolyf.c_str());
     while (irrpoltxt>>pol){
       irr.push_back(pol);
     }
