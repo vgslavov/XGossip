@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.60 2010/09/21 05:09:20 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.61 2010/10/11 16:05:32 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -6,6 +6,7 @@
 #include <ctime>
 #include <iostream>
 #include <map>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <typeinfo>
@@ -28,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.60 2010/09/21 05:09:20 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.61 2010/10/11 16:05:32 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -47,6 +48,9 @@ static char *hashfile;
 static char *irrpolyfile;
 static char *initfile;
 static char *logfile;
+std::vector<POLY> irrnums;
+std::vector<int> hasha;
+std::vector<int> hashb;
 int lshseed = 0;
 int plist = 0;
 int gflag = 0;
@@ -276,7 +280,7 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 		freq = itr->second[0];
 		weight = itr->second[1];
 
-		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, 0, irrpolyfile, hashfile);
+		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, 0, irrnums, hasha, hashb);
 		// convert multiset to set
 		if (uflag == 1) {
 			sig2str(sig, sigbuf);
@@ -361,7 +365,7 @@ lshchordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, InsertTy
 		freq = itr->second[0];
 		weight = itr->second[1];
 
-		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrpolyfile, hashfile);
+		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
 		// convert multiset to set
 		if (uflag == 1) {
 			//sig2str(sig, sigbuf);
@@ -439,7 +443,7 @@ lshpoly(std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msg
 		freq = itr->second[0];
 		weight = itr->second[1];
 
-		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrpolyfile, hashfile);
+		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
 		// convert multiset to set
 		if (uflag == 1) {
 			//sig2str(sig, sigbuf);
@@ -719,53 +723,82 @@ main(int argc, char *argv[])
 
 	FILE *hashfp = NULL;
 	if (Fflag == 1) {
-		// init phase
-		if (Iflag == 1)
-			acc = "w+";
+		// init phase OR
 		// generate chordIDs using LSH (no gossip)
-		else if (gflag == 0)
+		if (Iflag == 1 || gflag == 0) {
 			acc = "w+";
+			if ((hashfp = fopen(hashfile, acc.c_str())) == NULL) {
+				fatal << "can't write hash file " << hashfile << "\n";
+			}
+
+			int random_integer_a;
+			int random_integer_b;
+			int lowest_a = 1, highest_a = -9;
+			int lowest_b = 0, highest_b = -9;
+			highest_a = highest_b = lshseed;
+			int range_a = (highest_a - lowest_a) + 1;
+			int range_b = (highest_b - lowest_b) + 1;
+			hasha.clear();
+			hashb.clear();
+			srand(lshseed);
+			for (int i = 0; i < lfuncs; i++) {
+				// TODO: verify randomness
+				random_integer_a  = lowest_a + int((double)range_a*rand()/(RAND_MAX + 1.0));
+				random_integer_b  = lowest_b + int((double)range_b*rand()/(RAND_MAX + 1.0));
+				hasha.push_back(random_integer_a);
+				hashb.push_back(random_integer_b);
+			}
+
+			warnx << "writing " << hashfile << "...\n";
+			for (int i = 0; i < (int)hasha.size(); i++) {
+				fprintf(hashfp, "%d\n", hasha[i]);
+			}
+
+			for (int i = 0; i < (int)hashb.size(); i++) {
+				fprintf(hashfp, "%d\n", hashb[i]);
+			}
+			fclose(hashfp);
 		// exec phase
-		else
-			acc = "r";
+		} else {
+			//acc = "r";
+			//if ((hashfp = fopen(hashfile, acc.c_str())) == NULL) {
+			//	fatal << "can't read hash file " << hashfile << "\n";
+			//}
 
-		if ((hashfp = fopen(hashfile, acc.c_str())) == NULL) {
-			fatal << "can't open hash file " << hashfile << "\n";
+			std::ifstream hashstream(hashfile);
+			if (hashstream.is_open()) {
+				int hashnum;
+				hasha.clear();
+				hashb.clear();
+				int z = 0;
+				while (hashstream >> hashnum) {
+					++z;
+					if (z <= lfuncs)
+						hasha.push_back(hashnum);
+					else
+						hashb.push_back(hashnum);
+				}
+				assert(hasha.size() == hashb.size());
+				assert((int)hasha.size() == lfuncs);
+				hashstream.close();
+			} else {
+				fatal << "can't read hash file " << hashfile << "\n";
+			}
 		}
-
-		int random_integer_a;
-		int random_integer_b;
-		int lowest_a = 1, highest_a = -9;
-		int lowest_b = 0, highest_b = -9;
-		highest_a = highest_b = lshseed;
-		int range_a = (highest_a - lowest_a) + 1;
-		int range_b = (highest_b - lowest_b) + 1;
-		std::vector<int> randa;
-		std::vector<int> randb;
-		randa.clear();
-		randb.clear();
-		srand(lshseed);
-		for (int i = 0; i < lfuncs; i++) {
-			// TODO: verify randomness
-			random_integer_a  = lowest_a + int((double)range_a*rand()/(RAND_MAX + 1.0));
-			random_integer_b  = lowest_b + int((double)range_b*rand()/(RAND_MAX + 1.0));
-			randa.push_back(random_integer_a);
-			randb.push_back(random_integer_b);
-		}
-
-		for (int i = 0; i < (int)randa.size(); i++) {
-			fprintf(hashfp, "%d\n", randa[i]);
-		}
-
-		for (int i = 0; i < (int)randb.size(); i++) {
-			fprintf(hashfp, "%d\n", randb[i]);
-		}
-		fclose(hashfp);
 	}
 
 	if (jflag == 1) {
 		if (stat(irrpolyfile, &statbuf) != 0)
 			fatal << "'" << irrpolyfile << "' does not exist" << "\n";
+
+		irrnums.clear();
+		std::ifstream polystream;
+                polystream.open(irrpolyfile);
+                POLY num;
+                while (polystream >> num) {
+                        irrnums.push_back(num);
+                }
+                polystream.close();
 	}
 
 	if (gflag == 1 || lflag == 1) {
@@ -1771,7 +1804,7 @@ informteam(chordID myID, std::vector<POLY> sig)
 	int valLen;
 	//str sigbuf;
 
-	lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, 0, irrpolyfile, hashfile);
+	lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, 0, irrnums, hasha, hashb);
 	// TODO: verify getUniqueSet works right
 	//warnx << "informteam: getUniqueSet\n";
 	myLSH->getUniqueSet(sig);
@@ -2446,9 +2479,9 @@ usage(void)
 	warn << "Usage: " << __progname << " [-h] [actions...] [options...]\n\n";
 	warn << "Examples:\n\n";
 	warn << "LSH on sig dir:\n";
-	warn << "\t" << __progname << " -H -E -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16\n\n";
+	warn << "\t" << __progname << " -H -E -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -u\n\n";
 	warn << "LSH on init file:\n";
-	warn << "\t" << __progname << " -H -E -P initfile -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16\n\n";
+	warn << "\t" << __progname << " -H -E -P initfile -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -u\n\n";
 	warn << "Generate init file for sigdir:\n";
 	warn << "\t" << __progname << " -r -s sigdir -P initfile\n\n";
 	warn << "XGossip:\n";

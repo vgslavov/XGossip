@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.39 2010/09/15 00:35:39 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.40 2010/10/11 16:06:05 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -2145,17 +2145,19 @@ lsh::getUniqueSet(std::vector<POLY>& inputPols)
         inputPols.erase(inputPols.begin());
     } else {
 
-    std::ifstream irrpoltxt;
-    POLY pol;
+    //std::ifstream irrpoltxt;
+    //POLY pol;
     std::vector<POLY> irr;
     std::vector<POLY> polManipulate;
     std::vector<POLY> polNums;
 
+    /*
     irrpoltxt.open(irrpolyf.c_str());
     while (irrpoltxt>>pol){
       irr.push_back(pol);
     }
     irrpoltxt.close();
+    */
 
     for ( unsigned int i = 0; i< inputPols.size(); i++){
         polNums.push_back(inputPols[i]);
@@ -2174,7 +2176,8 @@ lsh::getUniqueSet(std::vector<POLY>& inputPols)
                if ( count[i] > 0 ){
                    /* for the time being, this operation is withheld*/
                    polManipulate.push_back(inputPols[j]);
-                   temp_d.push_back(irr[count[i]-1]);
+                   temp_d.push_back(irrnums[count[i]-1]);
+                   //temp_d.push_back(irr[count[i]-1]);
                    //multiplyPoly(result,polManipulate,irr[count[i]-1]);
                    multiplyPoly(result,polManipulate,temp_d);
                    temp_d.clear();
@@ -2182,7 +2185,7 @@ lsh::getUniqueSet(std::vector<POLY>& inputPols)
                    inputPols[j] = result[0];
                    polManipulate.clear();
                    result.clear();
-          }
+               }
                count[i]++;
           }
         }

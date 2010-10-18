@@ -1,4 +1,4 @@
-/*	$Id: utils.h,v 1.17 2010/09/15 00:35:45 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.h,v 1.18 2010/10/11 16:05:51 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #ifndef _UTILS_H_
@@ -31,7 +31,7 @@ class lsh {
 	// l = number of independent hash functions in each group (r rows)
 	// m = number of groups (b bands)
 	// n = random number seed
-	lsh(int kc, int lc, int mc, int nc, int colc = 0, std::string irrfile, std::string hashfile) {
+	lsh(int kc, int lc, int mc, int nc, int colc = 0, std::vector<POLY> irrnumbers, std::vector<int> hasha, std::vector<int> hashb) {
 		k = kc;
 		l = lc;
 		m = mc;
@@ -39,6 +39,7 @@ class lsh {
 		col = colc;
 
 		// loading poly's
+		/*
 		std::ifstream polystream;
 		polystream.open(irrfile.c_str());
 		POLY number;
@@ -47,18 +48,20 @@ class lsh {
 			numbers.push_back(number);
 		}
 		polystream.close();
+		*/
 
 		//randomly choose a poly
 		srand(n);
-		int range = numbers.size() + 1;
+		int range = irrnumbers.size() + 1;
 		int rand_index = int((double)range*rand()/(RAND_MAX + 1.0));
 
-		selected_poly = numbers[rand_index];
-		irrpolyf = irrfile;
-		hashf = hashfile;
+		selected_poly = irrnumbers[rand_index];
+		//irrpolyf = irrfile;
+		//hashf = hashfile;
 
 		// loading hash funcs
 		highest = n;
+		/*
 		std::ifstream hashstream;
 		hashstream.open(hashfile.c_str());
 		int hashnum;
@@ -75,7 +78,13 @@ class lsh {
 		assert(randa.size() == randb.size());
 		assert((int)randa.size() == l);
 		hashstream.close();
-
+		*/
+		irrnums.clear();
+		randa.clear();
+		randb.clear();
+		irrnums = irrnumbers;
+		randa = hasha;
+		randb = hashb;
 	}
 
 	// destructor
@@ -96,8 +105,9 @@ class lsh {
 	int n;
 	int col;
         POLY selected_poly;
-	std::string irrpolyf;
-	std::string hashf;
+	//std::string irrpolyf;
+	//std::string hashf;
+	std::vector<POLY> irrnums;
 	std::vector<int> randa;
 	std::vector<int> randb;
 	int highest;
