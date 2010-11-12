@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.61 2010/10/11 16:05:32 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.62 2010/10/18 04:43:52 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.61 2010/10/11 16:05:32 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.62 2010/10/18 04:43:52 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -48,6 +48,7 @@ static char *hashfile;
 static char *irrpolyfile;
 static char *initfile;
 static char *logfile;
+static char *xpathfile;
 std::vector<POLY> irrnums;
 std::vector<int> hasha;
 std::vector<int> hashb;
@@ -96,6 +97,7 @@ void printlist(int, int);
 chordID randomID(void);
 void readgossip(int);
 void readsig(std::string, std::vector<std::vector <POLY> >&);
+void readValues(FILE *, std::multimap<POLY, std::pair<std::string, enum OPTYPE> >&);
 //void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 void delspecial(int);
 bool sig2str(std::vector<POLY>, str&);
@@ -503,11 +505,73 @@ lshpoly(std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msg
 	}
 	return 0;
 }
+//
+// TODO: verify
+int
+querychordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, InsertType msgtype = INVALID, int listnum = 0, int col = 0)
+{
+	std::vector<chordID> minhash;
+	std::vector<POLY> sig;
+	chordID ID;
+	DHTStatus status;
+	char *value;
+	int valLen;
+	double freq, weight;
+
+	sig.clear();
+	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
+		sig = itr->first;
+		freq = itr->second[0];
+		weight = itr->second[1];
+
+		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
+		// convert multiset to set
+		if (uflag == 1) {
+			myLSH->getUniqueSet(sig);
+		}
+
+		minhash = myLSH->getHashCode(sig);
+		matrix.push_back(minhash);
+
+		if (msgtype != INVALID) {
+			int range = (int)minhash.size();
+			// randomness verified
+			int randcol = randomNumGenZ(range-1);
+			ID = (matrix.back())[randcol];
+			//warnx << "ID in randcol " << randcol << ": " << ID << "\n";
+			strbuf t;
+			t << ID;
+			str key(t);
+			warnx << "inserting " << msgtype << ":\n";
+			makeKeyValue(&value, valLen, key, sig, freq, weight, msgtype);
+			status = insertDHT(ID, value, valLen, MAXRETRIES);
+			cleanup(value);
+
+			// do not exit if insert FAILs!
+			if (status != SUCC) {
+				// TODO: do I care?
+				warnx << "error: insert FAILed\n";
+			} else {
+				warnx << "insert SUCCeeded\n";
+			}
+
+			// TODO: how long (if at all)?
+			//sleep(intval);
+			warnx << "sleeping (lsh)...\n";
+
+			initsleep = 0;
+			delaycb(intval, 0, wrap(initsleepnow));
+			while (initsleep == 0) acheck();
+		}
+		delete myLSH;
+	}
+	return 0;
+}
 
 int
 main(int argc, char *argv[])
 {
-	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag;
+	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag, Qflag;
 	int ch, gintval, initintval, waitintval, nids, valLen, logfd;
 	double beginTime, endTime;
 	char *value;
@@ -523,7 +587,7 @@ main(int argc, char *argv[])
 	std::vector<std::vector<POLY> > sigList;
 	std::vector<POLY> sig;
 
-	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = 0;
+	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = xflag = Qflag = 0;
 
 	gintval = waitintval = nids = 0;
 	initintval = -1;
@@ -532,7 +596,7 @@ main(int argc, char *argv[])
 	// init or txseq.back() segfaults!
 	txseq.push_back(0);
 
-	while ((ch = getopt(argc, argv, "B:cD:d:EF:G:gHhIj:L:lMmn:P:pq:R:rS:s:T:t:uvw:z")) != -1)
+	while ((ch = getopt(argc, argv, "B:cD:d:EF:G:gHhIj:L:lMmn:P:pQq:R:rS:s:T:t:uvw:x:z")) != -1)
 		switch(ch) {
 		case 'B':
 			mgroups = strtol(optarg, NULL, 10);
@@ -604,6 +668,9 @@ main(int argc, char *argv[])
 		case 'p':
 			plist = 1;
 			break;
+		case 'Q':
+			Qflag = 1;
+			break;
 		case 'q':
 			peers = strtol(optarg, NULL, 10);
 			break;
@@ -623,6 +690,10 @@ main(int argc, char *argv[])
 			break;
 		case 'w':
 			waitintval = strtol(optarg, NULL, 10);
+			break;
+		case 'x':
+			xflag = 1;
+			xpathfile = optarg;
 			break;
 		case 'z':
 			zflag = 1;
@@ -677,11 +748,17 @@ main(int argc, char *argv[])
 	}
 
 	// TODO: make sure only one flag is set at a time
-	// read, gossip, LSH or listen
-	if (rflag == 0 && gflag == 0 && lflag == 0 && Hflag == 0 && Mflag == 0) usage();
+	// at least one action: read, gossip, LSH, query or listen
+	if (rflag == 0 && gflag == 0 && lflag == 0 && Hflag == 0 && Mflag == 0 && Qflag == 0) usage();
 
 	// sockets are required when listening or gossiping
 	if ((gflag == 1 || lflag == 1) && (Gflag == 0 || Sflag == 0)) usage();
+
+	// dhash socket is required when querying
+	if (Qflag == 1 && Sflag == 0) usage();
+
+	// sig or xpath are required when querying
+	if (Qflag == 1 && (sflag == 0 && xflag == 0)) usage();
 
 	// TODO: handle sflag & Pflag
 	if (gflag == 1 && gintval == 0) usage();
@@ -689,7 +766,7 @@ main(int argc, char *argv[])
 	if (Mflag == 1 && Dflag == 0) usage();
 
 	// action H (for testing)
-	if (Hflag == 1 && (dflag == 0 || jflag == 0)) usage();
+	if ((Hflag == 1 || Qflag == 1) && (dflag == 0 || jflag == 0 || Fflag == 0)) usage();
 
 	// option H (for gossiping)
 	// TODO: handle sflag & Pflag & Fflag
@@ -719,6 +796,118 @@ main(int argc, char *argv[])
 		if ((initfp = fopen(initfile, acc.c_str())) == NULL) {
 			fatal << "can't open init file " << initfile << "\n";
 		}
+	}
+
+	// copied from psi.C
+	// read XPath query in memory
+	if (Qflag == 1 && xflag == 1) {
+		if (stat(xpathfile, &statbuf) != 0)
+			fatal << "'" << xpathfile << "' does not exist" << "\n";
+
+		// Read the query signatures from a file
+		FILE *qfp = fopen(xpathfile, "r");
+		assert(qfp);
+
+		// Open the tags files too...
+		std::string tagsfile = xpathfile + std::string(TAGFILE);
+			
+		FILE *fpTags = fopen(tagsfile.c_str(), "r");
+		assert(fpTags);
+
+		// Open the tag depth file...
+		std::string tagdepth = xpathfile + std::string(TAGDEPTH);
+		FILE *fpTagDepth = fopen(tagdepth.c_str(), "r");
+		assert(fpTagDepth);
+
+		// Open the value file...
+		std::string valfile = xpathfile + std::string(VALFILE);
+		FILE *fpVal = fopen(valfile.c_str(), "r");
+		assert(fpVal);
+
+		// DON'T use readData to retrieve signatures from input files...
+		// since the size filed uses POLY as a basic unit and not byte...
+		// Format is <n = # of sigs><sig size><sig>... n times...
+		int numSigs;
+		if (fread(&numSigs, sizeof(numSigs), 1, qfp) != 1) {
+			warnx << "break\n";
+			//break;
+		}
+		assert(numSigs > 0);
+
+		std::vector<std::vector<POLY> > listOfSigs;
+		listOfSigs.clear();
+			
+		for (int t = 0; t < numSigs; t++) {
+			POLY *buf;
+			int size;
+			if (fread(&size, sizeof(int), 1, qfp) != 1) {
+				assert(0);
+			}
+				
+			buf = new POLY[size];
+			assert(buf);
+			if (fread(buf, sizeof(POLY), size, qfp) != (size_t) size) {
+				assert(0);
+			}
+				
+			std::vector<POLY> sig;
+			sig.clear();
+			for (int i = 0; i < size; i++) {
+				sig.push_back(buf[i]);
+			}
+
+			listOfSigs.push_back(sig);
+			sig2str(sig, sigbuf);
+			warnx << sigbuf << "\n";
+
+			// free the allocated memory
+			delete[] buf;
+		}
+			
+		//warnx << "******* Processing query " << count << " ********\n";
+		//numReads = numWrites = dataReadSize = cacheHits = 0;
+
+		// Read the distinct tags
+		std::vector<std::string> distinctTags;
+		distinctTags.clear();
+
+		// Tag depth
+		std::vector<std::string> tagDepth;
+		tagDepth.clear();
+			
+		readTags(fpTags, distinctTags);
+		warnx << "distinctTags:\n";
+		for (int i = 0; i < (int) distinctTags.size(); i++) {
+			warnx << distinctTags[i].c_str() << "\n";
+		}
+		readTags(fpTagDepth, tagDepth);
+		warnx << "tagDepth:\n";
+		for (int i = 0; i < (int) tagDepth.size(); i++) {
+			warnx << tagDepth[i].c_str() << "\n";
+		}
+
+		// Pick the highest depth entry
+		int maxDepth = -1;
+		int maxDepthId = -1;
+		for (int p = 0; p < (int) tagDepth.size(); p++) {
+			if (atoi(tagDepth[p].c_str()) > maxDepth) {
+				maxDepth = atoi(tagDepth[p].c_str());
+				maxDepthId = p;
+			}
+		}
+		warnx << "maxDepth: " << maxDepth << ", maxDepthId: " << maxDepthId << "\n";
+
+		// Read the values
+		std::multimap<POLY, std::pair<std::string, enum OPTYPE> > valList;
+		valList.clear();
+		readValues(fpVal, valList);
+
+		/*
+		std::vector<POLY> valSig;
+		valSig.clear();
+		*/
+
+		// TODO: verify
 	}
 
 	FILE *hashfp = NULL;
@@ -801,19 +990,20 @@ main(int argc, char *argv[])
                 polystream.close();
 	}
 
-	if (gflag == 1 || lflag == 1) {
+	if (gflag == 1 || lflag == 1 || Qflag == 1) {
 		if (stat(dsock, &statbuf) != 0)
 			fatal << "'" << dsock << "' does not exist" << "\n";
 		dhash = New dhashclient(dsock);
 	}
 
-	if ((rflag == 1 || gflag == 1 || Hflag == 1 || lflag == 1) && sflag == 1) {
+	if ((rflag == 1 || gflag == 1 || Hflag == 1 || lflag == 1 || Qflag == 1) && sflag == 1) {
 		getdir(sigdir, sigfiles);
 		sigList.clear();
 
 		// insert dummy
 		// the polynomial "1" has a degree 0
-		if (Hflag == 0) {
+		// don't add dummy when querying and when gossiping using LSH
+		if (Hflag == 0 && Qflag == 0) {
 			dummysig.clear();
 			dummysig.push_back(1);
 			sigList.push_back(dummysig);
@@ -829,12 +1019,14 @@ main(int argc, char *argv[])
 			printlist(0, -1);
 		}
 
-		// create log.init of sigs
+		// create log.init of sigs (why?)
+		/*
 		if (Pflag == 1) {
 			warnx << "writing " << initfile << "...\n";
 			loginitstate(initfp);
 			fclose(initfp);
 		}
+		*/
 	}
 
 	time(&rawtime);
@@ -1154,9 +1346,25 @@ main(int argc, char *argv[])
 				}
 			}
 		}
-	} else if (rflag == 1) {
-		return 0;
-	} else if (Hflag == 1) {
+	} else if (Qflag == 1) {
+		std::vector<std::vector<chordID> > cmatrix;
+		cmatrix.clear();
+		initintval = 1;
+		warnx << "querying ";
+		beginTime = getgtod();
+		if (xflag == 1) {
+			warnx << "using xpath...\n";
+			querychordID(cmatrix, initintval, QUERYX);
+			cmatrix.clear();
+		} else {
+			warnx << "using sig...\n";
+			querychordID(cmatrix, initintval, QUERYS);
+			cmatrix.clear();
+		}
+		endTime = getgtod();    
+		printdouble("query time: ", endTime - beginTime - initintval);
+		warnx << "\n";
+
 		return 0;
 	} else if (Mflag == 1) {
 		warnx << "testing merging...\n";
@@ -1179,6 +1387,11 @@ main(int argc, char *argv[])
 		if (plist == 1) {
 			printlist(0, -1);
 		}
+		return 0;
+	// don't exit if listening
+	} else if (lflag == 1) {
+		warnx << "\n";
+	} else if (rflag == 1 || Hflag == 1) {
 		return 0;
 	} else {
 		usage();
@@ -1313,6 +1526,44 @@ retrieveDHT(chordID keyID, int MAXWAIT, str& sigdata, chordID guess)
 	//warnx << "# of node entries: " << nodeEntries.size() << "\n";
 }
 
+// copied from psi.C
+void
+readValues(FILE *fp, std::multimap<POLY, std::pair<std::string, enum OPTYPE> >&valList)
+{
+    if (!fp) return;
+
+    int num;
+    if (fread(&num, sizeof(num), 1, fp) != 1) {
+        assert(0);
+    }
+
+    for (int i = 0; i < num; i++) {
+        POLY p;
+        if (fread(&p, sizeof(p), 1, fp) != 1) {
+            assert(0);
+        }
+
+        int size;
+        if (fread(&size, sizeof(size), 1, fp) != 1) {
+            assert(0);
+        }
+
+        char predVal[128];
+        if (fread(predVal, size, 1, fp) != 1) {
+            assert(0);
+        }
+        predVal[size] = 0;
+
+        enum OPTYPE OP;
+        if (fread(&OP, sizeof(OP), 1, fp) != 1) {
+            assert(0);
+        }
+
+        std::pair<std::string, enum OPTYPE> e(std::string(predVal), OP);
+        valList.insert(std::pair<POLY, std::pair<std::string, enum OPTYPE> >(p, e));
+    }
+}
+
 // deprecated: use make_randomID() instead
 chordID
 randomID(void)
@@ -1398,6 +1649,8 @@ readgossip(int fd)
 	std::vector<double> freqList;
 	std::vector<double> weightList;
 	InsertType msgtype;
+	std::vector<POLY> sig;
+	double freq, weight;
 	int n, msglen, recvlen, nothing;
 	int ret, seq;
 
@@ -1535,8 +1788,6 @@ readgossip(int fd)
 			warnx << "INFORMTEAM";
 		}
 
-		double freq, weight;
-		std::vector<POLY> sig;
 		sig.clear();
 		ret = getKeyValue(gmsg.cstr(), key, sig, freq, weight, recvlen);
 		if (ret == -1) {
@@ -1555,6 +1806,41 @@ readgossip(int fd)
 		//warnx << "\n";
 		str2chordID(key, ID);
 		initgossiprecv(ID, sig, freq, weight);
+	} else if (msgtype == QUERYS || msgtype == QUERYX) {
+		if (msgtype == QUERYS) {
+			warnx << "QUERYS";
+		} else {
+			warnx << "QUERYX";
+		}
+
+		sig.clear();
+		ret = getKeyValue(gmsg.cstr(), key, sig, freq, weight, recvlen);
+		if (ret == -1) {
+			warnx << "error: getKeyValue failed\n";
+			fdcb(fd, selread, NULL);
+			close(fd);
+			++closefd;
+			return;
+		}
+
+		warnx << " rxID: " << key << "\n";
+		sig2str(sig, sigbuf);
+		warnx << "sig: " << sigbuf << "\n";
+		warnx << "query result: ";
+
+		// TODO: search other lists (not yet merged) and for other sigs?
+		mapType::iterator itr = allT[0].find(sig);
+		if (itr != allT[0].end()) {
+			freq = itr->second[0];
+			weight = itr->second[1];
+			warnx << " found\n";
+			printdouble("f: ", freq);
+			printdouble(", w: ", weight);
+			printdouble(", avg: ", freq/weight);
+			warnx << "\n";
+		} else {
+			warnx << " NOT found\n";
+		}
 	} else {
 		warnx << "error: invalid msgtype\n";
 	}
@@ -1807,6 +2093,7 @@ informteam(chordID myID, std::vector<POLY> sig)
 	lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, 0, irrnums, hasha, hashb);
 	// TODO: verify getUniqueSet works right
 	//warnx << "informteam: getUniqueSet\n";
+	// TODO: check uflag?
 	myLSH->getUniqueSet(sig);
 	//warnx << "informteam: getHashCode\n";
 	// TODO: findMod vs compute_hash!
@@ -2478,6 +2765,10 @@ usage(void)
 {
 	warn << "Usage: " << __progname << " [-h] [actions...] [options...]\n\n";
 	warn << "Examples:\n\n";
+	warn << "Send signature query:\n";
+	warn << "\t" << __progname << " -Q -S dhash-sock -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -u\n\n";
+	warn << "Send xpath query:\n";
+	warn << "\t" << __progname << " -Q -S dhash-sock -x xpathsig -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -u\n\n";
 	warn << "LSH on sig dir:\n";
 	warn << "\t" << __progname << " -H -E -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -u\n\n";
 	warn << "LSH on init file:\n";
@@ -2521,10 +2812,11 @@ usage(void)
 					"\t\t\t(wait interval after init phase is done)\n\n"
 	     << "Actions:\n"
 	     << "	-g		gossip (requires -S, -G, -s, -i)\n"
-	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j)\n"
+	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j, -F)\n"
 					"\t\t\t(XGossip+)\n"
 	     << "	-l		listen for gossip (requires -S, -G, -s)\n"
 	     << "	-M		test mergelists(p) (requires -D)\n"
+	     << "	-Q		send query (requires -S, -d, -j, -s or -x)\n"
 	     << "	-r		read signatures (requires -s)\n"
 	     << "	-v		print version\n"
 	     << "	-z		generate random chordID (requires -n)\n";
