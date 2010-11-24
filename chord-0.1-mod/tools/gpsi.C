@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.62 2010/10/18 04:43:52 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.63 2010/11/12 19:59:16 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.62 2010/10/18 04:43:52 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.63 2010/11/12 19:59:16 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -914,7 +914,9 @@ main(int argc, char *argv[])
 	if (Fflag == 1) {
 		// init phase OR
 		// generate chordIDs using LSH (no gossip)
-		if (Iflag == 1 || gflag == 0) {
+		// but don't if querying
+		// TODO: verify
+		if ((Iflag == 1 || gflag == 0) && (Qflag != 1)) {
 			acc = "w+";
 			if ((hashfp = fopen(hashfile, acc.c_str())) == NULL) {
 				fatal << "can't write hash file " << hashfile << "\n";
