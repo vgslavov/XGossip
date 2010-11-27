@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.63 2010/11/12 19:59:16 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.64 2010/11/24 17:11:25 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.63 2010/11/12 19:59:16 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.64 2010/11/24 17:11:25 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -60,8 +60,10 @@ int discardmsg = 0;
 int peers = 0;
 bool initphase = 0;
 
-int lfuncs = 5;
-int mgroups = 100;
+// paper:k, slides:bands
+int mgroups = 10;
+// paper:l, slides:rows
+int lfuncs = 16;
 
 // map sigs to freq and weight
 typedef std::map<std::vector<POLY>, std::vector<double>, CompareSig> mapType;
@@ -270,6 +272,7 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 {
 	std::vector<T> minhash;
 	std::vector<POLY> sig;
+	std::vector<POLY> lshsig;
 	str sigbuf;
 	chordID ID;
 	//DHTStatus status;
@@ -277,6 +280,8 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 	//int col, valLen;
 	double freq, weight;
 
+	sig.clear();
+	lshsig.clear();
 	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
 		sig = itr->first;
 		freq = itr->second[0];
@@ -287,8 +292,8 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 		if (uflag == 1) {
 			sig2str(sig, sigbuf);
 			warnx << "multiset: " << sigbuf << "\n";
-			myLSH->getUniqueSet(sig);
-			sig2str(sig, sigbuf);
+			lshsig = myLSH->getUniqueSet(sig);
+			sig2str(lshsig, sigbuf);
 			warnx << "set: " << sigbuf << "\n";
 		}
 
@@ -296,10 +301,11 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 		std::vector<POLY> polyhash;
 		std::vector<chordID> idhash;
 		warnx << "typeid: " << typeid(minhash).name() << "\n";
+		// TODO: getHashCode on sig or lshsig
 		if (typeid(minhash) == typeid(polyhash)) {
-			polyhash = myLSH->getHashCodeFindMod(sig, myLSH->getIRRPoly());
+			polyhash = myLSH->getHashCodeFindMod(lshsig, myLSH->getIRRPoly());
 		} else if (typeid(minhash) == typeid(idhash)) {
-			idhash = myLSH->getHashCode(sig);
+			idhash = myLSH->getHashCode(lshsig);
 		} else {
 			warnx << "invalid type\n";
 			return -1;
@@ -354,6 +360,7 @@ lshchordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, InsertTy
 {
 	std::vector<chordID> minhash;
 	std::vector<POLY> sig;
+	std::vector<POLY> lshsig;
 	chordID ID;
 	DHTStatus status;
 	char *value;
@@ -361,7 +368,9 @@ lshchordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, InsertTy
 	double freq, weight;
 	//str sigbuf;
 
+	minhash.clear();
 	sig.clear();
+	lshsig.clear();
 	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
 		sig = itr->first;
 		freq = itr->second[0];
@@ -372,12 +381,13 @@ lshchordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, InsertTy
 		if (uflag == 1) {
 			//sig2str(sig, sigbuf);
 			//warnx << "multiset: " << sigbuf << "\n";
-			myLSH->getUniqueSet(sig);
-			//sig2str(sig, sigbuf);
+			lshsig = myLSH->getUniqueSet(sig);
+			//sig2str(lshsig, sigbuf);
 			//warnx << "set: " << sigbuf << "\n";
+			minhash = myLSH->getHashCode(lshsig);
+		} else {
+			minhash = myLSH->getHashCode(sig);
 		}
-
-		minhash = myLSH->getHashCode(sig);
 
 		//warnx << "minhash.size(): " << minhash.size() << "\n";
 		/*
@@ -432,6 +442,7 @@ lshpoly(std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msg
 {
 	std::vector<POLY> minhash;
 	std::vector<POLY> sig;
+	std::vector<POLY> lshsig;
 	chordID ID;
 	POLY mypoly;
 	DHTStatus status;
@@ -440,6 +451,9 @@ lshpoly(std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msg
 	double freq, weight;
 	//str sigbuf;
 
+	minhash.clear();
+	sig.clear();
+	lshsig.clear();
 	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
 		sig = itr->first;
 		freq = itr->second[0];
@@ -450,12 +464,13 @@ lshpoly(std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msg
 		if (uflag == 1) {
 			//sig2str(sig, sigbuf);
 			//warnx << "multiset: " << sigbuf << "\n";
-			myLSH->getUniqueSet(sig);
-			//sig2str(sig, sigbuf);
+			lshsig = myLSH->getUniqueSet(sig);
+			//sig2str(lshsig, sigbuf);
 			//warnx << "set: " << sigbuf << "\n";
+			minhash = myLSH->getHashCodeFindMod(lshsig, myLSH->getIRRPoly());
+		} else {
+			minhash = myLSH->getHashCodeFindMod(sig, myLSH->getIRRPoly());
 		}
-
-		minhash = myLSH->getHashCodeFindMod(sig, myLSH->getIRRPoly());
 
 		//warnx << "minhash.size(): " << minhash.size() << "\n";
 		/*
@@ -512,13 +527,16 @@ querychordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, Insert
 {
 	std::vector<chordID> minhash;
 	std::vector<POLY> sig;
+	std::vector<POLY> lshsig;
 	chordID ID;
 	DHTStatus status;
 	char *value;
 	int valLen;
 	double freq, weight;
 
+	minhash.clear();
 	sig.clear();
+	lshsig.clear();
 	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
 		sig = itr->first;
 		freq = itr->second[0];
@@ -527,10 +545,12 @@ querychordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, Insert
 		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
 		// convert multiset to set
 		if (uflag == 1) {
-			myLSH->getUniqueSet(sig);
+			lshsig = myLSH->getUniqueSet(sig);
+			minhash = myLSH->getHashCode(lshsig);
+		} else {
+			minhash = myLSH->getHashCode(sig);
 		}
 
-		minhash = myLSH->getHashCode(sig);
 		matrix.push_back(minhash);
 
 		if (msgtype != INVALID) {
@@ -2086,22 +2106,27 @@ void
 informteam(chordID myID, std::vector<POLY> sig)
 {
 	chordID nextID;
+	std::vector<chordID> minhash;
 	std::vector<POLY> isig;
+	std::vector<POLY> lshsig;
 	DHTStatus status;
 	char *value;
 	int valLen;
 	//str sigbuf;
 
+	minhash.clear();
+	isig.clear();
+	lshsig.clear();
 	lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, 0, irrnums, hasha, hashb);
 	// TODO: verify getUniqueSet works right
-	//warnx << "informteam: getUniqueSet\n";
-	// TODO: check uflag?
-	myLSH->getUniqueSet(sig);
-	//warnx << "informteam: getHashCode\n";
-	// TODO: findMod vs compute_hash!
-	std::vector<chordID> minhash = myLSH->getHashCode(sig);
+	if (uflag == 1) {
+		lshsig = myLSH->getUniqueSet(sig);
+		// TODO: findMod vs compute_hash!
+		minhash = myLSH->getHashCode(lshsig);
+	} else {
+		minhash = myLSH->getHashCode(sig);
+	}
 
-	isig.clear();
 	// is sig always a regular multiset?
 	isig = inverse(sig);
 	//sig2str(isig, sigbuf);
@@ -2731,7 +2756,7 @@ printlist(int listnum, int seq)
 
 	n = nsig = nisig = 0;
 	warnx << "list T_" << listnum << ": " << seq << " " << allT[listnum].size() << "\n";
-	warnx << "hdrB: freq weight avg avg*p\n";
+	warnx << "hdrB: freq weight avg avg*n:peers avg*q:mgroups\n";
 	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
 		sig = itr->first;
 		freq = itr->second[0];
@@ -2751,10 +2776,11 @@ printlist(int listnum, int seq)
 		printdouble(" ", weight);
 		printdouble(" ", avg);
 		printdouble(" ", avg * peers);
+		printdouble(" ", avg * mgroups);
 		warnx << "\n";
 		++n;
 	}
-	warnx << "hdrE: freq weight avg avg*p\n";
+	warnx << "hdrE: freq weight avg avg*n:peers avg*q:mgroups\n";
 	printdouble("printlist: sumavg: ", sumavg);
 	printdouble(" multisetsize: ", sumsum);
 	warnx << " setsize: " << allT[listnum].size();

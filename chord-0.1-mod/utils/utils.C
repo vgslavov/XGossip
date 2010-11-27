@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.40 2010/10/11 16:06:05 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.41 2010/10/18 04:47:57 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -2129,73 +2129,61 @@ str pickChildV(vec<str>& nodeEntries, std::vector<POLY>& sig)
 // Enlargement of intervals
 int enlargement(std::vector<POLY>& entrySig, std::vector<POLY>& sig)
 {
-    std::vector<POLY> myMBR = entrySig;
-    updateMBR(myMBR, sig);
+	std::vector<POLY> myMBR = entrySig;
+	updateMBR(myMBR, sig);
 
-    return ((myMBR[1]-myMBR[0]) - (entrySig[1]-entrySig[0]));
+	return ((myMBR[1]-myMBR[0]) - (entrySig[1]-entrySig[0]));
 }
 
 // dp244: all LSH code
 
-//std::vector<POLY>
-void
-lsh::getUniqueSet(std::vector<POLY>& inputPols)
+std::vector <POLY>
+lsh::getUniqueSet(std::vector<POLY> inputPols)
 {
-    if (inputPols[0] == 0) {
-        inputPols.erase(inputPols.begin());
-    } else {
+	std::vector<POLY> outputPols = inputPols;
 
-    //std::ifstream irrpoltxt;
-    //POLY pol;
-    std::vector<POLY> irr;
-    std::vector<POLY> polManipulate;
-    std::vector<POLY> polNums;
+	if (outputPols[0] == 0) {
+		outputPols.erase(outputPols.begin());
+	} else {
+		std::vector<POLY> irr;
+		std::vector<POLY> polManipulate;
+		std::vector<POLY> polNums;
 
-    /*
-    irrpoltxt.open(irrpolyf.c_str());
-    while (irrpoltxt>>pol){
-      irr.push_back(pol);
-    }
-    irrpoltxt.close();
-    */
+		for ( unsigned int i = 0; i< outputPols.size(); i++) {
+			polNums.push_back(outputPols[i]);
+		}
 
-    for ( unsigned int i = 0; i< inputPols.size(); i++){
-        polNums.push_back(inputPols[i]);
-    }
-    std::vector<POLY> temp_d;
-    std::vector<POLY> result;
-    std::vector<POLY>::iterator it;
-    it = unique(polNums.begin(), polNums.end());
-    polNums.resize(it - polNums.begin());
-    int count[polNums.size()];
-    for ( unsigned int i = 0; i < polNums.size(); i++){
-       count[i] = 0;
-       for ( unsigned int j = 0; j < inputPols.size(); j++){
-          if ( !(polNums[i] < inputPols[j])&&
-               !(polNums[i] > inputPols[j])){
-               if ( count[i] > 0 ){
-                   /* for the time being, this operation is withheld*/
-                   polManipulate.push_back(inputPols[j]);
-                   temp_d.push_back(irrnums[count[i]-1]);
-                   //temp_d.push_back(irr[count[i]-1]);
-                   //multiplyPoly(result,polManipulate,irr[count[i]-1]);
-                   multiplyPoly(result,polManipulate,temp_d);
-                   temp_d.clear();
-                   
-                   inputPols[j] = result[0];
-                   polManipulate.clear();
-                   result.clear();
-               }
-               count[i]++;
-          }
-        }
-      }
-    }
+		std::vector<POLY> temp_d;
+		std::vector<POLY> result;
+		std::vector<POLY>::iterator it;
+		it = unique(polNums.begin(), polNums.end());
+		polNums.resize(it - polNums.begin());
+		int count[polNums.size()];
+		for (unsigned int i = 0; i < polNums.size(); i++) {
+			count[i] = 0;
+			for (unsigned int j = 0; j < outputPols.size(); j++) {
+				if (!(polNums[i] < outputPols[j])&&
+				    !(polNums[i] > outputPols[j])) {
+					if (count[i] > 0) {
+						/* for the time being, this operation is withheld*/
+						polManipulate.push_back(outputPols[j]);
+						temp_d.push_back(irrnums[count[i]-1]);
+						//temp_d.push_back(irr[count[i]-1]);
+						//multiplyPoly(result,polManipulate,irr[count[i]-1]);
+						multiplyPoly(result,polManipulate,temp_d);
+						temp_d.clear();
+						outputPols[j] = result[0];
+						polManipulate.clear();
+						result.clear();
+					}
+					count[i]++;
+				}
+			}
+		}
+	}
 
-    //return  inputPols;
+	return outputPols;
 }
-
-
 
 POLY
 lsh::getIRRPoly()
