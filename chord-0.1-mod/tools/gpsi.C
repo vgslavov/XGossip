@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.64 2010/11/24 17:11:25 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.65 2010/11/27 17:58:10 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.64 2010/11/24 17:11:25 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.65 2010/11/27 17:58:10 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -2827,19 +2827,19 @@ usage(void)
 	     << "      	-P		<init phase file>\n"
 					"\t\t\t(after XGossip+ init state is complete)\n"
 	     << "      	-p		verbose (print list of signatures)\n"
-	     << "      	-q		<estimate of # of peers in DHT>\n"
+	     << "      	-q		<initial estimate of # of peers in DHT>\n"
 	     << "	-R		rows for LSH (a.k.a. l hash functions)\n"
 	     << "	-S		<dhash socket>\n"
 	     << "	-s		<dir with sigs>\n"
 	     << "      	-T		<how often>\n"
-					"\t\t\t(init interval)\n"
+					"\t\t\t(interval between inserts in XGossip+)\n"
 	     << "      	-t		<how often>\n"
-					"\t\t\t(gossip interval in exec phase)\n"
+					"\t\t\t(gossip interval)\n"
 	     << "	-u		make POLYs unique (convert multiset to set)\n"
 	     << "      	-w		<how long>\n"
-					"\t\t\t(wait interval after init phase is done)\n\n"
+					"\t\t\t(wait time after XGossip+ init phase is done)\n\n"
 	     << "Actions:\n"
-	     << "	-g		gossip (requires -S, -G, -s, -i)\n"
+	     << "	-g		gossip (requires -S, -G, -s, -t)\n"
 	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j, -F)\n"
 					"\t\t\t(XGossip+)\n"
 	     << "	-l		listen for gossip (requires -S, -G, -s)\n"
