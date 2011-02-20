@@ -1,4 +1,4 @@
-/*	$Id: utils.h,v 1.19 2010/10/18 04:48:03 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.h,v 1.20 2010/11/27 17:58:50 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #ifndef _UTILS_H_
@@ -230,13 +230,13 @@ struct Interval {
  int getKeyValueLen(const char* buf);
  InsertType getKeyValueType(const char* buf);
 
-// vsfgd: xgossip
- int getKeyValue(const char*, str&, std::vector<std::vector<POLY> >&, std::vector<double>&, std::vector<double>&, int&, int);
- void makeKeyValue(char **, int&, str&, std::map<std::vector<POLY>, std::vector<double>, CompareSig>&, int&, InsertType);
+// vsfgd: xgossip/xgossip+ exec
+ int getKeyValue(const char*, str&, str&, std::vector<std::vector<POLY> >&, std::vector<double>&, std::vector<double>&, int&, int);
+ void makeKeyValue(char **, int&, str&, str&, std::map<std::vector<POLY>, std::vector<double>, CompareSig>&, int&, InsertType);
 
 // vsfgd: xgossip+ init
- int getKeyValue(const char*, str&, std::vector<POLY>&, double&, double&, int);
- void makeKeyValue(char **, int&, str&, std::vector<POLY>&, double&, double&, InsertType);
+ int getKeyValue(const char*, str&, str&, std::vector<POLY>&, double&, double&, int);
+ void makeKeyValue(char **, int&, str&, str&, std::vector<POLY>&, double&, double&, InsertType);
 // vsfgd: xgossip+ inform_team
  int getKeyValue(const char*, str&, int);
  void makeKeyValue(char **, int&, str&, std::vector<chordID>&, InsertType);
