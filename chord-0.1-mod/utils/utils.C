@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.41 2010/10/18 04:47:57 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.42 2010/11/27 17:58:38 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -942,9 +942,9 @@ InsertType getKeyValueType(const char* buf)
 	return msgType;
 }
 
-// vsfgd: xgossip
-// format: <msgtype><totallen><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
-int getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sigList, std::vector<double>& freqList, std::vector<double>& weightList, int& seq, int recvlen)
+// vsfgd: xgossip/xgossip+ exec
+// format: <msgtype><totallen><keysize><key><teamidsize><teamid><seq><siglistlen><sigsize><sig><freq><weight>...
+int getKeyValue(const char* buf, str& key, str& teamid, std::vector<std::vector<POLY> >& sigList, std::vector<double>& freqList, std::vector<double>& weightList, int& seq, int recvlen)
 {
 	// copy msgtype
 	InsertType msgType;
@@ -978,9 +978,20 @@ int getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sigL
 	key = str(keyPtr, keySize);
 	//assert(key);
 
+	// copy teamidsize
+	const char *teamidSizePtr;
+	int teamidSize;
+	teamidSizePtr = keyPtr + keySize;
+	memcpy(&teamidSize, teamidSizePtr, sizeof(teamidSize));
+
+	// copy teamid
+	const char *teamidPtr;
+	teamidPtr = teamidSizePtr + sizeof(teamidSize);
+	teamid = str(teamidPtr, teamidSize);
+
 	// copy seq
 	const char *seqPtr;
-	seqPtr = keyPtr + keySize;
+	seqPtr = teamidPtr + teamidSize;
 	memcpy(&seq, seqPtr, sizeof(seq));
 
 	// copy sigListLen
@@ -1035,9 +1046,8 @@ int getKeyValue(const char* buf, str& key, std::vector<std::vector<POLY> >& sigL
 }
 
 // vsfgd: xgossip+ init
-// format: <size><key><size><sig><size><freq><size><seq>
-// format: <msgtype><msglen><keysize><key><sigsize><sig><freq><weight>
-int getKeyValue(const char* buf, str& key, std::vector<POLY>& sig, double& freq, double& weight, int recvlen)
+// format: <msgtype><msglen><keysize><key><teamidsize><teamid><sigsize><sig><freq><weight>
+int getKeyValue(const char* buf, str& key, str& teamid, std::vector<POLY>& sig, double& freq, double& weight, int recvlen)
 {
 	// copy msgtype
 	InsertType msgType;
@@ -1070,10 +1080,21 @@ int getKeyValue(const char* buf, str& key, std::vector<POLY>& sig, double& freq,
 	keyPtr = keySizePtr + sizeof(keySize);
 	key = str(keyPtr, keySize);
 
+	// copy teamidsize
+	const char *teamidSizePtr;
+	int teamidSize;
+	teamidSizePtr = keyPtr + keySize;
+	memcpy(&teamidSize, teamidSizePtr, sizeof(teamidSize));
+
+	// copy teamid
+	const char *teamidPtr;
+	teamidPtr = teamidSizePtr + sizeof(teamidSize);
+	teamid = str(teamidPtr, teamidSize);
+
 	// copy siglen
 	const char *sigLenPtr;
 	int sigLen;
-	sigLenPtr = keyPtr + keySize;
+	sigLenPtr = teamidPtr + teamidSize;
 	memcpy(&sigLen, sigLenPtr, sizeof(sigLen));
 
 	sigLenPtr += sizeof(sigLen);
@@ -1097,7 +1118,7 @@ int getKeyValue(const char* buf, str& key, std::vector<POLY>& sig, double& freq,
 	return 0;
 }
 
-// vsfgd: xgossip+ inform_team
+// vsfgd: xgossip+ inform_team?
 // format: <msgtype><msglen><keysize><key>
 int getKeyValue(const char* buf, str& key, int recvlen)
 {
@@ -1273,14 +1294,15 @@ void makeKeyValue(char **ptr, int& len, str& key, std::vector<POLY>& sig,
 }
 
 // vsfgd: xgossip/xgossip+ exec
-// format: <msgtype><msglen><keysize><key><seq><siglistlen><sigsize><sig><freq><weight>...
-void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, std::vector<double>, CompareSig>& sigList, int& seq, InsertType type)
+// format: <msgtype><msglen><keysize><key><teamidsize><teamid><seq><siglistlen><sigsize><sig><freq><weight>...
+void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::map<std::vector<POLY>, std::vector<double>, CompareSig>& sigList, int& seq, InsertType type)
 {
 	int keyLen = key.len();
+	int teamidLen = teamid.len();
 	//warnx << "LENGTH: ++++ " << keyLen << "\n";
 	
-	// msgtype + msglen + keysize + key + seq + siglistlen
-	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(int) + sizeof(int);
+	// msgtype + msglen + keysize + key + teamidsize + teamid + seq + siglistlen
+	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(int) + teamidLen + sizeof(int) + sizeof(int);
 
 	int sigListLen = sigList.size();
 	int sigLen;
@@ -1325,6 +1347,12 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, st
 	buf += sizeof(keyLen);
 	memcpy(buf, key.cstr(), keyLen);
 	buf += keyLen;
+
+	// copy teamid
+	memcpy(buf, &teamidLen, sizeof(teamidLen));
+	buf += sizeof(teamidLen);
+	memcpy(buf, teamid.cstr(), teamidLen);
+	buf += teamidLen;
 
 	// copy seq
 	memcpy(buf, &seq, sizeof(seq));
@@ -1525,15 +1553,16 @@ void makeKeyValue(char **ptr, int& len, str& key, std::vector<chordID>& minhash,
 }
 
 // vsfgd: xgossip+ init
-// format: <msgtype><msglen><keysize><key><sigsize><sig><freq><weight>
-void makeKeyValue(char **ptr, int& len, str& key, std::vector<POLY>& sig, double& freq, double& weight, InsertType type)
+// format: <msgtype><msglen><keysize><key><teamidsize><teamid><sigsize><sig><freq><weight>
+void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::vector<POLY>& sig, double& freq, double& weight, InsertType type)
 {
 	int keyLen = key.len();
+	int teamidLen = teamid.len();
 	//warnx << "LENGTH: ++++ " << keyLen << "\n";
 	int sigLen = sig.size() * sizeof(POLY);
 	
-	// msgtype + msglen + keysize + key + sigsize + sig + freq + weight
-	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(int) + sigLen + sizeof(double) + sizeof(double);
+	// msgtype + msglen + keysize + key + teamidsize + teamid + sigsize + sig + freq + weight
+	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(int) + teamidLen + sizeof(int) + sigLen + sizeof(double) + sizeof(double);
 	
 	// TODO: New vs new?
 	*ptr = New char[len];
@@ -1554,6 +1583,12 @@ void makeKeyValue(char **ptr, int& len, str& key, std::vector<POLY>& sig, double
 	buf += sizeof(keyLen);
 	memcpy(buf, key.cstr(), keyLen);
 	buf += keyLen;
+
+	// Copy teamid
+	memcpy(buf, &teamidLen, sizeof(teamidLen));
+	buf += sizeof(teamidLen);
+	memcpy(buf, teamid.cstr(), teamidLen);
+	buf += teamidLen;
 
 	// Copy siglen
 	memcpy(buf, &sigLen, sizeof(sigLen));
@@ -2141,43 +2176,38 @@ std::vector <POLY>
 lsh::getUniqueSet(std::vector<POLY> inputPols)
 {
 	std::vector<POLY> outputPols = inputPols;
+	std::vector<POLY> irr;
+	std::vector<POLY> polManipulate;
+	std::vector<POLY> polNums;
 
-	if (outputPols[0] == 0) {
-		outputPols.erase(outputPols.begin());
-	} else {
-		std::vector<POLY> irr;
-		std::vector<POLY> polManipulate;
-		std::vector<POLY> polNums;
+	for (unsigned int i = 0; i < outputPols.size(); i++) {
+		polNums.push_back(outputPols[i]);
+	}
 
-		for ( unsigned int i = 0; i< outputPols.size(); i++) {
-			polNums.push_back(outputPols[i]);
-		}
-
-		std::vector<POLY> temp_d;
-		std::vector<POLY> result;
-		std::vector<POLY>::iterator it;
-		it = unique(polNums.begin(), polNums.end());
-		polNums.resize(it - polNums.begin());
-		int count[polNums.size()];
-		for (unsigned int i = 0; i < polNums.size(); i++) {
-			count[i] = 0;
-			for (unsigned int j = 0; j < outputPols.size(); j++) {
-				if (!(polNums[i] < outputPols[j])&&
-				    !(polNums[i] > outputPols[j])) {
-					if (count[i] > 0) {
-						/* for the time being, this operation is withheld*/
-						polManipulate.push_back(outputPols[j]);
-						temp_d.push_back(irrnums[count[i]-1]);
-						//temp_d.push_back(irr[count[i]-1]);
-						//multiplyPoly(result,polManipulate,irr[count[i]-1]);
-						multiplyPoly(result,polManipulate,temp_d);
-						temp_d.clear();
-						outputPols[j] = result[0];
-						polManipulate.clear();
-						result.clear();
-					}
-					count[i]++;
+	std::vector<POLY> temp_d;
+	std::vector<POLY> result;
+	std::vector<POLY>::iterator it;
+	it = unique(polNums.begin(), polNums.end());
+	polNums.resize(it - polNums.begin());
+	int count[polNums.size()];
+	for (unsigned int i = 0; i < polNums.size(); i++) {
+		count[i] = 0;
+		for (unsigned int j = 0; j < outputPols.size(); j++) {
+			if (!(polNums[i] < outputPols[j])&&
+			    !(polNums[i] > outputPols[j])) {
+				if (count[i] > 0) {
+					/* for the time being, this operation is withheld*/
+					polManipulate.push_back(outputPols[j]);
+					temp_d.push_back(irrnums[count[i]-1]);
+					//temp_d.push_back(irr[count[i]-1]);
+					//multiplyPoly(result,polManipulate,irr[count[i]-1]);
+					multiplyPoly(result,polManipulate,temp_d);
+					temp_d.clear();
+					outputPols[j] = result[0];
+					polManipulate.clear();
+					result.clear();
 				}
+				count[i]++;
 			}
 		}
 	}
@@ -2270,22 +2300,16 @@ lsh::getHashCode(std::vector<POLY>& S)
 	*/
 
 	// group from ctor arg m
+	int f = 0;
 	for (int ik = 0; ik < m; ik++) {
 		// loop over how many rand number we want (from ctor argument l)
 		for (int j = 0; j < l; j++) {
 			// loop over S which is read from external file sig.txt
 			for (int i = 0; i < k; i++) {
-				/*
-				random_integer_a  = lowest_a +
-					int((double)range_a*rand()/(RAND_MAX + 1.0));
-				random_integer_b  = lowest_b +
-					int((double)range_b*rand()/(RAND_MAX + 1.0));  
-				*/
-				//warnx << "random_integer_a: " << random_integer_a << "\n";
-				//warnx << "random_integer_b: " << random_integer_b << "\n";
-				//POLY htmp = (random_integer_a * S[i] + random_integer_b) % highest_a;
-				POLY htmp = (randa[j] * S[i] + randb[j]) % highest;
-				//warnx << "h[k]: " << htmp << "\n";
+				//warnx << "randa[" << f << "]: " << randa[f] << "\n";
+				//warnx << "randb[" << f << "]: " << randb[f] << "\n";
+				POLY htmp = (randa[f] * S[i] + randb[f]) % highest;
+				//warnx << "h[" << i << "]: " << htmp << "\n";
 				h.push_back(htmp);
 			}
 			//warnx << "h.size(): " << h.size() << "\n";
@@ -2293,6 +2317,7 @@ lsh::getHashCode(std::vector<POLY>& S)
 			//warnx << "min of h: " << min << "\n";
 			min_hash.push_back(min);	
 			h.clear();
+			++f;
 		}
 		std::string temp;
 		std::stringstream ss;
@@ -2311,11 +2336,9 @@ lsh::getHashCode(std::vector<POLY>& S)
 		if (col != 0) break;
 	}
 	//warnx << "pre_hash.size(): " << pre_hash.size() << "\n";
+	//warnx << "f: " << f << "\n";
 
 	// now compute hash
-	// this is temporary
-	//std::ofstream txt;
-	//txt.open("prehash1.txt");
 	chordID ID;
 	const char *p;
 	int len;
@@ -2378,21 +2401,13 @@ lsh::getHashCodeFindMod(std::vector<POLY>& S, POLY polNumber)
 	*/
 
 	// group from ctor arg m
+	int f = 0;
 	for (int ik = 0; ik < m; ik++) {
 		// loop over how many rand number we want (from ctor argument l)
 		for (int j = 0; j < l; j++) {
 			// loop over S which is read from external file sig.txt
 			for (int i = 0; i < k; i++) {
-				/*
-				random_integer_a  = lowest_a +
-					int((double)range_a*rand()/(RAND_MAX + 1.0));
-				random_integer_b  = lowest_b +
-					int((double)range_b*rand()/(RAND_MAX + 1.0));  
-				*/
-				//warnx << "random_integer_a: " << random_integer_a << "\n";
-				//warnx << "random_integer_b: " << random_integer_b << "\n";
-				//POLY htmp = (random_integer_a * S[i] + random_integer_b) % highest_a;
-				POLY htmp = (randa[j] * S[i] + randb[j]) % highest;
+				POLY htmp = (randa[f] * S[i] + randb[f]) % highest;
 				//warnx << "h[k]: " << htmp << "\n";
 				h.push_back(htmp);
 			}
@@ -2401,6 +2416,7 @@ lsh::getHashCodeFindMod(std::vector<POLY>& S, POLY polNumber)
 			//warnx << "min of h: " << min << "\n";
 			min_hash.push_back(min);	
 			h.clear();
+			++f;
 		}
 		std::string temp;
 		std::stringstream ss;
