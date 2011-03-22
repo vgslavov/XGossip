@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.65 2010/11/27 17:58:10 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.66 2010/12/11 01:42:38 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.65 2010/11/27 17:58:10 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.66 2010/12/11 01:42:38 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -42,8 +42,8 @@ int openfd = 0;
 int closefd = 0;
 
 chordID maxID;
-static const char* dsock;
-static const char* gsock;
+static const char *dsock;
+static const char *gsock;
 static char *hashfile;
 static char *irrpolyfile;
 static char *initfile;
@@ -58,6 +58,7 @@ int gflag = 0;
 int uflag = 0;
 int discardmsg = 0;
 int peers = 0;
+int teamsize = 5;
 bool initphase = 0;
 
 // paper:k, slides:bands
@@ -71,31 +72,44 @@ typedef std::vector<mapType> vecomap;
 // local list T_m is stored in allT[0];
 vecomap allT;
 
+// vector of vector of maps for each team
+typedef std::vector<vecomap> totalvecomap;
+totalvecomap totalT;
+
+// map teamID to team's list index in totalT
+typedef std::map<chordID, int> teamid2totalT;
+teamid2totalT teamindex;
+
+typedef std::map<chordID, int> teamidfreq;
+teamidfreq teamidminhash;
+
 // map chordIDs/POLYs to sig indices
 typedef std::map<chordID, std::vector<int> > chordID2sig;
 typedef std::map<POLY, std::vector<int> > poly2sig;
 
 void acceptconn(int);
-void add2vecomap(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
+void add2vecomap(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>, chordID);
 int getdir(std::string, std::vector<std::string>&);
 void calcfreq(std::vector<std::vector <POLY> >);
 void calcfreqM(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
-void doublefreq(int);
+void calcteamids(std::vector <chordID>);
+void doublefreq(vecomap&, int);
 void doublefreqgroup(int, mapType);
-void informteam(chordID, std::vector<POLY>);
-void initgossiprecv(chordID, std::vector<POLY>, double, double);
+void informteam(chordID, chordID, std::vector<POLY>);
+void initgossiprecv(chordID, chordID, std::vector<POLY>, double, double);
 DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
 std::vector<POLY> inverse(std::vector<POLY>);
 void listengossip(void);
 //void *listengossip(void *);
 void loginitstate(FILE *);
 void loadinitstate(FILE *);
-void mergelists(void);
-void mergelistsp(void);
+int make_team(chordID, chordID, std::vector<chordID>&);
+void mergelists(vecomap&);
 char *netstring_decode(FILE *);
 void netstring_encode(const char *, FILE *);
 void printdouble(std::string, double);
-void printlist(int, int);
+void printlist(vecomap, int, int);
+void printteamids();
 chordID randomID(void);
 void readgossip(int);
 void readsig(std::string, std::vector<std::vector <POLY> >&);
@@ -103,10 +117,13 @@ void readValues(FILE *, std::multimap<POLY, std::pair<std::string, enum OPTYPE> 
 //void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 void delspecial(int);
 bool sig2str(std::vector<POLY>, str&);
-bool string2sig(std::string, std::vector<POLY> &);
+bool string2sig(std::string, std::vector<POLY>&);
 bool sigcmp(std::vector<POLY>, std::vector<POLY>);
-void splitfreq(int);
-void tokenize(const std::string &, std::vector<std::string> &, const std::string &);
+double sig_inter(std::vector<POLY>, std::vector<POLY>, bool&);
+double sig_uni(std::vector<POLY>, std::vector<POLY>, bool&);
+double signcmp(std::vector<POLY>, std::vector<POLY>, bool&);
+void splitfreq(vecomap&, int);
+void tokenize(const std::string&, std::vector<std::string>&, const std::string&);
 void usage(void);
 
 DHTStatus insertStatus;
@@ -356,25 +373,35 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 
 // TODO: verify
 int
-lshchordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, InsertType msgtype = INVALID, int listnum = 0, int col = 0)
+lshchordID(vecomap teamvecomap, std::vector<std::vector<chordID> > &matrix, int intval = -1, InsertType msgtype = INVALID, int listnum = 0, int col = 0)
 {
 	std::vector<chordID> minhash;
+	std::vector<chordID> buckets;
 	std::vector<POLY> sig;
+	std::vector<POLY> sig1;
+	std::vector<POLY> sig2;
 	std::vector<POLY> lshsig;
 	chordID ID;
 	DHTStatus status;
 	char *value;
-	int valLen;
+	int valLen, n, range, randcol;
 	double freq, weight;
-	//str sigbuf;
+	str sigbuf;
 
 	minhash.clear();
 	sig.clear();
 	lshsig.clear();
-	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
+	n = 0;
+	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
 		sig = itr->first;
 		freq = itr->second[0];
 		weight = itr->second[1];
+
+		// will hold last two signatures;
+		if (n % 2 == 0)
+			sig1 = sig;
+		else
+			sig2 = sig;
 
 		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
 		// convert multiset to set
@@ -390,55 +417,115 @@ lshchordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, InsertTy
 		}
 
 		//warnx << "minhash.size(): " << minhash.size() << "\n";
-		/*
 		if (plist == 1) {
-			warnx << "minhash IDs:\n";
+			warnx << "sig" << n << ": ";
+			warnx << "minhash IDs: " << "\n";
+			sort(minhash.begin(), minhash.end());
 			for (int i = 0; i < (int)minhash.size(); i++) {
 				warnx << minhash[i] << "\n";
 			}
 		}
-		*/
 
+		calcteamids(minhash);
+
+		/*
 		matrix.push_back(minhash);
-		
+		range = (int)minhash.size();
+		// randomness verified
+		randcol = randomNumGenZ(range-1);
+		//randcol = range / 2;
+		ID = (matrix.back())[randcol];
+		warnx << "ID in randcol " << randcol << ": " << ID << "\n";
+		buckets.push_back(ID);
+		*/
+	
 		if (gflag == 1 && msgtype != INVALID) {
-			int range = (int)minhash.size();
+		std::vector<chordID> team;
+		chordID teamID;
+		team.clear();
+		for (int i = 0; i < (int)minhash.size(); i++) {
+			teamID = minhash[i];
+			warnx << "teamID: " << teamID << "\n";
+			// TODO: check return status
+			make_team(NULL, teamID, team);
+			range = team.size();
 			// randomness verified
-			int randcol = randomNumGenZ(range-1);
-			ID = (matrix.back())[randcol];
+			randcol = randomNumGenZ(range-1);
+			ID = team[randcol];
+			//ID = (matrix.back())[randcol];
 			//warnx << "ID in randcol " << randcol << ": " << ID << "\n";
-			strbuf t;
-			t << ID;
-			str key(t);
-			warnx << "inserting " << msgtype << ":\n";
-			makeKeyValue(&value, valLen, key, sig, freq, weight, msgtype);
-			status = insertDHT(ID, value, valLen, MAXRETRIES);
-			cleanup(value);
+			if (gflag == 1 && msgtype != INVALID) {
+				strbuf t;
+				strbuf p;
+				t << ID;
+				p << team[0];
+				str key(t);
+				str teamID(p);
+				warnx << "inserting " << msgtype << ":\n";
+				makeKeyValue(&value, valLen, key, teamID, sig, freq, weight, msgtype);
+				status = insertDHT(ID, value, valLen, MAXRETRIES);
+				cleanup(value);
 
-			// do not exit if insert FAILs!
-			if (status != SUCC) {
-				// TODO: do I care?
-				warnx << "error: insert FAILed\n";
-			} else {
-				warnx << "insert SUCCeeded\n";
+				// do not exit if insert FAILs!
+				if (status != SUCC) {
+					// TODO: do I care?
+					warnx << "error: insert FAILed\n";
+				} else {
+					warnx << "insert SUCCeeded\n";
+				}
+
+				// TODO: how long (if at all)?
+				//sleep(intval);
+				warnx << "sleeping (lsh)...\n";
+
+				initsleep = 0;
+				delaycb(intval, 0, wrap(initsleepnow));
+				while (initsleep == 0) acheck();
 			}
-
-			// TODO: how long (if at all)?
-			//sleep(intval);
-			warnx << "sleeping (lsh)...\n";
-
-			initsleep = 0;
-			delaycb(intval, 0, wrap(initsleepnow));
-			while (initsleep == 0) acheck();
+			// don't forget to clear team list!
+			team.clear();
 		}
+		}
+		// needed?
+		minhash.clear();
 		delete myLSH;
+		++n;
 	}
+
+	/*
+	sig2str(sig1, sigbuf);
+	warnx << "sig1: " << sigbuf << "\n";
+	sig2str(sig2, sigbuf);
+	warnx << "sig2: " << sigbuf << "\n";
+	std::vector<POLY> gcdPoly;
+	gcdPoly.clear();
+	gcdSpecial(gcdPoly, sig1, sig2);
+	int ismetric = 0;
+	int deg = pSim(sig1, sig2, gcdPoly, ismetric);
+	//sig2 = sig1;
+	//gcdPoly.clear();
+	//gcdSpecial(gcdPoly, sig1, sig2);
+	int degOpt = pSimOpt(sig1, sig2, gcdPoly, ismetric);
+	warnx << "pSim: " << deg << "\n";
+	warnx << "pSimOpt: " << degOpt << "\n";
+	*/
+
+	/*
+	sort(buckets.begin(), buckets.end());
+	warnx << "sorted buckets:\n";
+	for (int i = 0; i < (int)buckets.size(); i++) {
+		warnx << "ID: " << buckets[i] << "\n";
+	}
+	*/
+
+	if (plist == 1) printteamids();
+
 	return 0;
 }
 
-// TODO: verify
+// TODO: allT -> totalT
 int
-lshpoly(std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msgtype = INVALID, int listnum = 0, int col = 0)
+lshpoly(vecomap teamvecomap, std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msgtype = INVALID, int listnum = 0, int col = 0)
 {
 	std::vector<POLY> minhash;
 	std::vector<POLY> sig;
@@ -454,7 +541,7 @@ lshpoly(std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msg
 	minhash.clear();
 	sig.clear();
 	lshsig.clear();
-	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
+	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
 		sig = itr->first;
 		freq = itr->second[0];
 		weight = itr->second[1];
@@ -473,6 +560,7 @@ lshpoly(std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msg
 		}
 
 		//warnx << "minhash.size(): " << minhash.size() << "\n";
+
 		/*
 		if (plist == 1) {
 			warnx << "minhash IDs:\n";
@@ -500,7 +588,8 @@ lshpoly(std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msg
 			t << ID;
 			str key(t);
 			warnx << "inserting " << msgtype << ":\n";
-			makeKeyValue(&value, valLen, key, sig, freq, weight, msgtype);
+			// TODO: generate teamID
+			makeKeyValue(&value, valLen, key, key, sig, freq, weight, msgtype);
 			status = insertDHT(ID, value, valLen, MAXRETRIES);
 			cleanup(value);
 
@@ -563,7 +652,8 @@ querychordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, Insert
 			t << ID;
 			str key(t);
 			warnx << "inserting " << msgtype << ":\n";
-			makeKeyValue(&value, valLen, key, sig, freq, weight, msgtype);
+			// TODO: generate teamID
+			makeKeyValue(&value, valLen, key, key, sig, freq, weight, msgtype);
 			status = insertDHT(ID, value, valLen, MAXRETRIES);
 			cleanup(value);
 
@@ -592,12 +682,14 @@ int
 main(int argc, char *argv[])
 {
 	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag, Qflag;
-	int ch, gintval, initintval, waitintval, nids, valLen, logfd;
+	int ch, gintval, initintval, waitintval, nids, valLen, logfd, tix;
 	double beginTime, endTime;
 	char *value;
 	struct stat statbuf;
 	time_t rawtime;
 	chordID ID;
+	chordID teamID;
+	std::vector<chordID> team;
 	DHTStatus status;
 	str sigbuf;
 	std::string initdir;
@@ -615,8 +707,11 @@ main(int argc, char *argv[])
 	txseq.clear();
 	// init or txseq.back() segfaults!
 	txseq.push_back(0);
+	// init dummysig!
+	dummysig.clear();
+	dummysig.push_back(1);
 
-	while ((ch = getopt(argc, argv, "B:cD:d:EF:G:gHhIj:L:lMmn:P:pQq:R:rS:s:T:t:uvw:x:z")) != -1)
+	while ((ch = getopt(argc, argv, "B:cD:d:EF:G:gHhIj:L:lMmn:P:pQq:R:rS:s:T:t:uvw:x:Z:z")) != -1)
 		switch(ch) {
 		case 'B':
 			mgroups = strtol(optarg, NULL, 10);
@@ -715,6 +810,9 @@ main(int argc, char *argv[])
 			xflag = 1;
 			xpathfile = optarg;
 			break;
+		case 'Z':
+			teamsize = strtol(optarg, NULL, 10);
+			break;
 		case 'z':
 			zflag = 1;
 			break;
@@ -746,23 +844,23 @@ main(int argc, char *argv[])
 
 	srandom(loseed);
 	if (zflag == 1 && nids != 0) {
-		std::vector<chordID> ids;
+		std::vector<chordID> IDs;
 		warnx << "unsorted IDs:\n";
 		for (int i = 0; i < nids; i++) {
 			strbuf t;
 			ID = make_randomID();
-			//t << ID;
-			//str tmpkey(t);
-			//warnx << tmpkey << "\n";
 			warnx << "ID: " << ID << "\n";
-			ids.push_back(ID);
-			//warnx << "successorID: " << successorID(ID, 0) << "\n";
-			//sleep(5);
+			IDs.push_back(ID);
 		}
-		sort(ids.begin(), ids.end());
+		sort(IDs.begin(), IDs.end());
 		warnx << "sorted IDs:\n";
-		for (int i = 0; i < (int)ids.size(); i++) {
-			warnx << "ID: " << ids[i] << "\n";
+		for (int i = 0; i < (int)IDs.size(); i++) {
+			warnx << "ID: " << IDs[i] << "\n";
+		}
+		warnx << "\n";
+		for (int i = 0; i < (int)IDs.size(); i++) {
+			warnx << "team_" << i << ":\n";
+			make_team(NULL, IDs[i], team);
 		}
 		return 0;
 	}
@@ -952,7 +1050,8 @@ main(int argc, char *argv[])
 			hasha.clear();
 			hashb.clear();
 			srand(lshseed);
-			for (int i = 0; i < lfuncs; i++) {
+			int totalfuncs = lfuncs * mgroups;
+			for (int i = 0; i < totalfuncs; i++) {
 				// TODO: verify randomness
 				random_integer_a  = lowest_a + int((double)range_a*rand()/(RAND_MAX + 1.0));
 				random_integer_b  = lowest_b + int((double)range_b*rand()/(RAND_MAX + 1.0));
@@ -977,6 +1076,7 @@ main(int argc, char *argv[])
 			//}
 
 			std::ifstream hashstream(hashfile);
+			int totalfuncs = lfuncs * mgroups;
 			if (hashstream.is_open()) {
 				int hashnum;
 				hasha.clear();
@@ -984,13 +1084,13 @@ main(int argc, char *argv[])
 				int z = 0;
 				while (hashstream >> hashnum) {
 					++z;
-					if (z <= lfuncs)
+					if (z <= totalfuncs)
 						hasha.push_back(hashnum);
 					else
 						hashb.push_back(hashnum);
 				}
 				assert(hasha.size() == hashb.size());
-				assert((int)hasha.size() == lfuncs);
+				assert((int)hasha.size() == totalfuncs);
 				hashstream.close();
 			} else {
 				fatal << "can't read hash file " << hashfile << "\n";
@@ -1026,8 +1126,6 @@ main(int argc, char *argv[])
 		// the polynomial "1" has a degree 0
 		// don't add dummy when querying and when gossiping using LSH
 		if (Hflag == 0 && Qflag == 0) {
-			dummysig.clear();
-			dummysig.push_back(1);
 			sigList.push_back(dummysig);
 		}
 
@@ -1036,9 +1134,14 @@ main(int argc, char *argv[])
 			readsig(sigfiles[i], sigList);
 		}
 		warnx << "calculating frequencies...\n";
+		beginTime = getgtod();    
 		calcfreq(sigList);
+		endTime = getgtod();    
+		printdouble("calcfreq time (+sorting): ", endTime - beginTime);
+		warnx << "\n";
 		if (plist == 1) {
-			printlist(0, -1);
+			// both init phases use allT
+			printlist(allT, 0, -1);
 		}
 
 		// create log.init of sigs (why?)
@@ -1082,11 +1185,11 @@ main(int argc, char *argv[])
 		// InitGossipSend: use findMod()
 		if (mflag == 1) {
 			// T_m is 1st list
-			lshpoly(pmatrix, initintval, INITGOSSIP);
+			lshpoly(allT, pmatrix, initintval, INITGOSSIP);
 			pmatrix.clear();
 		// InitGossipSend: use compute_hash()
 		} else {
-			lshchordID(cmatrix, initintval, INITGOSSIP);
+			lshchordID(allT, cmatrix, initintval, INITGOSSIP);
 			cmatrix.clear();
 		}
 
@@ -1107,7 +1210,9 @@ main(int argc, char *argv[])
 			loginitstate(initfp);
 			fclose(initfp);
 			if (plist == 1) {
-				printlist(0, -1);
+				for (int i = 0; i < (int)totalT.size(); i++) {
+					printlist(totalT[i], 0, -1);
+				}
 			}
 			warnx << "openfd: " << openfd << "\n";
 			warnx << "closefd: " << closefd << "\n";
@@ -1128,11 +1233,8 @@ main(int argc, char *argv[])
 			strbuf z;
 			z << ID;
 			str key(z);
-			//std::vector<POLY> sig;
-			//sig.clear();
-
 			beginTime = getgtod();    
-			mergelists();
+			mergelists(allT);
 			endTime = getgtod();    
 			printdouble("merge lists time: ", endTime - beginTime);
 			warnx << "\n";
@@ -1140,9 +1242,9 @@ main(int argc, char *argv[])
 			      << "txseq: " << txseq.back()
 			      << " txID: " << ID << "\n";
 			if (plist == 1) {
-				printlist(0, txseq.back());
+				printlist(allT, 0, txseq.back());
 			}
-			makeKeyValue(&value, valLen, key, allT[0], txseq.back(), XGOSSIP);
+			makeKeyValue(&value, valLen, key, key, allT[0], txseq.back(), XGOSSIP);
 			status = insertDHT(ID, value, valLen, MAXRETRIES);
 			cleanup(value);
 
@@ -1151,7 +1253,7 @@ main(int argc, char *argv[])
 				warnx << "error: insert FAILed\n";
 				// to preserve mass conservation:
 				// "send" msg to yourself
-				doublefreq(0);
+				doublefreq(allT, 0);
 			} else {
 				warnx << "insert SUCCeeded\n";
 			}
@@ -1168,7 +1270,22 @@ main(int argc, char *argv[])
 			warnx << "state: loading from init file...\n";
 			loadinitstate(initfp);
 			if (plist == 1) {
-				printlist(0, -1);
+				teamid2totalT::iterator teamitr = teamindex.begin();
+				for (int i = 0; i < (int)totalT.size(); i++) {
+					// TODO: need assert?
+					//assert(teamitr == teamindex.end());
+					if (teamitr == teamindex.end()) {
+						warnx << "teamindex < totalT at i=" << i
+						      << " : " << teamindex.size()
+						      << " < " << totalT.size() << "\n";
+						break;
+					}
+					teamID = teamitr->first;
+					tix = teamitr->second;
+					warnx << "teamID(i=" << i << ",tix=" << tix << "): " << teamID << "\n";
+					printlist(totalT[i], 0, -1);
+					++teamitr;
+				}
 			}
 		} else if (sflag == 1) {
 			warnx << "state: signature files\n";
@@ -1184,29 +1301,49 @@ main(int argc, char *argv[])
 		warnx << "exec sincepoch: " << time(&rawtime) << "\n";
 
 		// xgossip+ sigs grouped by lsh chordid/poly
-		vecomap groupedT;
+		//vecomap groupedT;
 
 		// needed?
 		//srandom(loseed);
 		while (1) {
 			beginTime = getgtod();    
-			mergelistsp();
+			warnx << "totalT.size(): " << totalT.size() << "\n";
+			for (int i = 0; i < (int)totalT.size(); i++) {
+				warnx << "merging totalT[" << i << "]\n";
+				mergelists(totalT[i]);
+			}
 			endTime = getgtod();    
 			printdouble("merge lists time: ", endTime - beginTime);
 			warnx << "\n";
-			delspecial(0);
+			//delspecial(0);
 			if (plist == 1) {
-				printlist(0, txseq.back());
+				teamid2totalT::iterator teamitr = teamindex.begin();
+				for (int i = 0; i < (int)totalT.size(); i++) {
+					// TODO: need assert?
+					//assert(teamitr == teamindex.end());
+					if (teamitr == teamindex.end()) {
+						warnx << "teamindex < totalT at i=" << i
+						      << " : " << teamindex.size()
+						      << " < " << totalT.size() << "\n";
+						break;
+					}
+					teamID = teamitr->first;
+					warnx << "teamID(" << i << "): " << teamID << "\n";
+					printlist(totalT[i], 0, txseq.back());
+					++teamitr;
+				}
 			}
 
 			//srand(loseed);
 			// TODO: the same as minhash.size()?
-			int range = mgroups;
+			//int range = mgroups;
 			//int randcol = int((double)range * rand() / (RAND_MAX + 1.0));
 			// TODO: verify randomness
-			int randcol = randomNumGenZ(range-1);
+			//int randcol = randomNumGenZ(range-1);
 			// TODO: use findMod()
 			if (mflag == 1) {
+				fatal << "not implemented\n";
+				/*
 				// don't send anything
 				//lshpoly(0, pmatrix, 0, -1, randcol);
 				lshpoly(pmatrix);
@@ -1224,40 +1361,122 @@ main(int argc, char *argv[])
 					warnx << itr->first << ": " << itr->second.size() << "\n";
 				}
 				pmatrix.clear();
+				*/
 			// use compute_hash()
 			} else {
-				warnx << "running lshchordID...\n";
-				beginTime = getgtod();    
-				//lshchordID(cmatrix, -1, INVALID, 0, randcol);
-				lshchordID(cmatrix);
-				endTime = getgtod();    
-				printdouble("lshchordID time: ", endTime - beginTime);
-				warnx << "\n";
-				chordID2sig idindex;
-				warnx << "cmatrix.size(): " << cmatrix.size() << "\n";
-				warnx << "cmatrix[0].size(): " << cmatrix[0].size() << "\n";
-				warnx << "IDs in random column " << randcol << ":\n";
+				teamid2totalT::iterator teamitr = teamindex.begin();
+				for (int i = 0; i < (int)totalT.size(); i++) {
+					/*
+					beginTime = getgtod();    
+					warnx << "running lshchordID...\n";
+					//lshchordID(cmatrix, -1, INVALID, 0, randcol);
+					lshchordID(totalT[i], cmatrix);
+					endTime = getgtod();    
+					printdouble("lshchordID time: ", endTime - beginTime);
+					warnx << "\n";
+					chordID2sig idindex;
+					warnx << "cmatrix.size(): " << cmatrix.size() << "\n";
+					warnx << "cmatrix[0].size(): " << cmatrix[0].size() << "\n";
+					warnx << "IDs in random column " << randcol << ":\n";
+					*/
+
+					// TODO: needed?
+					if (gflag == 1) {
+						warnx << "inserting XGOSSIPP:\n"
+						      << "txseq: " << txseq.back() << "\n";
+
+						// TODO: need assert?
+						//assert(teamitr == teamindex.end());
+						if (teamitr == teamindex.end()) {
+							warnx << "teamindex < totalT at i=" << i
+							      << " : " << teamindex.size()
+							      << " < " << totalT.size() << "\n";
+							break;
+						}
+						teamID = teamitr->first;
+						warnx << "teamID(" << i << "): " << teamID << "\n";
+
+						/*
+						// TODO: inefficient?
+						// get teamID for this totalT[i]
+						for (teamid2totalT::iterator itr = teamindex.begin(); itr != teamindex.end(); itr++) {
+							if (itr->second == i) {
+								teamID = itr->first;
+								warnx << "teamID: " << teamID << "\n";
+							}
+						}
+						*/
+
+						// TODO: check return status
+						make_team(NULL, teamID, team);
+						int range = team.size();
+						// randomness verified
+						int randcol = randomNumGenZ(range-1);
+						ID = team[randcol];
+						// TODO: check if p is succ(ID)
+						//ID = (matrix.back())[randcol];
+						warnx << "ID in randcol " << randcol << ": " << ID << "\n";
+						strbuf t;
+						strbuf p;
+						t << ID;
+						p << team[0];
+						str key(t);
+						str teamID(p);
+						warnx << "txID: " << ID << "\n";
+						makeKeyValue(&value, valLen, key, teamID, totalT[i][0], txseq.back(), XGOSSIPP);
+						status = insertDHT(ID, value, valLen, MAXRETRIES);
+						cleanup(value);
+						// don't forget to clear team list!
+						team.clear();
+
+						// do not exit if insert FAILs!
+						if (status != SUCC) {
+							warnx << "error: insert FAILed\n";
+							// to preserve mass conservation:
+							// "send" msg to yourself
+							doublefreq(totalT[i], 0);
+						} else {
+							warnx << "insert SUCCeeded\n";
+						}
+
+						warnx << "sleeping (groups)...\n";
+						//sleep(initintval);
+						groupsleep = 0;
+						delaycb(initintval, 0, wrap(groupsleepnow));
+						while (groupsleep == 0) acheck();
+					} else {
+						return 0;
+					}
+					++teamitr;
+				}
+				txseq.push_back(txseq.back() + 1);
+				//cmatrix.clear();
+				// CLEAR ME!
+				//groupedT.clear();
+				warnx << "sleeping (xgossip+)...\n";
+				//sleep(gintval);
+				gossipsleep = 0;
+				delaycb(gintval, 0, wrap(gossipsleepnow));
+				while (gossipsleep == 0) acheck();
+
+				/* old algorithm
 				//col = 0;
 				for (int i = 0; i < (int)cmatrix.size(); i++) {
-					/*
-					for (int j = 0; j < (int)cmatrix[i].size(); j++) {
-						warnx << cmatrix[i][j] << " ";
-					}
-					warnx << "\n";
-					warnx << cmatrix[i][randcol] << "\n";
-					*/
+					//for (int j = 0; j < (int)cmatrix[i].size(); j++) {
+					//	warnx << cmatrix[i][j] << " ";
+					//}
+					//warnx << "\n";
+					//warnx << cmatrix[i][randcol] << "\n";
 					// store index of signature associated with chordID
 					idindex[cmatrix[i][randcol]].push_back(i);
 					//idindex[cmatrix[i][0]].push_back(i);
-					/*
-					chordID2sig::iterator itr = idindex.find(matrix[i][randcol]);
-					if (itr != idindex.end()) {
-						itr->second[0] += 1;
-					} else {
+					//chordID2sig::iterator itr = idindex.find(matrix[i][randcol]);
+					//if (itr != idindex.end()) {
+					//	itr->second[0] += 1;
+					//} else {
 						// store index of signature associated with chordID
-						idindex[matrix[i][randcol]].push_back(i);
-					}
-					*/
+						//idindex[matrix[i][randcol]].push_back(i);
+					//}
 
 				}
 				warnx << "idindex.size(): " << idindex.size() << "\n";
@@ -1311,20 +1530,18 @@ main(int argc, char *argv[])
 							warnx << "idindex ended\n";
 							break;
 						}
-						/*
-						warnx << "groupedT[" << i << "]:\n";
-						double freq, weight;
-						for (mapType::iterator jitr = groupedT[i].begin(); jitr != groupedT[i].end(); jitr++) {
-							sig = jitr->first;
-							freq = jitr->second[0];
-							weight = jitr->second[1];
-							sig2str(sig, sigbuf);
-							warnx << "sig: " << sigbuf;
-							printdouble(" ", freq);
-							printdouble(" ", weight);
-							warnx << "\n";
-						}
-						*/
+						//warnx << "groupedT[" << i << "]:\n";
+						//double freq, weight;
+						//for (mapType::iterator jitr = groupedT[i].begin(); jitr != groupedT[i].end(); jitr++) {
+							//sig = jitr->first;
+							//freq = jitr->second[0];
+							//weight = jitr->second[1];
+							//sig2str(sig, sigbuf);
+							//warnx << "sig: " << sigbuf;
+							//printdouble(" ", freq);
+							//printdouble(" ", weight);
+							//warnx << "\n";
+						//}
 						ID = itr->first;
 						strbuf z;
 						z << ID;
@@ -1366,6 +1583,7 @@ main(int argc, char *argv[])
 				} else {
 					return 0;
 				}
+				*/
 			}
 		}
 	} else if (Qflag == 1) {
@@ -1402,12 +1620,17 @@ main(int argc, char *argv[])
 			fclose(initfp);
 		}
 		beginTime = getgtod();    
-		mergelistsp();
+		warnx << "totalT.size(): " << totalT.size() << "\n";
+		for (int i = 0; i < (int)totalT.size(); i++) {
+			mergelists(totalT[i]);
+		}
 		endTime = getgtod();    
 		printdouble("merge lists time: ", endTime - beginTime);
 		warnx << "\n";
 		if (plist == 1) {
-			printlist(0, -1);
+			for (int i = 0; i < (int)totalT.size(); i++) {
+				printlist(totalT[i], 0, -1);
+			}
 		}
 		return 0;
 	// don't exit if listening
@@ -1665,8 +1888,10 @@ readgossip(int fd)
 	strbuf buf;
 	strbuf totalbuf;
 	str key;
+	str keyteamid;
 	str sigbuf;
 	chordID ID;
+	chordID teamID;
 	std::vector<std::vector<POLY> > sigList;
 	std::vector<double> freqList;
 	std::vector<double> weightList;
@@ -1747,7 +1972,7 @@ readgossip(int fd)
 			warnx << "XGOSSIPP";
 		}
 
-		ret = getKeyValue(gmsg.cstr(), key, sigList, freqList, weightList, seq, recvlen);
+		ret = getKeyValue(gmsg.cstr(), key, keyteamid, sigList, freqList, weightList, seq, recvlen);
 		if (ret == -1) {
 			warnx << "error: getKeyValue failed\n";
 			fdcb(fd, selread, NULL);
@@ -1759,7 +1984,8 @@ readgossip(int fd)
 		warnx << " rxlistlen: " << sigList.size()
 		      << " rxseq: " << seq
 		      << " txseq-cur: " << txseq.back()
-		      << " rxID: " << key << "\n";
+		      << " rxID: " << key
+		      << " teamID: " << keyteamid << "\n";
 
 		// count rounds off by one
 		n = seq - txseq.back();
@@ -1797,7 +2023,8 @@ readgossip(int fd)
 #endif
 
 		rxseq.push_back(seq);
-		add2vecomap(sigList, freqList, weightList);
+		str2chordID(keyteamid, teamID);
+		add2vecomap(sigList, freqList, weightList, teamID);
 	} else if (msgtype == INITGOSSIP || msgtype == INFORMTEAM) {
 		// discard msg if not in init phase
 		if (initphase == 0) {
@@ -1811,7 +2038,7 @@ readgossip(int fd)
 		}
 
 		sig.clear();
-		ret = getKeyValue(gmsg.cstr(), key, sig, freq, weight, recvlen);
+		ret = getKeyValue(gmsg.cstr(), key, keyteamid, sig, freq, weight, recvlen);
 		if (ret == -1) {
 			warnx << "error: getKeyValue failed\n";
 			fdcb(fd, selread, NULL);
@@ -1821,13 +2048,15 @@ readgossip(int fd)
 		}
 
 		warnx << " rxID: " << key << "\n";
+		warnx << " teamID: " << keyteamid << "\n";
 		//sig2str(sig, sigbuf);
 		//warnx << "sig: " << sigbuf;
 		//printdouble(" ", freq);
 		//printdouble(" ", weight);
 		//warnx << "\n";
 		str2chordID(key, ID);
-		initgossiprecv(ID, sig, freq, weight);
+		str2chordID(keyteamid, teamID);
+		initgossiprecv(ID, teamID, sig, freq, weight);
 	} else if (msgtype == QUERYS || msgtype == QUERYX) {
 		if (msgtype == QUERYS) {
 			warnx << "QUERYS";
@@ -1836,7 +2065,7 @@ readgossip(int fd)
 		}
 
 		sig.clear();
-		ret = getKeyValue(gmsg.cstr(), key, sig, freq, weight, recvlen);
+		ret = getKeyValue(gmsg.cstr(), key, keyteamid, sig, freq, weight, recvlen);
 		if (ret == -1) {
 			warnx << "error: getKeyValue failed\n";
 			fdcb(fd, selread, NULL);
@@ -1846,6 +2075,7 @@ readgossip(int fd)
 		}
 
 		warnx << " rxID: " << key << "\n";
+		warnx << " teamID: " << keyteamid << "\n";
 		sig2str(sig, sigbuf);
 		warnx << "sig: " << sigbuf << "\n";
 		warnx << "query result: ";
@@ -1878,31 +2108,58 @@ void
 loadinitstate(FILE *initfp)
 {
 	mapType uniqueSigList;
+	vecomap tmpvecomap;
+	chordID teamID;
 	std::vector<POLY> sig;
 	std::vector<std::string> tokens;
 	std::string linestr;
+	int tind;
+	int n = 0;
 	char *line = NULL;
 	size_t len = 0;
 	ssize_t read;
 	double freq, weight;
 
+	uniqueSigList.clear();
+	tmpvecomap.clear();
 	while ((read = getline(&line, &len, initfp)) != -1) {
 		linestr.clear();
 		linestr.assign(line);
 		tokens.clear();
 		tokenize(linestr, tokens, ":");
 		sig.clear();
+		int toksize = tokens.size();
+		if (strcmp(tokens[0].c_str(), "index") == 0) {
+			// list index
+			tind = strtol(tokens[1].c_str(), NULL, 10);
+			// strip "\n" from chordID
+			std::string t = tokens[toksize-1].substr(0,tokens[toksize-1].size()-1);
+			str z(t.c_str());
+			str2chordID(z, teamID);
+			warnx << "teamID(" << tind << "): " << teamID << "\n";
+			teamindex[teamID] = tind;
+			// done with previous team, add its vecomap
+			// (but don't do it for the very first index line
+			if (n != 0) {
+				tmpvecomap.push_back(uniqueSigList);
+				totalT.push_back(tmpvecomap);
+				uniqueSigList.clear();
+				tmpvecomap.clear();
+			}
+			++n;
+			continue;
+		}
 		string2sig(tokens[0], sig);
 		freq = strtod(tokens[1].c_str(), NULL);
 		weight = strtod(tokens[2].c_str(), NULL);
 		uniqueSigList[sig].push_back(freq);
 		uniqueSigList[sig].push_back(weight);
 	}
+	tmpvecomap.push_back(uniqueSigList);
+	totalT.push_back(tmpvecomap);
 
 	if (line) free(line);
-
-	warnx << "before loadinitstate allT.size(): " << allT.size() << "\n";
-	allT.push_back(uniqueSigList);
+	warnx << "loadinitstate: teams added: " << n << "\n";
 }
 
 void
@@ -1915,14 +2172,31 @@ loginitstate(FILE *initfp)
 	int listnum = 0;
 	double freq, weight;
 
-	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
-		sig = itr->first;
-		freq = itr->second[0];
-		weight = itr->second[1];
-		sig2str(sig, sigbuf);
-		fprintf(initfp, "%s:", sigbuf.cstr());
-		fprintf(initfp, "%f:", freq);
-		fprintf(initfp, "%f\n", weight);
+	teamid2totalT::iterator teamitr = teamindex.begin();
+	for (int i = 0; i < (int)totalT.size(); i++) {
+		// TODO: need assert?
+		//assert(teamitr == teamindex.end());
+		if (teamitr == teamindex.end()) {
+			warnx << "teamindex < totalT at i=" << i
+			      << " : " << teamindex.size()
+			      << " < " << totalT.size() << "\n";
+			break;
+		}
+		strbuf z;
+		z << teamitr->first;
+		str teamID(z);
+		fprintf(initfp, "index:%d:listsize:%d:teamID:%s\n", i, totalT[i][listnum].size(), teamID.cstr());
+		for (mapType::iterator itr = totalT[i][listnum].begin();
+		     itr != totalT[i][listnum].end(); itr++) {
+			sig = itr->first;
+			freq = itr->second[0];
+			weight = itr->second[1];
+			sig2str(sig, sigbuf);
+			fprintf(initfp, "%s:", sigbuf.cstr());
+			fprintf(initfp, "%f:", freq);
+			fprintf(initfp, "%f\n", weight);
+		}
+		++teamitr;
 	}
 }
 
@@ -1938,6 +2212,7 @@ netstring_decode(FILE *f)
 	}
 
 	if (fgetc(f) != ':') {
+		warnx << "bad format\n";
 		warnx << "bad format\n";
 		return NULL;
 	}
@@ -2036,28 +2311,18 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 	std::vector<POLY> sig;
 	sig.clear();
 	POLY e;
-	warnx << "Document signature: ";
+	warnx << "Document signature (sorted): ";
 	for (int i = 0; i < size; i++) {
 		if (fread(&e, sizeof(POLY), 1, sigfp) != 1) {
 			assert(0);
 		}
 		sig.push_back(e);
 	}
+	sort(sig.begin(), sig.end());
 	str buf;
 	sig2str(sig, buf);
 	warnx << buf << "\n";
 	sigList.push_back(sig);
-
-	/*
-	// isig test
-	str sigbuf;
-	std::vector<POLY> isig;
-	isig.clear();
-	isig = inverse(sig);
-	sig2str(isig, sigbuf);
-	sigList.push_back(isig);
-	warnx << "isig: " << sigbuf << "\n";
-	*/
 
 	warnx << "readsig: Size of sig list: " << sigList.size() << "\n";
 	finishTime = getgtod();
@@ -2066,102 +2331,117 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 
 // TODO: verify
 void
-initgossiprecv(chordID ID, std::vector<POLY> sig, double freq, double weight)
+initgossiprecv(chordID ID, chordID teamID, std::vector<POLY> sig, double freq, double weight)
 {
-	std::vector<POLY> isig;
-	//str sigbuf;
+	int tind;
+	// init phase uses 1st vecomap only
+	int listnum = 0;
+	std::vector<POLY> hldsig;
+	mapType uniqueSigList;
+	vecomap tmpveco;
+	str buf;
 
-	isig.clear();
-	isig = inverse(sig);
-	//sig2str(isig, sigbuf);
-	//warnx << "isig: " << sigbuf << "\n";
+	dummysig.clear();
+	dummysig.push_back(1);
+	hldsig.clear();
+	hldsig.push_back(0);
 
-	mapType::iterator itr = allT[0].find(sig);
-	mapType::iterator iitr = allT[0].find(isig);
-	// s is regular and exists
-	if ((sig[0] != 0) && (itr != allT[0].end())) {
-		warnx << "initgossiprecv: update freq\n";
-		itr->second[0] += freq;
-	// s is regular and s' exists
-	} else if ((sig[0] != 0) && (iitr != allT[0].end())) {
-		warnx << "initgossiprecv: delete special multiset tuple\n";
-		// TODO: inefficient?
-		allT[0].erase(iitr);
-		allT[0][sig].push_back(freq);
-		allT[0][sig].push_back(weight);
-	// s and s' exist (s is special)
-	} else if ((itr != allT[0].end()) && (iitr != allT[0].end())) {
-		warnx << "initgossiprecv: do nothing\n";
+	// find if list for team exists
+	teamid2totalT::iterator teamitr = teamindex.find(teamID);
+	if (teamitr != teamindex.end()) {
+		warnx << "teamID found\n";
+		tind = teamitr->second;
 	} else {
+		warnx << "teamID NOT found: adding new vecomap\n";
+		warnx << "totalT.size() [before]: " << totalT.size() << "\n";
+		tind = totalT.size();
+		// don't add 1, since it's 0-based
+		teamindex[teamID] = tind;
+		// ?
+		totalT.push_back(tmpveco);
+	}
+	warnx << "tind: " << tind << "\n";
+	warnx << "totalT.size(): " << totalT.size() << "\n";
+	warnx << "teamindex.size(): " << teamindex.size() << "\n";
+	warnx << "totalT[tind].size(): " << totalT[tind].size() << "\n";
+
+	if (totalT[tind].size() == 0) {
+		warnx << "totalT.size() == 0\n";
+		uniqueSigList[hldsig].push_back(0);
+		uniqueSigList[hldsig].push_back(1);
+		totalT[tind].push_back(uniqueSigList);
+	}
+
+	mapType::iterator sigitr = totalT[tind][listnum].find(sig);
+	mapType::iterator dummysigitr = totalT[tind][listnum].find(dummysig);
+
+	// s is regular and T_h[s] exists
+	if ((sig != dummysig) && (sigitr != totalT[tind][listnum].end())) {
+		warnx << "initgossiprecv: update freq\n";
+		sigitr->second[0] += freq;
+	// s is regular and T_h[s] does not exist
+	} else if ((sig != dummysig) && (sigitr == totalT[tind][listnum].end())) {
 		warnx << "initgossiprecv: inserting sig\n";
-		allT[0][sig].push_back(freq);
-		allT[0][sig].push_back(weight);
-		warnx << "initgossiprecv: inform team\n";
-		informteam(ID, sig);
+		totalT[tind][0][sig].push_back(freq);
+		totalT[tind][0][sig].push_back(weight);
+
+		if (dummysigitr == totalT[tind][listnum].end()) {
+			totalT[tind][listnum][dummysig].push_back(0);
+			totalT[tind][listnum][dummysig].push_back(1);
+			warnx << "initgossiprecv: inform team\n";
+			informteam(ID, teamID, dummysig);
+		}
+	// s is a special multiset
+	} else {
+		warnx << "s is a special multiset\n";
+		if (sigitr == totalT[tind][listnum].end()) {
+			warnx << "initgossiprecv: inserting sig\n";
+			totalT[tind][listnum][sig].push_back(freq);
+			totalT[tind][listnum][sig].push_back(weight);
+			warnx << "initgossiprecv: inform team\n";
+			informteam(ID, teamID, sig);
+		}
 	}
 }
 
 // TODO: verify
 void
-informteam(chordID myID, std::vector<POLY> sig)
+informteam(chordID myID, chordID teamID, std::vector<POLY> sig)
 {
-	chordID nextID;
-	std::vector<chordID> minhash;
-	std::vector<POLY> isig;
-	std::vector<POLY> lshsig;
 	DHTStatus status;
+	std::vector<chordID> team;
+	chordID nextID;
 	char *value;
 	int valLen;
-	//str sigbuf;
+	int idindex;
 
-	minhash.clear();
-	isig.clear();
-	lshsig.clear();
-	lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, 0, irrnums, hasha, hashb);
-	// TODO: verify getUniqueSet works right
-	if (uflag == 1) {
-		lshsig = myLSH->getUniqueSet(sig);
-		// TODO: findMod vs compute_hash!
-		minhash = myLSH->getHashCode(lshsig);
+	warnx << "teamID: " << teamID << "\n";
+	idindex = make_team(myID, teamID, team);
+	
+	if (idindex == -1) {
+		warnx << "myID not in team\n";
+		return;
+	// if last member of team, don't inform first (it already knows)
+	} else if (idindex == ((int)team.size() - 1)) {
+		warnx << "i am the last team member, not informing\n";
+		// don't exit if last
+		//return;
 	} else {
-		minhash = myLSH->getHashCode(sig);
-	}
-
-	// is sig always a regular multiset?
-	isig = inverse(sig);
-	//sig2str(isig, sigbuf);
-	//warnx << "informteam: isig: " << sigbuf << "\n";
-
-	// O(n logn)
-	sort(minhash.begin(), minhash.end());
-	//for (int i = 0; i < (int)minhash.size(); i++) {
-	//	warnx << "minhash[" << i << "]: "<< minhash[i] << "\n";
-	//}
-
-	// TODO: verify
-	nextID = myID;
-	if (myID == minhash.back()) {
-		warnx << "warning: myID is last, using first\n";
-		nextID = minhash.front();
-	} else {
-		for (int i = 0; i < (int)minhash.size(); i++) {
-			if (myID < minhash[i]) {
-				nextID = minhash[i];
-				break;
-			}
-		}
+		// is this addition always safe?
+		nextID = team[idindex+1];
 	}
 
 	strbuf z;
 	z << nextID;
 	str key(z);
+	strbuf y;
+	y << teamID;
+	str teamidstr(y);
 	double freq = 0;
 	double weight = 1;
-	makeKeyValue(&value, valLen, key, isig, freq, weight, INFORMTEAM);
-	// or strlen?
-	//ID = compute_hash(value, sizeof(value));
+	makeKeyValue(&value, valLen, key, teamidstr, sig, freq, weight, INFORMTEAM);
 	warnx << "inserting INFORMTEAM:\n";
-	warnx << "myID: " << myID << " nextID: " << nextID << "\n";
+	warnx << "myID: " << myID << " nextID: " << nextID << " teamID: " << teamID << "\n";
 	status = insertDHT(nextID, value, valLen, MAXRETRIES);
 	cleanup(value);
 
@@ -2171,11 +2451,66 @@ informteam(chordID myID, std::vector<POLY> sig)
 	} else {
 		warnx << "insert SUCCeeded\n";
 	}
-
-	delete myLSH;
 }
 
-// TODO: make more efficient? in-place instead?
+void
+calcteamids(std::vector<chordID> minhash)
+{
+	teamidfreq::iterator teamitr;
+
+	for (int i = 0; i < (int)minhash.size(); i++) {
+		teamitr = teamidminhash.find(minhash[i]);
+		if (teamitr != teamidminhash.end()) {
+			//warnx << "teamID found in teamidminhash\n";
+			teamitr->second += 1;
+		} else {
+			//warnx << "teamID NOT found in teamidminhash\n";
+			teamidminhash[minhash[i]] = 1;
+		}
+	}
+}
+
+// return -1 if myID is not in team
+// verify
+int
+make_team(chordID myID, chordID teamID, std::vector<chordID> &team)
+{
+	int idindex = -1;
+	chordID curID;
+
+	if (myID == teamID) {
+		warnx << "myID == teamID, index = 0\n";
+		idindex = 0;
+	}
+
+	// size of ring
+	bigint rngmax = (bigint (1) << 160)  - 1;
+	bigint arclen = rngmax / teamsize;
+	warnx << "arclen: " << arclen << "\n";
+	chordID b = 1;
+	b <<= NBIT;
+	team.clear();
+	team.push_back(teamID);
+	curID = teamID;
+	warnx << "ID_0: " << teamID << "\n";
+	// start at 1 because of team id
+	for (int j = 1; j < teamsize; j++) {
+		curID += arclen;
+		// wraparound
+		if (curID >= b) curID -= b;
+		warnx << "ID_" << j << ": " << curID << "\n";
+		if (myID == curID) {
+			warnx << "myID == curID, index = " << j << "\n";
+			idindex = j;
+		}
+		team.push_back(curID);
+	}
+	//warnx << "team.size(): " << team.size() << "\n";
+
+	return idindex;
+}
+
+// obsolete
 std::vector<POLY>
 inverse(std::vector<POLY> sig)
 {
@@ -2200,7 +2535,7 @@ inverse(std::vector<POLY> sig)
 
 // copied from http://oopweb.com/CPP/Documents/CPPHOWTO/Volume/C++Programming-HOWTO-7.html
 void
-tokenize(const std::string& str, std::vector<std::string>& tokens, const std::string& delimiters = " ")
+tokenize(const std::string& str, std::vector<std::string>& tokens, const std::string &delimiters = " ")
 {
 	// Skip delimiters at beginning.
 	std::string::size_type lastPos = str.find_first_not_of(delimiters, 0);
@@ -2247,6 +2582,7 @@ sig2str(std::vector<POLY> sig, str &buf)
 }
 
 // verified
+// use allT only in init phases
 void
 calcfreq(std::vector<std::vector<POLY> > sigList)
 {
@@ -2275,7 +2611,6 @@ calcfreq(std::vector<std::vector<POLY> > sigList)
 }
 
 // deprecated: use mergelists() instead
-// verified
 void
 calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList, std::vector<double> weightList)
 {
@@ -2295,18 +2630,39 @@ calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList,
 	warnx << "calcfreqM: Size of unique sig list: " << allT[0].size() << "\n";
 }
 
-// verified
 void
-add2vecomap(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList, std::vector<double> weightList)
+add2vecomap(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList, std::vector<double> weightList, chordID teamID)
 {
+	int tind;
 	mapType uniqueSigList;
+	vecomap tmpvecomap;
+
+	warnx << "add2vecomap\n";
 
 	for (int i = 0; i < (int) sigList.size(); i++) {
 		uniqueSigList[sigList[i]].push_back(freqList[i]);
 		uniqueSigList[sigList[i]].push_back(weightList[i]);
 	}
-	allT.push_back(uniqueSigList);
-	warnx << "add2vecomap: allT.size(): " << allT.size() << "\n";
+
+	// find if list for team exists
+	teamid2totalT::iterator teamitr = teamindex.find(teamID);
+	if (teamitr != teamindex.end()) {
+		tind = teamitr->second;
+		warnx << "teamID found at teamindex[" << tind << "]\n";
+		totalT[tind].push_back(uniqueSigList);
+	} else {
+		warnx << "teamID NOT found: adding new vecomap\n";
+		warnx << "totalT.size() [before]: " << totalT.size() << "\n";
+		tmpvecomap.push_back(uniqueSigList);
+		totalT.push_back(tmpvecomap);
+		tind = totalT.size() - 1;
+		teamindex[teamID] = tind;
+	}
+
+	warnx << "tind: " << tind << "\n";
+	warnx << "totalT.size(): " << totalT.size() << "\n";
+	warnx << "teamindex.size(): " << teamindex.size() << "\n";
+	warnx << "totalT[tind].size(): " << totalT[tind].size() << "\n";
 }
 
 // copied from psi.C
@@ -2314,23 +2670,6 @@ add2vecomap(std::vector<std::vector<POLY> > sigList, std::vector<double> freqLis
 bool
 sigcmp(std::vector<POLY> s1, std::vector<POLY> s2)
 {
-	std::vector<POLY> isig1, isig2;
-
-	// if both special, treat them as regular
-	if (s1[0] == 0 && s2[0] == 0) {
-		isig1.clear();
-		isig2.clear();
-		isig1 = inverse(s1);
-		isig2 = inverse(s2);
-		s1 = isig1;
-		s2 = isig2;
-	// special multisets are greater than any regular multiset
-	} else if (s1[0] == 0 && s2[0] != 0) {
-		return false;
-	} else if (s1[0] != 0 && s2[0] == 0) {
-		return true;
-	}
-
 	if (s1.size() < s2.size()) {
 		return true;
 	} else if (s1.size() == s2.size()) {
@@ -2346,33 +2685,250 @@ sigcmp(std::vector<POLY> s1, std::vector<POLY> s2)
 	}
 }
 
-// verified
+// return number of elements in the intersection of s1 and s2
+// s1 and s2 are assumed to be sorted
+// logic copied from set_intersection() in <algorithm>
+// works with multisets (skips duplicates)
+// complexity:
+// at most, performs 2*(count1+count2)-1 comparisons or applications of comp
+// (where countX is the distance between firstX and lastX)
+int
+set_inter(std::vector<POLY> s1, std::vector<POLY> s2, bool &multi)
+{
+	std::vector<POLY>::iterator s1itr = s1.begin();
+	std::vector<POLY>::iterator s2itr = s2.begin();
+	POLY s1prev, s2prev;
+	int n, s1skip, s2skip;
+
+	//warnx << "\n";
+	s1prev = s2prev = n = s1skip = s2skip = 0;
+	while (s1itr != s1.end() && s2itr != s2.end()) {
+		// don't count duplicates
+		if (s1prev == *s1itr) {
+			//warnx << "skipping duplicate\n";
+			++s1skip;
+			s1prev = *s1itr;
+			++s1itr;
+		} else if (s2prev == *s2itr) {
+			//warnx << "skipping duplicate\n";
+			++s2skip;
+			s2prev = *s2itr;
+			++s2itr;
+		} else if (*s1itr < *s2itr) {
+			s1prev = *s1itr;
+			++s1itr;
+		} else if (*s2itr < *s1itr) {
+			s2prev = *s2itr;
+			++s2itr;
+		} else {
+			//warnx << "both: " << *s1itr << "\n";
+			s1prev = *s1itr;
+			s2prev = *s2itr;
+			++s1itr;
+			++s2itr;
+			// count only same elements
+			++n;
+		}
+	}
+	//warnx << "s1skip(inter): " << s1skip << "\n";
+	//warnx << "s2skip(inter): " << s2skip << "\n";
+	// TODO: if s1 is multi (s1 is prevsig, s2 is cursig)
+	if (s2skip != 0)
+		multi = 1;
+	else
+		multi = 0;
+
+	return n;
+}
+
+// return number of elements in the union of s1 and s2
+// s1 and s2 are assumed to be sorted
+// logic copied from set_union() in <algorithm>:
+// works with multisets (skips duplicates)
+// complexity:
+// at most, performs 2*(count1+count2)-1 comparisons or applications of comp
+// (where countX is the distance between firstX and lastX)
+int
+set_uni(std::vector<POLY> s1, std::vector<POLY> s2, bool &multi)
+{
+	std::vector<POLY>::iterator s1itr = s1.begin();
+	std::vector<POLY>::iterator s2itr = s2.begin();
+	POLY s1prev, s2prev;
+	int n, s1skip, s2skip;
+
+	s1prev = s2prev = n = s1skip = s2skip = 0;
+	while (true) {
+		// don't count duplicates
+		if (s1prev == *s1itr) {
+			//warnx << "skipping duplicate\n";
+			++s1skip;
+			++s1itr;
+		} else if (s2prev == *s2itr) {
+			//warnx << "skipping duplicate\n";
+			++s2skip;
+			++s2itr;
+		} else if (*s1itr < *s2itr) {
+			//warnx << "s1: " << *s1itr << "\n";
+			s1prev = *s1itr;
+			++s1itr;
+			++n;
+		} else if (*s2itr < *s1itr) {
+			//warnx << "s2: " << *s2itr << "\n";
+			s2prev = *s2itr;
+			++s2itr;
+			++n;
+		} else {
+			//warnx << "both: " << *s1itr << "\n";
+			s1prev = *s1itr;
+			s2prev = *s2itr;
+			++s1itr;
+			++s2itr;
+			++n;
+		}
+
+		if (s1itr == s1.end()) {
+			//warnx << "end of s1";
+			//warnx << "n: " << n << "\n";
+			while (s2itr != s2.end()) {
+				//warnx << "s2: " << *s2itr << "\n";
+				if (s2prev == *s2itr) {
+					//warnx << "skipping duplicate\n";
+					++s2skip;
+					++s2itr;
+					continue;
+				}
+				s2prev = *s2itr;
+				++s2itr;
+				++n;
+			}
+			break;
+		}
+		if (s2itr == s2.end()) {
+			//warnx << "end of s2";
+			//warnx << "n: " << n << "\n";
+			while (s1itr != s1.end()) {
+				//warnx << "s1: " << *s1itr << "\n";
+				if (s1prev == *s1itr) {
+					//warnx << "skipping duplicate\n";
+					++s1skip;
+					++s1itr;
+					continue;
+				}
+				s1prev = *s1itr;
+				++s1itr;
+				++n;
+			}
+			break;
+		}
+	}
+
+	//warnx << "s1skip(uni): " << s1skip << "\n";
+	//warnx << "s2skip(uni): " << s2skip << "\n";
+	// TODO: if s1 is multi (s1 is prevsig, s2 is cursig)
+	if (s2skip != 0)
+		multi = 1;
+	else 
+		multi = 0;
+
+	return n;
+}
+
+// s1 and s2 are assumed to be sorted
+double
+signcmp(std::vector<POLY> s1, std::vector<POLY> s2, bool &multi)
+{
+	int ninter, nunion;
+
+	ninter = set_inter(s1, s2, multi);
+	//warnx << "intersection has " << ninter << " elements\n";
+
+	nunion = set_uni(s1, s2, multi);
+	//warnx << "union  has " << nunion << " elements\n";
+
+	return (double)ninter/nunion;
+}
+
+// s1 and s2 are assumed to be sorted
+double
+signcmp_lib(std::vector<POLY> s1, std::vector<POLY> s2)
+{
+	std::vector<POLY> v;
+	std::vector<POLY>::iterator itr;
+	int ninter, nunion;
+
+	set_intersection(s1.begin(), s1.end(), s2.end(), s2.end(), back_inserter(v));
+	ninter = v.size();
+	warnx << "intersection has " << ninter << " elements\n";
+
+	v.clear();
+	set_union(s1.begin(), s1.end(), s2.end(), s2.end(), back_inserter(v));
+	nunion = v.size();
+	warnx << "union has " << nunion << " elements\n";
+
+	return double(ninter/nunion);
+}
+
+double
+signcmp_bad(std::vector<POLY> s1, std::vector<POLY> s2)
+{
+	int same = 0;
+	int total = 0;	
+
+	for (int i = 0; i < (int) s1.size(); i++) {
+		for (int j = 0; j < (int) s2.size(); j++) {
+			if (s1[i] == s2[j])
+				++same;
+		}
+	}
+
+	// incorrect!
+	if (s1.size() > s2.size())
+		total = s1.size();
+	else
+		total = s2.size();
+
+	//warnx << "\nsame: " << same << "\n";
+	//warnx << "total: " << total << "\n";
+	return (double)same/total;
+}
+
+// TODO: verify
 void
-mergelists()
+mergelists(vecomap &teamvecomap)
 {
 	double sumf, sumw;
 	str sigbuf;
 	std::vector<POLY> minsig;
+	std::vector<POLY> tmpsig;
 	minsig.clear();
 
 	warnx << "merging:\n";
-	int n = allT.size();
-	warnx << "initial allT.size(): " << n << "\n";
+
+	int n = teamvecomap.size();
+	warnx << "initial teamvecomap.size(): " << n << "\n";
 	if (n == 1) {
-		splitfreq(0);
+		splitfreq(teamvecomap, 0);
 		return;
 	} else {
 #ifdef _DEBUG_
 		for (int i = 0; i < n; i++)
-			printlist(i, -1);
+			printlist(teamvecomap, i, -1);
 #endif
 	}
 
 	// init pointers to beginning of lists
 	std::vector<mapType::iterator> citr;
 	for (int i = 0; i < n; i++) {
-		citr.push_back(allT[i].begin());
+		citr.push_back(teamvecomap[i].begin());
 		// skip dummy
+		tmpsig = citr[i]->first;
+		sig2str(tmpsig, sigbuf);
+		warnx << "1st dummy: " << sigbuf << "\n";
+		++citr[i];
+		// skip 2nd dummy
+		tmpsig = citr[i]->first;
+		sig2str(tmpsig, sigbuf);
+		warnx << "2nd dummy: " << sigbuf << "\n";
 		++citr[i];
 	}
 
@@ -2380,7 +2936,7 @@ mergelists()
 		int j = n;
 		// check if at end of lists
 		for (int i = 0; i < n; i++) {
-			if (citr[i] == allT[i].end()) {
+			if (citr[i] == teamvecomap[i].end()) {
 				//warnx << "end of T_" << i << "\n";
 				--j;
 			}
@@ -2389,11 +2945,12 @@ mergelists()
 		if (j == 0) {
 			sumw = 0;
 			for (int i = 0; i < n; i++) {
-				sumw += allT[i][dummysig][1];
+				sumw += teamvecomap[i][dummysig][1];
 			}
 			printdouble("new local dummy sumw/2: ", sumw/2);
 			warnx << "\n";
-			allT[0][dummysig][1] = sumw / 2;
+			teamvecomap[0][dummysig][1] = sumw / 2;
+			warnx << "mergelists: breaking from loop\n";
 			break;
 		}
 
@@ -2401,15 +2958,15 @@ mergelists()
 		int z = 0;
 		for (int i = 0; i < n; i++) {
 			// skip lists which are done
-			if (citr[i] == allT[i].end()) {
+			if (citr[i] == teamvecomap[i].end()) {
 				continue;
 			} else if (z == 0){
 				minsig = citr[i]->first;
-#ifdef _DEBUG_
+//#ifdef _DEBUG_
 				sig2str(minsig, sigbuf);
 				warnx << "initial minsig: "
 				      << sigbuf << "\n";
-#endif
+//#endif
 				z = 1;
 
 			}
@@ -2417,17 +2974,17 @@ mergelists()
 				minsig = citr[i]->first;
 		}
 
-#ifdef _DEBUG_
+//#ifdef _DEBUG_
 		sig2str(minsig, sigbuf);
 		warnx << "actual minsig: " << sigbuf << "\n";
-#endif
+//#endif
 
 		sumf = sumw = 0;
 		// add all f's and w's for a particular sig
 		for (int i = 0; i < n; i++) {
-			// TODO: verify
-			if ((citr[i] != allT[i].end()) && (citr[i]->first == minsig)) {
-				//warnx << "minsig found in T_" << i << "\n";
+			// check for end of map first and then compare to minsig!
+			if ((citr[i] != teamvecomap[i].end()) && (citr[i]->first == minsig)) {
+				warnx << "minsig found in T_" << i << "\n";
 				sumf += citr[i]->second[0];
 				sumw += citr[i]->second[1];
 				// XXX: itr of T_0 will be incremented later
@@ -2435,13 +2992,13 @@ mergelists()
 			} else {
 #ifdef _DEBUG_
 				warnx << "no minsig in T_" << i;
-				if (citr[i] == allT[i].end()) {
+				if (citr[i] == teamvecomap[i].end()) {
 					warnx << " (list ended)";
 				}
 				warnx << "\n";
 #endif
-				sumf += allT[i][dummysig][0];
-				sumw += allT[i][dummysig][1];
+				sumf += teamvecomap[i][dummysig][0];
+				sumw += teamvecomap[i][dummysig][1];
 			}
 		}
 
@@ -2451,37 +3008,47 @@ mergelists()
 		warnx << "\n";
 #endif
 
-		// update allT[0]
-		if (citr[0]->first == minsig) {
+		// update teamvecomap[0]
+		// check for end of map first and then compare to minsig!
+		if ((citr[0] != teamvecomap[0].end()) && (citr[0]->first == minsig)) {
 			// update sums of existing sig
-			//warnx << "updating sums of minsig\n";
-			allT[0][minsig][0] = sumf/2;
-			allT[0][minsig][1] = sumw/2;
+			warnx << "T_0: updating sums of minsig\n";
+			teamvecomap[0][minsig][0] = sumf/2;
+			teamvecomap[0][minsig][1] = sumw/2;
 			// XXX: see above XXX
 			++citr[0];
 		} else {
+			warnx << "T_0: no minsig in T_0";
+			if (citr[0] == teamvecomap[0].end()) {
+				warnx << " (list ended)";
+			}
+			warnx << "\n";
 			// insert new sig
-			//warnx << "inserting minsig...\n";
-			allT[0][minsig].push_back(sumf/2);
-			allT[0][minsig].push_back(sumw/2);
+			warnx << "T_0: inserting minsig...\n";
+			teamvecomap[0][minsig].push_back(sumf/2);
+			teamvecomap[0][minsig].push_back(sumw/2);
 
 			// not needed:
 			// if the minsig was missing in T_i,
 			// itr already points to the next sig
-			//citr[0] = allT[0].find(minsig);
+			//citr[0] = teamvecomap[0].find(minsig);
 			//++citr[0];
 
 		}
 	}
 
 	// delete all except first (doesn't free memory but it's O(1))
-	while (allT.size() > 1) allT.pop_back();
-	//warnx << "allT.size() after pop: " << allT.size() << "\n";
+	while (teamvecomap.size() > 1) {
+		//warnx << "teamvecomap.size(): " << teamvecomap.size() << "\n";
+		teamvecomap.pop_back();
+	}
+	warnx << "teamvecomap.size() after pop: " << teamvecomap.size() << "\n";
+	warnx << "totalT.size() after pop: " << totalT.size() << "\n";
 }
 
-// TODO: verify
+// obsolete
 void
-mergelistsp()
+mergelistspold()
 {
 	double sumf, sumw;
 	str sigbuf;
@@ -2494,7 +3061,7 @@ mergelistsp()
 	int n = allT.size();
 	warnx << "initial allT.size(): " << n << "\n";
 	if (n == 1) {
-		splitfreq(0);
+		splitfreq(allT, 0);
 		return;
 	} else {
 #ifdef _DEBUG_
@@ -2659,7 +3226,7 @@ mergelistsp()
 	warnx << "allT.size() after pop: " << allT.size() << "\n";
 }
 
-// TODO: verify
+// TODO: obsolete?
 void
 doublefreqgroup(int listnum, mapType groupbyid)
 {
@@ -2677,38 +3244,36 @@ doublefreqgroup(int listnum, mapType groupbyid)
 	}
 }
 
-// verified
 void
-doublefreq(int listnum)
+doublefreq(vecomap &teamvecomap, int listnum)
 {
 	double freq, weight;
 
-	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
+	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
 		freq = itr->second[0];
 		itr->second[0] = freq * 2;
 		weight = itr->second[1];
 		itr->second[1] = weight * 2;
 	}
-	warnx << "doublefreq: setsize: " << allT[listnum].size() << "\n";
+	warnx << "doublefreq: setsize: " << teamvecomap[listnum].size() << "\n";
 }
 
-// verified
 void
-splitfreq(int listnum)
+splitfreq(vecomap &teamvecomap, int listnum)
 {
 	double freq, weight;
 
-	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
+	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
 
 		freq = itr->second[0];
 		itr->second[0] = freq / 2;
 		weight = itr->second[1];
 		itr->second[1] = weight / 2;
 	}
-	warnx << "splitfreq: setsize: " << allT[listnum].size() << "\n";
+	warnx << "splitfreq: setsize: " << teamvecomap[listnum].size() << "\n";
 }
 
-// verified
+// obsolete
 void
 delspecial(int listnum)
 {
@@ -2741,35 +3306,45 @@ printdouble(std::string fmt, double num)
 	warnx << fmt.c_str() << ss.c_str();
 }
 
-// verified
 void
-printlist(int listnum, int seq)
+printteamids()
 {
-	int n, nsig, nisig;
+	warnx << "printteamds:\n";
+
+	for (teamidfreq::iterator itr = teamidminhash.begin(); itr != teamidminhash.end(); itr++) {
+		warnx << "teamID: " << itr->first;
+		warnx << " freq: " << itr->second;
+		warnx << "\n";
+	}
+	warnx << "teamidminhash.size(): " << teamidminhash.size() << "\n";
+}
+
+void
+printlist(vecomap teamvecomap, int listnum, int seq)
+{
+	bool multi;
+	int n, nmulti, ixsim, setsize;
 	double freq, weight, avg;
-	double sumavg = 0;
-	double sumsum = 0;
+	double sumavg, sumsum;
+	double avgsim, highsim, cursim;
 	std::vector<POLY> sig;
-	//sig.clear();
-	//std::vector<POLY> isig;
+	std::vector<POLY> prevsig;
+	sig.clear();
+	prevsig.clear();
 	str sigbuf;
 
-	n = nsig = nisig = 0;
-	warnx << "list T_" << listnum << ": " << seq << " " << allT[listnum].size() << "\n";
-	warnx << "hdrB: freq weight avg avg*n:peers avg*q:mgroups\n";
-	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
+	sumavg = sumsum = 0;
+	avgsim = highsim = cursim = 0;
+	n = nmulti = ixsim = 0;
+	warnx << "list T_" << listnum << ": txseq: " << seq << "\n";
+	warnx << "hdrB: sig freq weight avg avg*n:peers avg*q:mgroups cmp2prev multi\n";
+	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
 		sig = itr->first;
 		freq = itr->second[0];
 		weight = itr->second[1];
 		avg = freq / weight;
 		sumavg += avg;
 		sumsum += (avg * peers);
-
-		if (sig[0] == 0)
-			++nisig;
-		else
-			++nsig;
-
 		sig2str(sig, sigbuf);
 		warnx << "sig" << n << ": " << sigbuf;
 		printdouble(" ", freq);
@@ -2777,15 +3352,40 @@ printlist(int listnum, int seq)
 		printdouble(" ", avg);
 		printdouble(" ", avg * peers);
 		printdouble(" ", avg * mgroups);
-		warnx << "\n";
+		// only check if 1st sig is a multiset
+		if (n == 0) {
+			prevsig = sig;
+			cursim = signcmp(prevsig, sig, multi);
+			cursim = 0;
+		} else {
+			cursim = signcmp(prevsig, sig, multi);
+		}
+		avgsim += cursim;
+		if (multi == 1) ++nmulti;
+		if (highsim < cursim) {
+			highsim = cursim;
+			ixsim = n;
+		}
+		printdouble(" ", cursim);
+		warnx << " " << multi << "\n";
 		++n;
+		prevsig = sig;
 	}
-	warnx << "hdrE: freq weight avg avg*n:peers avg*q:mgroups\n";
+	warnx << "hdrE: sig freq weight avg avg*n:peers avg*q:mgroups cmp2prev multi\n";
 	printdouble("printlist: sumavg: ", sumavg);
 	printdouble(" multisetsize: ", sumsum);
-	warnx << " setsize: " << allT[listnum].size();
-	warnx << " setsig: " << nsig;
-	warnx << " setisig: " << nisig << "\n";
+	// subtract dummy (what about 2 dummies?)
+	setsize = teamvecomap[listnum].size() - 1;
+	warnx << " setsize: " << setsize;
+	warnx << " highsim@sig" << ixsim;
+	printdouble(": ", highsim);
+	// 1st sig doesn't have sim
+	if ((setsize - 1) == 0)
+		avgsim = 0;
+	else
+		avgsim /= (setsize - 1);
+	printdouble(" avgsim: ", avgsim);
+	warnx << " multisets: " << nmulti << "\n";
 }
 
 void
@@ -2798,9 +3398,7 @@ usage(void)
 	warn << "Send xpath query:\n";
 	warn << "\t" << __progname << " -Q -S dhash-sock -x xpathsig -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -u\n\n";
 	warn << "LSH on sig dir:\n";
-	warn << "\t" << __progname << " -H -E -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -u\n\n";
-	warn << "LSH on init file:\n";
-	warn << "\t" << __progname << " -H -E -P initfile -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -u\n\n";
+	warn << "\t" << __progname << " -H -I -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -u -p\n\n";
 	warn << "Generate init file for sigdir:\n";
 	warn << "\t" << __progname << " -r -s sigdir -P initfile\n\n";
 	warn << "XGossip:\n";
@@ -2837,11 +3435,13 @@ usage(void)
 					"\t\t\t(gossip interval)\n"
 	     << "	-u		make POLYs unique (convert multiset to set)\n"
 	     << "      	-w		<how long>\n"
-					"\t\t\t(wait time after XGossip+ init phase is done)\n\n"
+					"\t\t\t(wait time after XGossip+ init phase is done)\n"
+	     << "	-Z		<team size>\n\n"
 	     << "Actions:\n"
 	     << "	-g		gossip (requires -S, -G, -s, -t)\n"
 	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j, -F)\n"
 					"\t\t\t(XGossip+)\n"
+	     << "	-C		calculate distance\n"
 	     << "	-l		listen for gossip (requires -S, -G, -s)\n"
 	     << "	-M		test mergelists(p) (requires -D)\n"
 	     << "	-Q		send query (requires -S, -d, -j, -s or -x)\n"
