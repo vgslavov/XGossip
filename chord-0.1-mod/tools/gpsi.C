@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.66 2010/12/11 01:42:38 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.67 2011/03/22 22:27:30 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.66 2010/12/11 01:42:38 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.67 2011/03/22 22:27:30 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -3401,7 +3401,7 @@ usage(void)
 	warn << "\t" << __progname << " -H -I -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -u -p\n\n";
 	warn << "Generate init file for sigdir:\n";
 	warn << "\t" << __progname << " -r -s sigdir -P initfile\n\n";
-	warn << "XGossip:\n";
+	warn << "Vanilla Gossip:\n";
 	warn << "\t" << __progname << " -S dhash-sock -G g-sock -L log.gpsi -s sigdir -g -t 120 -q 165 -p\n\n";
 	warn << "XGossip+:\n";
 	warn << "\t" << __progname << " -S dhash-sock -G g-sock -L log.gpsi -s sigdir -g -t 120 -T 1 -w 900\n"
