@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.67 2011/03/22 22:27:30 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.68 2011/03/23 01:08:43 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.67 2011/03/22 22:27:30 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.68 2011/03/23 01:08:43 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -70,6 +70,7 @@ int lfuncs = 16;
 typedef std::map<std::vector<POLY>, std::vector<double>, CompareSig> mapType;
 typedef std::vector<mapType> vecomap;
 // local list T_m is stored in allT[0];
+// use only for storing the sigs initially
 vecomap allT;
 
 // vector of vector of maps for each team
@@ -88,7 +89,10 @@ typedef std::map<chordID, std::vector<int> > chordID2sig;
 typedef std::map<POLY, std::vector<int> > poly2sig;
 
 void acceptconn(int);
-void add2vecomap(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>, chordID);
+// XGossip(+)
+void add2vecomapx(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>, chordID);
+// Vanilla Gossip
+void add2vecomapv(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 int getdir(std::string, std::vector<std::string>&);
 void calcfreq(std::vector<std::vector <POLY> >);
 void calcfreqM(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
@@ -1227,6 +1231,8 @@ main(int argc, char *argv[])
 		warnx << "xgossip exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
 
+		totalT.push_back(allT);
+
 		srandom(loseed);
 		while (1) {
 			ID = make_randomID();
@@ -1234,7 +1240,9 @@ main(int argc, char *argv[])
 			z << ID;
 			str key(z);
 			beginTime = getgtod();    
-			mergelists(allT);
+			// store everything in totalT[0]
+			mergelists(totalT[0]);
+			//mergelists(allT);
 			endTime = getgtod();    
 			printdouble("merge lists time: ", endTime - beginTime);
 			warnx << "\n";
@@ -1242,9 +1250,12 @@ main(int argc, char *argv[])
 			      << "txseq: " << txseq.back()
 			      << " txID: " << ID << "\n";
 			if (plist == 1) {
-				printlist(allT, 0, txseq.back());
+				printlist(totalT[0], 0, txseq.back());
+				//printlist(allT, 0, txseq.back());
 			}
-			makeKeyValue(&value, valLen, key, key, allT[0], txseq.back(), XGOSSIP);
+			// after merging, everything is stored in totalT[0][0]
+			makeKeyValue(&value, valLen, key, key, totalT[0][0], txseq.back(), XGOSSIP);
+			//makeKeyValue(&value, valLen, key, key, allT[0], txseq.back(), XGOSSIP);
 			status = insertDHT(ID, value, valLen, MAXRETRIES);
 			cleanup(value);
 
@@ -1253,7 +1264,8 @@ main(int argc, char *argv[])
 				warnx << "error: insert FAILed\n";
 				// to preserve mass conservation:
 				// "send" msg to yourself
-				doublefreq(allT, 0);
+				doublefreq(totalT[0], 0);
+				//doublefreq(allT, 0);
 			} else {
 				warnx << "insert SUCCeeded\n";
 			}
@@ -1984,8 +1996,11 @@ readgossip(int fd)
 		warnx << " rxlistlen: " << sigList.size()
 		      << " rxseq: " << seq
 		      << " txseq-cur: " << txseq.back()
-		      << " rxID: " << key
-		      << " teamID: " << keyteamid << "\n";
+		      << " rxID: " << key;
+
+		if (msgtype == XGOSSIPP) warnx << " teamID: " << keyteamid;
+
+		warnx  << "\n";
 
 		// count rounds off by one
 		n = seq - txseq.back();
@@ -2024,7 +2039,11 @@ readgossip(int fd)
 
 		rxseq.push_back(seq);
 		str2chordID(keyteamid, teamID);
-		add2vecomap(sigList, freqList, weightList, teamID);
+		if (msgtype == XGOSSIP) {
+			add2vecomapv(sigList, freqList, weightList);
+		} else {
+			add2vecomapx(sigList, freqList, weightList, teamID);
+		}
 	} else if (msgtype == INITGOSSIP || msgtype == INFORMTEAM) {
 		// discard msg if not in init phase
 		if (initphase == 0) {
@@ -2630,8 +2649,9 @@ calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList,
 	warnx << "calcfreqM: Size of unique sig list: " << allT[0].size() << "\n";
 }
 
+// xgossip(+)
 void
-add2vecomap(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList, std::vector<double> weightList, chordID teamID)
+add2vecomapx(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList, std::vector<double> weightList, chordID teamID)
 {
 	int tind;
 	mapType uniqueSigList;
@@ -2664,6 +2684,24 @@ add2vecomap(std::vector<std::vector<POLY> > sigList, std::vector<double> freqLis
 	warnx << "teamindex.size(): " << teamindex.size() << "\n";
 	warnx << "totalT[tind].size(): " << totalT[tind].size() << "\n";
 }
+
+// vanilla gossip
+void
+add2vecomapv(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList, std::vector<double> weightList)
+{
+        mapType uniqueSigList;
+
+	warnx << "add2vecomap\n";
+
+        for (int i = 0; i < (int) sigList.size(); i++) {
+                uniqueSigList[sigList[i]].push_back(freqList[i]);
+                uniqueSigList[sigList[i]].push_back(weightList[i]);
+        }
+
+	totalT[0].push_back(uniqueSigList);
+	warnx << "totalT[0].size(): " << totalT[0].size() << "\n";
+}
+
 
 // copied from psi.C
 // return TRUE if s1 < s2
@@ -2925,11 +2963,14 @@ mergelists(vecomap &teamvecomap)
 		sig2str(tmpsig, sigbuf);
 		warnx << "1st dummy: " << sigbuf << "\n";
 		++citr[i];
-		// skip 2nd dummy
+		// skip 2nd dummy only for xgossip(+)
+		// TODO: distinguisth b/w xgossip and vanilla gossip
+		/*
 		tmpsig = citr[i]->first;
 		sig2str(tmpsig, sigbuf);
 		warnx << "2nd dummy: " << sigbuf << "\n";
 		++citr[i];
+		*/
 	}
 
 	while (1) {
