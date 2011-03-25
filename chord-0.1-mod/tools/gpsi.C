@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.69 2011/03/24 20:52:00 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.70 2011/03/25 15:49:30 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.69 2011/03/24 20:52:00 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.70 2011/03/25 15:49:30 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -3003,11 +3003,11 @@ mergelists(vecomap &teamvecomap)
 				continue;
 			} else if (z == 0){
 				minsig = citr[i]->first;
-//#ifdef _DEBUG_
+#ifdef _DEBUG_
 				sig2str(minsig, sigbuf);
 				warnx << "initial minsig: "
 				      << sigbuf << "\n";
-//#endif
+#endif
 				z = 1;
 
 			}
@@ -3015,10 +3015,10 @@ mergelists(vecomap &teamvecomap)
 				minsig = citr[i]->first;
 		}
 
-//#ifdef _DEBUG_
+#ifdef _DEBUG_
 		sig2str(minsig, sigbuf);
 		warnx << "actual minsig: " << sigbuf << "\n";
-//#endif
+#endif
 
 		sumf = sumw = 0;
 		// add all f's and w's for a particular sig
