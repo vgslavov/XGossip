@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.68 2011/03/23 01:08:43 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.69 2011/03/24 20:52:00 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.68 2011/03/23 01:08:43 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.69 2011/03/24 20:52:00 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -3377,7 +3377,7 @@ printlist(vecomap teamvecomap, int listnum, int seq)
 	sumavg = sumsum = 0;
 	avgsim = highsim = cursim = 0;
 	n = nmulti = ixsim = 0;
-	warnx << "list T_" << listnum << ": txseq: " << seq << "\n";
+	warnx << "list T_" << listnum << ": txseq: " << seq << " len: " << teamvecomap[listnum].size() << "\n";
 	warnx << "hdrB: sig freq weight avg avg*n:peers avg*q:mgroups cmp2prev multi\n";
 	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
 		sig = itr->first;
