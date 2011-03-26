@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.70 2011/03/25 15:49:30 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.71 2011/03/25 17:14:12 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.70 2011/03/25 15:49:30 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.71 2011/03/25 17:14:12 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -59,6 +59,7 @@ int uflag = 0;
 int discardmsg = 0;
 int peers = 0;
 int teamsize = 5;
+int freqbyx = 1;
 bool initphase = 0;
 
 // paper:k, slides:bands
@@ -97,7 +98,7 @@ int getdir(std::string, std::vector<std::string>&);
 void calcfreq(std::vector<std::vector <POLY> >);
 void calcfreqM(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 void calcteamids(std::vector <chordID>);
-void doublefreq(vecomap&, int);
+void dividefreq(vecomap&, int, int, int);
 void doublefreqgroup(int, mapType);
 void informteam(chordID, chordID, std::vector<POLY>);
 void initgossiprecv(chordID, chordID, std::vector<POLY>, double, double);
@@ -109,6 +110,7 @@ void loginitstate(FILE *);
 void loadinitstate(FILE *);
 int make_team(chordID, chordID, std::vector<chordID>&);
 void mergelists(vecomap&);
+void multiplyfreq(vecomap&, int, int, int);
 char *netstring_decode(FILE *);
 void netstring_encode(const char *, FILE *);
 void printdouble(std::string, double);
@@ -126,7 +128,6 @@ bool sigcmp(std::vector<POLY>, std::vector<POLY>);
 double sig_inter(std::vector<POLY>, std::vector<POLY>, bool&);
 double sig_uni(std::vector<POLY>, std::vector<POLY>, bool&);
 double signcmp(std::vector<POLY>, std::vector<POLY>, bool&);
-void splitfreq(vecomap&, int);
 void tokenize(const std::string&, std::vector<std::string>&, const std::string&);
 void usage(void);
 
@@ -715,7 +716,7 @@ main(int argc, char *argv[])
 	dummysig.clear();
 	dummysig.push_back(1);
 
-	while ((ch = getopt(argc, argv, "B:cD:d:EF:G:gHhIj:L:lMmn:P:pQq:R:rS:s:T:t:uvw:x:Z:z")) != -1)
+	while ((ch = getopt(argc, argv, "B:cD:d:EF:G:gHhIj:L:lMmn:P:pQq:R:rS:s:T:t:uvw:X:x:Z:z")) != -1)
 		switch(ch) {
 		case 'B':
 			mgroups = strtol(optarg, NULL, 10);
@@ -809,6 +810,9 @@ main(int argc, char *argv[])
 			break;
 		case 'w':
 			waitintval = strtol(optarg, NULL, 10);
+			break;
+		case 'X':
+			freqbyx = strtol(optarg, NULL, 10);
 			break;
 		case 'x':
 			xflag = 1;
@@ -1143,6 +1147,10 @@ main(int argc, char *argv[])
 		endTime = getgtod();    
 		printdouble("calcfreq time (+sorting): ", endTime - beginTime);
 		warnx << "\n";
+		if (freqbyx > 1) {
+			// don't multiply weight
+			multiplyfreq(allT, 0, freqbyx, 1);
+		}
 		if (plist == 1) {
 			// both init phases use allT
 			printlist(allT, 0, -1);
@@ -1231,6 +1239,7 @@ main(int argc, char *argv[])
 		warnx << "xgossip exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
 
+		// from now on, work only with totalT
 		totalT.push_back(allT);
 
 		srandom(loseed);
@@ -1263,8 +1272,8 @@ main(int argc, char *argv[])
 			if (status != SUCC) {
 				warnx << "error: insert FAILed\n";
 				// to preserve mass conservation:
-				// "send" msg to yourself
-				doublefreq(totalT[0], 0);
+				// "send" msg to yourself (double freq)
+				multiplyfreq(totalT[0], 0, 2, 2);
 				//doublefreq(allT, 0);
 			} else {
 				warnx << "insert SUCCeeded\n";
@@ -1446,7 +1455,8 @@ main(int argc, char *argv[])
 							warnx << "error: insert FAILed\n";
 							// to preserve mass conservation:
 							// "send" msg to yourself
-							doublefreq(totalT[i], 0);
+							// (double freq)
+							multiplyfreq(totalT[i], 0, 2, 2);
 						} else {
 							warnx << "insert SUCCeeded\n";
 						}
@@ -2945,7 +2955,7 @@ mergelists(vecomap &teamvecomap)
 	int n = teamvecomap.size();
 	warnx << "initial teamvecomap.size(): " << n << "\n";
 	if (n == 1) {
-		splitfreq(teamvecomap, 0);
+		dividefreq(teamvecomap, 0, 2, 2);
 		return;
 	} else {
 #ifdef _DEBUG_
@@ -3102,7 +3112,7 @@ mergelistspold()
 	int n = allT.size();
 	warnx << "initial allT.size(): " << n << "\n";
 	if (n == 1) {
-		splitfreq(allT, 0);
+		dividefreq(allT, 0, 2, 2);
 		return;
 	} else {
 #ifdef _DEBUG_
@@ -3286,32 +3296,41 @@ doublefreqgroup(int listnum, mapType groupbyid)
 }
 
 void
-doublefreq(vecomap &teamvecomap, int listnum)
+multiplyfreq(vecomap &teamvecomap, int listnum, int fby, int wby)
 {
 	double freq, weight;
 
-	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
-		freq = itr->second[0];
-		itr->second[0] = freq * 2;
-		weight = itr->second[1];
-		itr->second[1] = weight * 2;
+	mapType::iterator itr = teamvecomap[listnum].begin();
+	// skip dummysig if multiplying freq to increase the total number of sigs
+	// don't skip it if unsuccessful insert (fby == wby)
+	if ((itr->first == dummysig) && (fby != wby)) {
+		warnx << "multiplyfreq: skipping dummysig\n";
+		++itr;
 	}
-	warnx << "doublefreq: setsize: " << teamvecomap[listnum].size() << "\n";
+
+	// TODO: will it bomb if teamvecomap only contains dummysig?
+	for (; itr != teamvecomap[listnum].end(); itr++) {
+		freq = itr->second[0];
+		itr->second[0] = freq * fby;
+		weight = itr->second[1];
+		itr->second[1] = weight * wby;
+	}
+	warnx << "multiplyfreq(" << fby << ", " << wby << "): setsize: " << teamvecomap[listnum].size() << "\n";
 }
 
 void
-splitfreq(vecomap &teamvecomap, int listnum)
+dividefreq(vecomap &teamvecomap, int listnum, int fby, int wby)
 {
 	double freq, weight;
 
 	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
 
 		freq = itr->second[0];
-		itr->second[0] = freq / 2;
+		itr->second[0] = freq / fby;
 		weight = itr->second[1];
-		itr->second[1] = weight / 2;
+		itr->second[1] = weight / wby;
 	}
-	warnx << "splitfreq: setsize: " << teamvecomap[listnum].size() << "\n";
+	warnx << "divideferq(" << fby << ", " << wby << "): setsize: " << teamvecomap[listnum].size() << "\n";
 }
 
 // obsolete
@@ -3477,6 +3496,9 @@ usage(void)
 	     << "	-u		make POLYs unique (convert multiset to set)\n"
 	     << "      	-w		<how long>\n"
 					"\t\t\t(wait time after XGossip+ init phase is done)\n"
+	     << "	-X		<how many times>\n"
+					"(multiply freq of sigs by)\n"
+	     << "	-x		<xpath file>\n"
 	     << "	-Z		<team size>\n\n"
 	     << "Actions:\n"
 	     << "	-g		gossip (requires -S, -G, -s, -t)\n"
