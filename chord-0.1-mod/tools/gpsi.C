@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.71 2011/03/25 17:14:12 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.72 2011/03/26 21:09:11 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.71 2011/03/25 17:14:12 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.72 2011/03/26 21:09:11 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -458,7 +458,7 @@ lshchordID(vecomap teamvecomap, std::vector<std::vector<chordID> > &matrix, int 
 			randcol = randomNumGenZ(range-1);
 			ID = team[randcol];
 			//ID = (matrix.back())[randcol];
-			//warnx << "ID in randcol " << randcol << ": " << ID << "\n";
+			warnx << "ID in randcol " << randcol << ": " << ID << "\n";
 			if (gflag == 1 && msgtype != INVALID) {
 				strbuf t;
 				strbuf p;
@@ -2450,9 +2450,9 @@ informteam(chordID myID, chordID teamID, std::vector<POLY> sig)
 	if (idindex == -1) {
 		warnx << "myID not in team\n";
 		return;
-	// if last member of team, don't inform first (it already knows)
 	} else if (idindex == ((int)team.size() - 1)) {
-		warnx << "i am the last team member, not informing\n";
+		warnx << "i am last, wrap around to first\n";
+		nextID = team[0];
 		// don't exit if last
 		//return;
 	} else {
@@ -2969,18 +2969,16 @@ mergelists(vecomap &teamvecomap)
 	for (int i = 0; i < n; i++) {
 		citr.push_back(teamvecomap[i].begin());
 		// skip dummy
-		tmpsig = citr[i]->first;
-		sig2str(tmpsig, sigbuf);
-		warnx << "1st dummy: " << sigbuf << "\n";
+		//tmpsig = citr[i]->first;
+		//sig2str(tmpsig, sigbuf);
+		//warnx << "1st dummy: " << sigbuf << "\n";
 		++citr[i];
 		// skip 2nd dummy only for xgossip(+)
 		// TODO: distinguisth b/w xgossip and vanilla gossip
-		/*
-		tmpsig = citr[i]->first;
-		sig2str(tmpsig, sigbuf);
-		warnx << "2nd dummy: " << sigbuf << "\n";
+		//tmpsig = citr[i]->first;
+		//sig2str(tmpsig, sigbuf);
+		//warnx << "2nd dummy: " << sigbuf << "\n";
 		++citr[i];
-		*/
 	}
 
 	while (1) {
@@ -2998,10 +2996,10 @@ mergelists(vecomap &teamvecomap)
 			for (int i = 0; i < n; i++) {
 				sumw += teamvecomap[i][dummysig][1];
 			}
-			printdouble("new local dummy sumw/2: ", sumw/2);
-			warnx << "\n";
+			//printdouble("new local dummy sumw/2: ", sumw/2);
+			//warnx << "\n";
 			teamvecomap[0][dummysig][1] = sumw / 2;
-			warnx << "mergelists: breaking from loop\n";
+			//warnx << "mergelists: breaking from loop\n";
 			break;
 		}
 
@@ -3035,7 +3033,7 @@ mergelists(vecomap &teamvecomap)
 		for (int i = 0; i < n; i++) {
 			// check for end of map first and then compare to minsig!
 			if ((citr[i] != teamvecomap[i].end()) && (citr[i]->first == minsig)) {
-				warnx << "minsig found in T_" << i << "\n";
+				//warnx << "minsig found in T_" << i << "\n";
 				sumf += citr[i]->second[0];
 				sumw += citr[i]->second[1];
 				// XXX: itr of T_0 will be incremented later
@@ -3063,19 +3061,21 @@ mergelists(vecomap &teamvecomap)
 		// check for end of map first and then compare to minsig!
 		if ((citr[0] != teamvecomap[0].end()) && (citr[0]->first == minsig)) {
 			// update sums of existing sig
-			warnx << "T_0: updating sums of minsig\n";
+			//warnx << "T_0: updating sums of minsig\n";
 			teamvecomap[0][minsig][0] = sumf/2;
 			teamvecomap[0][minsig][1] = sumw/2;
 			// XXX: see above XXX
 			++citr[0];
 		} else {
+			/*
 			warnx << "T_0: no minsig in T_0";
 			if (citr[0] == teamvecomap[0].end()) {
 				warnx << " (list ended)";
 			}
 			warnx << "\n";
+			*/
 			// insert new sig
-			warnx << "T_0: inserting minsig...\n";
+			//warnx << "T_0: inserting minsig...\n";
 			teamvecomap[0][minsig].push_back(sumf/2);
 			teamvecomap[0][minsig].push_back(sumw/2);
 
