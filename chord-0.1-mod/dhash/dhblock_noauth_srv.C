@@ -1,4 +1,4 @@
-/*	$Id: dhblock_noauth_srv.C,v 1.7 2010/07/15 06:36:48 vsfgd Exp vsfgd $	*/
+/*	$Id: dhblock_noauth_srv.C,v 1.8 2010/11/12 20:00:22 vsfgd Exp vsfgd $	*/
 
 #include <iostream>
 
@@ -88,7 +88,7 @@ dhblock_noauth_srv::real_store (chordID dbkey,
 
   str dprep = adjust_data (dbkey, new_data, old_data, resStatus);
 
-  // TODO: display only if not XGOSSIP
+  // TODO: display only if not V/XGOSSIP
   //if (dprep.len() == 0) warnx << "Avoiding replica storage.\n";
 
   if (resStatus == DHASH_CORRUPTHDR) {
@@ -176,7 +176,7 @@ dhblock_noauth_srv::adjust_data (chordID key, str new_data, str prev_data,
 	str gKey;
 	memcpy(&msgtype, new_elems[0].cstr(), sizeof(msgtype));
 
-	if ((msgtype == XGOSSIP) || (msgtype == XGOSSIPP) ||
+	if ((msgtype == VXGOSSIP) || (msgtype == XGOSSIP) ||
 	    (msgtype == INITGOSSIP) || (msgtype == INFORMTEAM) ||
 	    (msgtype == QUERYS) || (msgtype == QUERYX)) {
 		extern str gsock;
