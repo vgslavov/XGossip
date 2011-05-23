@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.72 2011/03/26 21:09:11 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.73 2011/04/27 14:48:43 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.72 2011/03/26 21:09:11 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.73 2011/04/27 14:48:43 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -55,6 +55,7 @@ std::vector<int> hashb;
 int lshseed = 0;
 int plist = 0;
 int gflag = 0;
+int Qflag = 0;
 int uflag = 0;
 int discardmsg = 0;
 int peers = 0;
@@ -70,8 +71,8 @@ int lfuncs = 16;
 // map sigs to freq and weight
 typedef std::map<std::vector<POLY>, std::vector<double>, CompareSig> mapType;
 typedef std::vector<mapType> vecomap;
-// local list T_m is stored in allT[0];
-// use only for storing the sigs initially
+// use only for storing the sigs after reading them from files:
+// during init phases and when querying
 vecomap allT;
 
 // vector of vector of maps for each team
@@ -90,9 +91,9 @@ typedef std::map<chordID, std::vector<int> > chordID2sig;
 typedef std::map<POLY, std::vector<int> > poly2sig;
 
 void acceptconn(int);
-// XGossip(+)
+// XGossip
 void add2vecomapx(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>, chordID);
-// Vanilla Gossip
+// VanillaXGossip
 void add2vecomapv(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 int getdir(std::string, std::vector<std::string>&);
 void calcfreq(std::vector<std::vector <POLY> >);
@@ -100,6 +101,7 @@ void calcfreqM(std::vector<std::vector <POLY> >, std::vector<double>, std::vecto
 void calcteamids(std::vector <chordID>);
 void dividefreq(vecomap&, int, int, int);
 void doublefreqgroup(int, mapType);
+chordID findteamid(int);
 void informteam(chordID, chordID, std::vector<POLY>);
 void initgossiprecv(chordID, chordID, std::vector<POLY>, double, double);
 DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
@@ -107,7 +109,8 @@ std::vector<POLY> inverse(std::vector<POLY>);
 void listengossip(void);
 //void *listengossip(void *);
 void loginitstate(FILE *);
-void loadinitstate(FILE *);
+int loadinitstate(FILE *);
+int lshchordID(vecomap, int, InsertType, int, int);
 int make_team(chordID, chordID, std::vector<chordID>&);
 void mergelists(vecomap&);
 void multiplyfreq(vecomap&, int, int, int);
@@ -115,7 +118,9 @@ char *netstring_decode(FILE *);
 void netstring_encode(const char *, FILE *);
 void printdouble(std::string, double);
 void printlist(vecomap, int, int);
+void printlistall();
 void printteamids();
+void printteamidfreq();
 chordID randomID(void);
 void readgossip(int);
 void readsig(std::string, std::vector<std::vector <POLY> >&);
@@ -378,13 +383,14 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 
 // TODO: verify
 int
-lshchordID(vecomap teamvecomap, std::vector<std::vector<chordID> > &matrix, int intval = -1, InsertType msgtype = INVALID, int listnum = 0, int col = 0)
+lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, int listnum = 0, int col = 0)
 {
+	std::vector<std::vector<chordID> > matrix;
 	std::vector<chordID> minhash;
 	std::vector<chordID> buckets;
 	std::vector<POLY> sig;
-	std::vector<POLY> sig1;
-	std::vector<POLY> sig2;
+	//std::vector<POLY> sig1;
+	//std::vector<POLY> sig2;
 	std::vector<POLY> lshsig;
 	chordID ID;
 	DHTStatus status;
@@ -393,6 +399,7 @@ lshchordID(vecomap teamvecomap, std::vector<std::vector<chordID> > &matrix, int 
 	double freq, weight;
 	str sigbuf;
 
+	matrix.clear();
 	minhash.clear();
 	sig.clear();
 	lshsig.clear();
@@ -403,10 +410,12 @@ lshchordID(vecomap teamvecomap, std::vector<std::vector<chordID> > &matrix, int 
 		weight = itr->second[1];
 
 		// will hold last two signatures;
+		/*
 		if (n % 2 == 0)
 			sig1 = sig;
 		else
 			sig2 = sig;
+		*/
 
 		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
 		// convert multiset to set
@@ -433,33 +442,20 @@ lshchordID(vecomap teamvecomap, std::vector<std::vector<chordID> > &matrix, int 
 
 		calcteamids(minhash);
 
-		/*
-		matrix.push_back(minhash);
-		range = (int)minhash.size();
-		// randomness verified
-		randcol = randomNumGenZ(range-1);
-		//randcol = range / 2;
-		ID = (matrix.back())[randcol];
-		warnx << "ID in randcol " << randcol << ": " << ID << "\n";
-		buckets.push_back(ID);
-		*/
-	
-		if (gflag == 1 && msgtype != INVALID) {
-		std::vector<chordID> team;
-		chordID teamID;
-		team.clear();
-		for (int i = 0; i < (int)minhash.size(); i++) {
-			teamID = minhash[i];
-			warnx << "teamID: " << teamID << "\n";
-			// TODO: check return status
-			make_team(NULL, teamID, team);
-			range = team.size();
-			// randomness verified
-			randcol = randomNumGenZ(range-1);
-			ID = team[randcol];
-			//ID = (matrix.back())[randcol];
-			warnx << "ID in randcol " << randcol << ": " << ID << "\n";
-			if (gflag == 1 && msgtype != INVALID) {
+		if ((Qflag == 1 || gflag == 1) && msgtype != INVALID) {
+			std::vector<chordID> team;
+			chordID teamID;
+			team.clear();
+			for (int i = 0; i < (int)minhash.size(); i++) {
+				teamID = minhash[i];
+				warnx << "teamID: " << teamID << "\n";
+				// TODO: check return status
+				make_team(NULL, teamID, team);
+				range = team.size();
+				// randomness verified
+				randcol = randomNumGenZ(range-1);
+				ID = team[randcol];
+				warnx << "ID in randcol " << randcol << ": " << ID << "\n";
 				strbuf t;
 				strbuf p;
 				t << ID;
@@ -480,16 +476,14 @@ lshchordID(vecomap teamvecomap, std::vector<std::vector<chordID> > &matrix, int 
 				}
 
 				// TODO: how long (if at all)?
-				//sleep(intval);
-				warnx << "sleeping (lsh)...\n";
+				//warnx << "sleeping (lsh)...\n";
 
-				initsleep = 0;
-				delaycb(intval, 0, wrap(initsleepnow));
-				while (initsleep == 0) acheck();
+				//initsleep = 0;
+				//delaycb(intval, 0, wrap(initsleepnow));
+				//while (initsleep == 0) acheck();
 			}
 			// don't forget to clear team list!
 			team.clear();
-		}
 		}
 		// needed?
 		minhash.clear();
@@ -523,7 +517,7 @@ lshchordID(vecomap teamvecomap, std::vector<std::vector<chordID> > &matrix, int 
 	}
 	*/
 
-	if (plist == 1) printteamids();
+	if (plist == 1) printteamidfreq();
 
 	return 0;
 }
@@ -614,8 +608,8 @@ lshpoly(vecomap teamvecomap, std::vector<std::vector<POLY> > &matrix, int intval
 	}
 	return 0;
 }
-//
-// TODO: verify
+
+// obsolete: use lshchordID instead
 int
 querychordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, InsertType msgtype = INVALID, int listnum = 0, int col = 0)
 {
@@ -645,9 +639,13 @@ querychordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, Insert
 			minhash = myLSH->getHashCode(sig);
 		}
 
-		matrix.push_back(minhash);
+		//matrix.push_back(minhash);
 
 		if (msgtype != INVALID) {
+			std::vector<chordID> team;
+			chordID teamID;
+			team.clear();
+
 			int range = (int)minhash.size();
 			// randomness verified
 			int randcol = randomNumGenZ(range-1);
@@ -686,8 +684,8 @@ querychordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, Insert
 int
 main(int argc, char *argv[])
 {
-	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag, Qflag;
-	int ch, gintval, initintval, waitintval, nids, valLen, logfd, tix;
+	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag;
+	int ch, gintval, initintval, waitintval, nids, valLen, logfd, nlists;
 	double beginTime, endTime;
 	char *value;
 	struct stat statbuf;
@@ -704,18 +702,18 @@ main(int argc, char *argv[])
 	std::vector<std::vector<POLY> > sigList;
 	std::vector<POLY> sig;
 
-	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = xflag = Qflag = 0;
-
-	gintval = waitintval = nids = 0;
+	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = xflag = 0;
+	gintval = waitintval = nids = nlists = 0;
 	initintval = -1;
 	rxseq.clear();
 	txseq.clear();
-	// init or txseq.back() segfaults!
+	// init txseq: txseq.back() segfaults!
 	txseq.push_back(0);
-	// init dummysig!
+	// init dummysig: segfault!
 	dummysig.clear();
 	dummysig.push_back(1);
 
+	// parse arguments
 	while ((ch = getopt(argc, argv, "B:cD:d:EF:G:gHhIj:L:lMmn:P:pQq:R:rS:s:T:t:uvw:X:x:Z:z")) != -1)
 		switch(ch) {
 		case 'B':
@@ -836,6 +834,7 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
+	// print version
 	if (vflag == 1) {
 		warnx << "rcsid: " << rcsid << "\n";
 		exit(0);
@@ -849,15 +848,15 @@ main(int argc, char *argv[])
 	gettimeofday(&tv, NULL);
 	loseed = ((long)tv.tv_sec + (long)tv.tv_usec) / (long)getpid();
 	//warnx << "loseed: " << loseed << "\n";
-
 	srandom(loseed);
+
+	// generate random chordIDs and -Z teams for each chordID
 	if (zflag == 1 && nids != 0) {
 		std::vector<chordID> IDs;
-		warnx << "unsorted IDs:\n";
 		for (int i = 0; i < nids; i++) {
 			strbuf t;
 			ID = make_randomID();
-			warnx << "ID: " << ID << "\n";
+			//warnx << "ID: " << ID << "\n";
 			IDs.push_back(ID);
 		}
 		sort(IDs.begin(), IDs.end());
@@ -865,7 +864,7 @@ main(int argc, char *argv[])
 		for (int i = 0; i < (int)IDs.size(); i++) {
 			warnx << "ID: " << IDs[i] << "\n";
 		}
-		warnx << "\n";
+		warnx << "teams:\n";
 		for (int i = 0; i < (int)IDs.size(); i++) {
 			warnx << "team_" << i << ":\n";
 			make_team(NULL, IDs[i], team);
@@ -903,19 +902,23 @@ main(int argc, char *argv[])
 	// sigs are required when listening or reading
 	if ((lflag == 1 || rflag == 1) && sflag == 0) usage();
 
+	// set up log file: log.gpsi
 	if (Lflag == 1) {
-		// overwrite existing file
+		// overwrite existing log file
 		logfd = open(logfile, O_CREAT|O_WRONLY|O_TRUNC, 0644);
 		if (logfd < 0) fatal << "can't open log file " << logfile << "\n";
 		lseek(logfd, 0, SEEK_END);
 		errfd = logfd;
 	}
 
+	// set up init phase file: log.init
 	FILE *initfp = NULL;
 	std::string acc;
 	if (Pflag == 1) {
+		// overwrite in init phase or reading
 		if (Iflag == 1 || rflag == 1)
 			acc = "w+";
+		// read-only in exec phase
 		else
 			acc = "r";
 
@@ -924,8 +927,8 @@ main(int argc, char *argv[])
 		}
 	}
 
-	// copied from psi.C
-	// read XPath query in memory
+	// TODO: read XPath query in memory
+	// (copied from psi.C)
 	if (Qflag == 1 && xflag == 1) {
 		if (stat(xpathfile, &statbuf) != 0)
 			fatal << "'" << xpathfile << "' does not exist" << "\n";
@@ -1036,6 +1039,7 @@ main(int argc, char *argv[])
 		// TODO: verify
 	}
 
+	// set up hash file: hash.dat
 	FILE *hashfp = NULL;
 	if (Fflag == 1) {
 		// init phase OR
@@ -1076,7 +1080,8 @@ main(int argc, char *argv[])
 				fprintf(hashfp, "%d\n", hashb[i]);
 			}
 			fclose(hashfp);
-		// exec phase
+		// exec phase OR
+		// querying?
 		} else {
 			//acc = "r";
 			//if ((hashfp = fopen(hashfile, acc.c_str())) == NULL) {
@@ -1106,6 +1111,7 @@ main(int argc, char *argv[])
 		}
 	}
 
+	// load irrpoly.dat polys in memory
 	if (jflag == 1) {
 		if (stat(irrpolyfile, &statbuf) != 0)
 			fatal << "'" << irrpolyfile << "' does not exist" << "\n";
@@ -1120,12 +1126,14 @@ main(int argc, char *argv[])
                 polystream.close();
 	}
 
+	// connect to Chord socket when: listening, gossiping, querying
 	if (gflag == 1 || lflag == 1 || Qflag == 1) {
 		if (stat(dsock, &statbuf) != 0)
 			fatal << "'" << dsock << "' does not exist" << "\n";
 		dhash = New dhashclient(dsock);
 	}
 
+	// read signatures in memory
 	if ((rflag == 1 || gflag == 1 || Hflag == 1 || lflag == 1 || Qflag == 1) && sflag == 1) {
 		getdir(sigdir, sigfiles);
 		sigList.clear();
@@ -1176,16 +1184,17 @@ main(int argc, char *argv[])
 	warnx << "loseed: " << loseed << "\n";
 	warnx << "mgroups: " << mgroups << "\n";
 	warnx << "lfuncs: " << lfuncs << "\n";
+	warnx << "teamsize: " << teamsize << "\n";
 	std::vector<std::vector<POLY> > pmatrix;
-	std::vector<std::vector<chordID> > cmatrix;
 
+	// listen
 	if (gflag == 1 || lflag == 1) {
 		warnx << "listening for gossip...\n";
 		listengossip();		
 		//sleep(5);
 	}
 
-	// XGossip+ init phase
+	// XGossip init phase and "action H" (not gossiping)
 	if (Hflag == 1 && Iflag == 1) {
 		warnx << "initgossipsend...\n";
 		warnx << "init interval: " << initintval << "\n";
@@ -1201,30 +1210,27 @@ main(int argc, char *argv[])
 			pmatrix.clear();
 		// InitGossipSend: use compute_hash()
 		} else {
-			lshchordID(allT, cmatrix, initintval, INITGOSSIP);
-			cmatrix.clear();
+			lshchordID(allT, initintval, INITGOSSIP);
 		}
 
 		endTime = getgtod();    
-		printdouble("xgossip+ init phase time: ", endTime - beginTime);
+		printdouble("xgossip init phase time: ", endTime - beginTime);
 		warnx << "\n";
 
 		if (gflag == 1) {
 			warnx << "wait interval: " << waitintval << "\n";
 			warnx << "waiting for all peers to finish init phase...\n";
 
-			//sleep(waitintval);
 			waitsleep = 0;
 			delaycb(waitintval, 0, wrap(waitsleepnow));
 			while (waitsleep == 0) acheck();
 
+			printteamids();
 			warnx << "writing " << initfile << "...\n";
 			loginitstate(initfp);
 			fclose(initfp);
 			if (plist == 1) {
-				for (int i = 0; i < (int)totalT.size(); i++) {
-					printlist(totalT[i], 0, -1);
-				}
+				printlistall();
 			}
 			warnx << "openfd: " << openfd << "\n";
 			warnx << "closefd: " << closefd << "\n";
@@ -1234,15 +1240,17 @@ main(int argc, char *argv[])
 		initphase = 0;
 	}
 
-	// XGossip exec phase
+	// VanillaXGossip exec phase
 	if (gflag == 1 && Hflag == 0) {
-		warnx << "xgossip exec...\n";
+		warnx << "vanillaxgossip exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
 
 		// from now on, work only with totalT
 		totalT.push_back(allT);
 
 		srandom(loseed);
+
+		// gossip indefinitely
 		while (1) {
 			ID = make_randomID();
 			strbuf z;
@@ -1251,20 +1259,17 @@ main(int argc, char *argv[])
 			beginTime = getgtod();    
 			// store everything in totalT[0]
 			mergelists(totalT[0]);
-			//mergelists(allT);
 			endTime = getgtod();    
 			printdouble("merge lists time: ", endTime - beginTime);
 			warnx << "\n";
-			warnx << "inserting XGOSSIP:\n"
+			warnx << "inserting VXGOSSIP:\n"
 			      << "txseq: " << txseq.back()
 			      << " txID: " << ID << "\n";
 			if (plist == 1) {
 				printlist(totalT[0], 0, txseq.back());
-				//printlist(allT, 0, txseq.back());
 			}
 			// after merging, everything is stored in totalT[0][0]
-			makeKeyValue(&value, valLen, key, key, totalT[0][0], txseq.back(), XGOSSIP);
-			//makeKeyValue(&value, valLen, key, key, allT[0], txseq.back(), XGOSSIP);
+			makeKeyValue(&value, valLen, key, key, totalT[0][0], txseq.back(), VXGOSSIP);
 			status = insertDHT(ID, value, valLen, MAXRETRIES);
 			cleanup(value);
 
@@ -1274,7 +1279,6 @@ main(int argc, char *argv[])
 				// to preserve mass conservation:
 				// "send" msg to yourself (double freq)
 				multiplyfreq(totalT[0], 0, 2, 2);
-				//doublefreq(allT, 0);
 			} else {
 				warnx << "insert SUCCeeded\n";
 			}
@@ -1285,28 +1289,14 @@ main(int argc, char *argv[])
 			delaycb(gintval, 0, wrap(gossipsleepnow));
 			while (gossipsleep == 0) acheck();
 		}
-	// XGossip+ exec phase
+	// XGossip exec phase
 	} else if (Hflag == 1 && Eflag == 1) {
+		// load sigs and teams from log.init into memory
 		if (Pflag == 1) {
 			warnx << "state: loading from init file...\n";
 			loadinitstate(initfp);
 			if (plist == 1) {
-				teamid2totalT::iterator teamitr = teamindex.begin();
-				for (int i = 0; i < (int)totalT.size(); i++) {
-					// TODO: need assert?
-					//assert(teamitr == teamindex.end());
-					if (teamitr == teamindex.end()) {
-						warnx << "teamindex < totalT at i=" << i
-						      << " : " << teamindex.size()
-						      << " < " << totalT.size() << "\n";
-						break;
-					}
-					teamID = teamitr->first;
-					tix = teamitr->second;
-					warnx << "teamID(i=" << i << ",tix=" << tix << "): " << teamID << "\n";
-					printlist(totalT[i], 0, -1);
-					++teamitr;
-				}
+				printlistall();
 			}
 		} else if (sflag == 1) {
 			warnx << "state: signature files\n";
@@ -1316,16 +1306,16 @@ main(int argc, char *argv[])
 			warnx << "state: init phase\n";
 		}
 
-		warnx << "xgossip+ exec...\n";
+		warnx << "xgossip exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
 		warnx << "exec ctime: " << ctime(&rawtime);
 		warnx << "exec sincepoch: " << time(&rawtime) << "\n";
 
-		// xgossip+ sigs grouped by lsh chordid/poly
-		//vecomap groupedT;
 
 		// needed?
 		//srandom(loseed);
+
+		// gossip indefinitely
 		while (1) {
 			beginTime = getgtod();    
 			warnx << "totalT.size(): " << totalT.size() << "\n";
@@ -1338,95 +1328,25 @@ main(int argc, char *argv[])
 			warnx << "\n";
 			//delspecial(0);
 			if (plist == 1) {
-				teamid2totalT::iterator teamitr = teamindex.begin();
-				for (int i = 0; i < (int)totalT.size(); i++) {
-					// TODO: need assert?
-					//assert(teamitr == teamindex.end());
-					if (teamitr == teamindex.end()) {
-						warnx << "teamindex < totalT at i=" << i
-						      << " : " << teamindex.size()
-						      << " < " << totalT.size() << "\n";
-						break;
-					}
-					teamID = teamitr->first;
-					warnx << "teamID(" << i << "): " << teamID << "\n";
-					printlist(totalT[i], 0, txseq.back());
-					++teamitr;
-				}
+				printlistall();
 			}
 
-			//srand(loseed);
-			// TODO: the same as minhash.size()?
-			//int range = mgroups;
-			//int randcol = int((double)range * rand() / (RAND_MAX + 1.0));
-			// TODO: verify randomness
-			//int randcol = randomNumGenZ(range-1);
-			// TODO: use findMod()
 			if (mflag == 1) {
 				fatal << "not implemented\n";
-				/*
-				// don't send anything
-				//lshpoly(0, pmatrix, 0, -1, randcol);
-				lshpoly(pmatrix);
-				poly2sig polyindex;
-				warnx << "pmatrix.size(): " << pmatrix.size() << "\n";
-				warnx << "POLYs in random column " << randcol << ":\n";
-				for (int i = 0; i < (int)pmatrix.size(); i++) {
-					warnx << pmatrix[i][randcol] << "\n";;
-					// store index of signature associated with POLY
-					polyindex[pmatrix[i][randcol]].push_back(i);
-				}
-				warnx << "POLY: [sig indices].size()\n";
-				for (poly2sig::iterator itr = polyindex.begin();
-				     itr != polyindex.end(); itr++) {
-					warnx << itr->first << ": " << itr->second.size() << "\n";
-				}
-				pmatrix.clear();
-				*/
 			// use compute_hash()
 			} else {
-				teamid2totalT::iterator teamitr = teamindex.begin();
 				for (int i = 0; i < (int)totalT.size(); i++) {
-					/*
-					beginTime = getgtod();    
-					warnx << "running lshchordID...\n";
-					//lshchordID(cmatrix, -1, INVALID, 0, randcol);
-					lshchordID(totalT[i], cmatrix);
-					endTime = getgtod();    
-					printdouble("lshchordID time: ", endTime - beginTime);
-					warnx << "\n";
-					chordID2sig idindex;
-					warnx << "cmatrix.size(): " << cmatrix.size() << "\n";
-					warnx << "cmatrix[0].size(): " << cmatrix[0].size() << "\n";
-					warnx << "IDs in random column " << randcol << ":\n";
-					*/
-
 					// TODO: needed?
 					if (gflag == 1) {
-						warnx << "inserting XGOSSIPP:\n"
+						warnx << "inserting XGOSSIP:\n"
 						      << "txseq: " << txseq.back() << "\n";
 
-						// TODO: need assert?
-						//assert(teamitr == teamindex.end());
-						if (teamitr == teamindex.end()) {
-							warnx << "teamindex < totalT at i=" << i
-							      << " : " << teamindex.size()
-							      << " < " << totalT.size() << "\n";
-							break;
+						teamID = findteamid(i);
+						if (teamID == NULL) {
+							warnx << "xgossip: teamID is NULL\n";
+							continue;
 						}
-						teamID = teamitr->first;
 						warnx << "teamID(" << i << "): " << teamID << "\n";
-
-						/*
-						// TODO: inefficient?
-						// get teamID for this totalT[i]
-						for (teamid2totalT::iterator itr = teamindex.begin(); itr != teamindex.end(); itr++) {
-							if (itr->second == i) {
-								teamID = itr->first;
-								warnx << "teamID: " << teamID << "\n";
-							}
-						}
-						*/
 
 						// TODO: check return status
 						make_team(NULL, teamID, team);
@@ -1444,7 +1364,7 @@ main(int argc, char *argv[])
 						str key(t);
 						str teamID(p);
 						warnx << "txID: " << ID << "\n";
-						makeKeyValue(&value, valLen, key, teamID, totalT[i][0], txseq.back(), XGOSSIPP);
+						makeKeyValue(&value, valLen, key, teamID, totalT[i][0], txseq.back(), XGOSSIP);
 						status = insertDHT(ID, value, valLen, MAXRETRIES);
 						cleanup(value);
 						// don't forget to clear team list!
@@ -1469,159 +1389,24 @@ main(int argc, char *argv[])
 					} else {
 						return 0;
 					}
-					++teamitr;
 				}
 				txseq.push_back(txseq.back() + 1);
-				//cmatrix.clear();
-				// CLEAR ME!
-				//groupedT.clear();
-				warnx << "sleeping (xgossip+)...\n";
-				//sleep(gintval);
+				warnx << "sleeping (xgossip)...\n";
 				gossipsleep = 0;
 				delaycb(gintval, 0, wrap(gossipsleepnow));
 				while (gossipsleep == 0) acheck();
-
-				/* old algorithm
-				//col = 0;
-				for (int i = 0; i < (int)cmatrix.size(); i++) {
-					//for (int j = 0; j < (int)cmatrix[i].size(); j++) {
-					//	warnx << cmatrix[i][j] << " ";
-					//}
-					//warnx << "\n";
-					//warnx << cmatrix[i][randcol] << "\n";
-					// store index of signature associated with chordID
-					idindex[cmatrix[i][randcol]].push_back(i);
-					//idindex[cmatrix[i][0]].push_back(i);
-					//chordID2sig::iterator itr = idindex.find(matrix[i][randcol]);
-					//if (itr != idindex.end()) {
-					//	itr->second[0] += 1;
-					//} else {
-						// store index of signature associated with chordID
-						//idindex[matrix[i][randcol]].push_back(i);
-					//}
-
-				}
-				warnx << "idindex.size(): " << idindex.size() << "\n";
-				warnx << "ID: sigs-per-id sigs-indices\n";
-				int uniqueids = 0;
-				for (chordID2sig::iterator itr = idindex.begin();
-				     itr != idindex.end(); itr++) {
-					uniqueids += itr->second.size();
-					warnx << itr->first << ": " << itr->second.size();
-					if (itr->second.size() > 1) {
-						for (int i = 0; i < (int)itr->second.size(); i++) {
-							warnx << " " << itr->second[i];
-						}
-						warnx << "\n";
-					} else {
-						warnx << " " << itr->second[0] << "\n";
-					}
-
-					// create a map for each chordID
-					mapType groupbyid;
-					//warnx << "groupbyid:\n";
-					for (int i = 0; i < (int)itr->second.size(); i++) {
-						mapType::iterator j = allT[0].begin();
-						// point to the nth map element (random access)
-						std::advance(j, itr->second[i]);
-						assert(j != allT[0].end());
-						//sig2str(j->first, sigbuf);
-						//warnx << "sig: " << sigbuf;
-						// copy freq and weight of sig
-						groupbyid[j->first].push_back(j->second[0]);
-						groupbyid[j->first].push_back(j->second[1]);
-						//printdouble(" ", j->second[0]);
-						//printdouble(" ", j->second[1]);
-						//warnx << "\n";
-					}
-					groupedT.push_back(groupbyid);
-
-				}
-				warnx << "uniqueids: " << uniqueids << "\n";
-				warnx << "groupedT.size(): " << groupedT.size() << "\n";
-
-				if (gflag == 1) {
-					warnx << "inserting XGOSSIPP:\n"
-					      << "txseq: " << txseq.back() << "\n";
-
-					chordID2sig::iterator itr = idindex.begin();
-					for (int i = 0; i < (int)groupedT.size(); i++) {
-						// end addresses the location succeeding the last element 
-						// in a map (not the last element itself)
-						if (itr == idindex.end()) {
-							warnx << "idindex ended\n";
-							break;
-						}
-						//warnx << "groupedT[" << i << "]:\n";
-						//double freq, weight;
-						//for (mapType::iterator jitr = groupedT[i].begin(); jitr != groupedT[i].end(); jitr++) {
-							//sig = jitr->first;
-							//freq = jitr->second[0];
-							//weight = jitr->second[1];
-							//sig2str(sig, sigbuf);
-							//warnx << "sig: " << sigbuf;
-							//printdouble(" ", freq);
-							//printdouble(" ", weight);
-							//warnx << "\n";
-						//}
-						ID = itr->first;
-						strbuf z;
-						z << ID;
-						str key(z);
-						warnx << "txID: " << ID << "\n";
-
-						makeKeyValue(&value, valLen, key, groupedT[i], txseq.back(), XGOSSIPP);
-
-						status = insertDHT(ID, value, valLen, MAXRETRIES);
-						cleanup(value);
-
-						// do not exit if insert FAILs!
-						if (status != SUCC) {
-							warnx << "error: insert FAILed\n";
-							// to preserve mass conservation:
-							// "send" msg to yourself
-							doublefreqgroup(0, groupedT[i]);
-						} else {
-							warnx << "insert SUCCeeded\n";
-						}
-
-						++itr;
-
-						warnx << "sleeping (groups)...\n";
-						//sleep(initintval);
-						groupsleep = 0;
-						delaycb(initintval, 0, wrap(groupsleepnow));
-						while (groupsleep == 0) acheck();
-					}
-					txseq.push_back(txseq.back() + 1);
-					cmatrix.clear();
-					// CLEAR ME!
-					groupedT.clear();
-					warnx << "sleeping (xgossip+)...\n";
-					//sleep(gintval);
-					gossipsleep = 0;
-					delaycb(gintval, 0, wrap(gossipsleepnow));
-					while (gossipsleep == 0) acheck();
-				} else {
-					return 0;
-				}
-				*/
 			}
 		}
 	} else if (Qflag == 1) {
-		std::vector<std::vector<chordID> > cmatrix;
-		cmatrix.clear();
 		initintval = 1;
 		warnx << "querying ";
 		beginTime = getgtod();
 		if (xflag == 1) {
 			warnx << "using xpath...\n";
-			querychordID(cmatrix, initintval, QUERYX);
-			cmatrix.clear();
+			lshchordID(allT, initintval, QUERYX);
 		} else {
 			warnx << "using sig...\n";
-			querychordID(cmatrix, initintval, QUERYS);
-			cmatrix.clear();
+			lshchordID(allT, initintval, QUERYS);
 		}
 		endTime = getgtod();    
 		printdouble("query time: ", endTime - beginTime - initintval);
@@ -1634,15 +1419,23 @@ main(int argc, char *argv[])
 		acc = "r";
 		warnx << "loading lists from files...\n";
 		for (unsigned int i = 0; i < initfiles.size(); i++) {
+			warnx << "file: " << initfiles[i].c_str() << "\n";
 			if ((initfp = fopen(initfiles[i].c_str(), acc.c_str())) == NULL) {
 				warnx << "can't open init file" << initfiles[i].c_str() << "\n";
 				continue;
 			}
-			loadinitstate(initfp);
+			nlists += loadinitstate(initfp);
 			fclose(initfp);
 		}
 		beginTime = getgtod();    
+		warnx << "total lists/teams added: " << nlists << "\n";
 		warnx << "totalT.size(): " << totalT.size() << "\n";
+		if (plist == 1) {
+			warnx << "teamids (before merging)\n";
+			printteamids();
+			warnx << "lists (before merging)\n";
+			printlistall();
+		}
 		for (int i = 0; i < (int)totalT.size(); i++) {
 			mergelists(totalT[i]);
 		}
@@ -1650,9 +1443,10 @@ main(int argc, char *argv[])
 		printdouble("merge lists time: ", endTime - beginTime);
 		warnx << "\n";
 		if (plist == 1) {
-			for (int i = 0; i < (int)totalT.size(); i++) {
-				printlist(totalT[i], 0, -1);
-			}
+			warnx << "teamids (after merging)\n";
+			printteamids();
+			warnx << "lists (after merging)\n";
+			printlistall();
 		}
 		return 0;
 	// don't exit if listening
@@ -1903,7 +1697,7 @@ acceptconn(int lfd)
 	fdcb(cs, selread, wrap(readgossip, cs));
 }
 
-// TODO: verify xgossip+ part
+// TODO: verify xgossip part
 void
 readgossip(int fd)
 {
@@ -1920,7 +1714,7 @@ readgossip(int fd)
 	InsertType msgtype;
 	std::vector<POLY> sig;
 	double freq, weight;
-	int n, msglen, recvlen, nothing;
+	int n, msglen, recvlen, nothing, tind;
 	int ret, seq;
 
 	msglen = recvlen = nothing = 0;
@@ -1982,16 +1776,16 @@ readgossip(int fd)
 
 	msgtype = getKeyValueType(gmsg.cstr());
 	warnx << " type: ";
-	if (msgtype == XGOSSIP || msgtype == XGOSSIPP) {
+	if (msgtype == VXGOSSIP || msgtype == XGOSSIP) {
 		// discard msg if in init phase
 		if (initphase == 1) {
 			warnx << "warning: phase=init, msgtype=" << msgtype << "\n";
 			warnx << "warning: msg discarded\n";
 			return;
-		} else if (msgtype == XGOSSIP) {
-			warnx << "XGOSSIP";
+		} else if (msgtype == VXGOSSIP) {
+			warnx << "VXGOSSIP";
 		} else {
-			warnx << "XGOSSIPP";
+			warnx << "XGOSSIP";
 		}
 
 		ret = getKeyValue(gmsg.cstr(), key, keyteamid, sigList, freqList, weightList, seq, recvlen);
@@ -2008,7 +1802,7 @@ readgossip(int fd)
 		      << " txseq-cur: " << txseq.back()
 		      << " rxID: " << key;
 
-		if (msgtype == XGOSSIPP) warnx << " teamID: " << keyteamid;
+		if (msgtype == XGOSSIP) warnx << " teamID: " << keyteamid;
 
 		warnx  << "\n";
 
@@ -2049,7 +1843,7 @@ readgossip(int fd)
 
 		rxseq.push_back(seq);
 		str2chordID(keyteamid, teamID);
-		if (msgtype == XGOSSIP) {
+		if (msgtype == VXGOSSIP) {
 			add2vecomapv(sigList, freqList, weightList);
 		} else {
 			add2vecomapx(sigList, freqList, weightList, teamID);
@@ -2107,8 +1901,31 @@ readgossip(int fd)
 		warnx << " teamID: " << keyteamid << "\n";
 		sig2str(sig, sigbuf);
 		warnx << "sig: " << sigbuf << "\n";
-		warnx << "query result: ";
+		warnx << "query result:\n";
 
+		// find if list for team exists
+		str2chordID(keyteamid, teamID);
+		teamid2totalT::iterator teamitr = teamindex.find(teamID);
+		if (teamitr != teamindex.end()) {
+			tind = teamitr->second;
+			warnx << "teamID found at teamindex[" << tind << "]\n";
+			mapType::iterator sigitr = totalT[tind][0].find(sig);
+			if (sigitr != totalT[tind][0].end()) {
+				freq = sigitr->second[0];
+				weight = sigitr->second[1];
+				warnx << "sig found\n";
+				printdouble("f: ", freq);
+				printdouble(", w: ", weight);
+				printdouble(", avg: ", freq/weight);
+				warnx << "\n";
+			} else {
+				warnx << "sig NOT found\n";
+		}
+		} else {
+			warnx << "teamID NOT found\n";
+		}
+
+		/*
 		// TODO: search other lists (not yet merged) and for other sigs?
 		mapType::iterator itr = allT[0].find(sig);
 		if (itr != allT[0].end()) {
@@ -2122,6 +1939,7 @@ readgossip(int fd)
 		} else {
 			warnx << " NOT found\n";
 		}
+		*/
 	} else {
 		warnx << "error: invalid msgtype\n";
 	}
@@ -2133,7 +1951,7 @@ readgossip(int fd)
 	++closefd;
 }
 
-void
+int
 loadinitstate(FILE *initfp)
 {
 	mapType uniqueSigList;
@@ -2189,10 +2007,46 @@ loadinitstate(FILE *initfp)
 
 	if (line) free(line);
 	warnx << "loadinitstate: teams added: " << n << "\n";
+
+	return n;
 }
 
 void
 loginitstate(FILE *initfp)
+{
+	std::vector<POLY> sig;
+	sig.clear();
+	str sigbuf;
+	chordID ID;
+	// merged list is first
+	int listnum = 0;
+	double freq, weight;
+
+	for (int i = 0; i < (int)totalT.size(); i++) {
+		ID = findteamid(i);
+		if (ID == NULL) {
+			warnx << "loginitstate: teamID is NULL\n";
+			continue;
+		}
+		strbuf z;
+		z << ID;
+		str teamID(z);
+		fprintf(initfp, "index:%d:listsize:%d:teamID:%s\n", i, totalT[i][listnum].size(), teamID.cstr());
+		for (mapType::iterator itr = totalT[i][listnum].begin();
+		     itr != totalT[i][listnum].end(); itr++) {
+			sig = itr->first;
+			freq = itr->second[0];
+			weight = itr->second[1];
+			sig2str(sig, sigbuf);
+			fprintf(initfp, "%s:", sigbuf.cstr());
+			fprintf(initfp, "%f:", freq);
+			fprintf(initfp, "%f\n", weight);
+		}
+	}
+}
+
+void
+loginitstateold(FILE *initfp)
 {
 	std::vector<POLY> sig;
 	sig.clear();
@@ -2482,6 +2336,7 @@ informteam(chordID myID, chordID teamID, std::vector<POLY> sig)
 	}
 }
 
+// add teamIDs generated by LSH to teamidminhash
 void
 calcteamids(std::vector<chordID> minhash)
 {
@@ -2490,13 +2345,28 @@ calcteamids(std::vector<chordID> minhash)
 	for (int i = 0; i < (int)minhash.size(); i++) {
 		teamitr = teamidminhash.find(minhash[i]);
 		if (teamitr != teamidminhash.end()) {
-			//warnx << "teamID found in teamidminhash\n";
+			warnx << "teamID found in teamidminhash\n";
 			teamitr->second += 1;
 		} else {
-			//warnx << "teamID NOT found in teamidminhash\n";
+			warnx << "teamID NOT found in teamidminhash\n";
 			teamidminhash[minhash[i]] = 1;
 		}
 	}
+}
+
+// find teamID of totalT[tix]
+// TODO: inefficient?
+chordID
+findteamid(int tix)
+{
+	teamid2totalT::iterator itr;
+	for (itr = teamindex.begin(); itr != teamindex.end(); itr++) {
+		if (itr->second == tix) {
+			return itr->first;
+		}
+	}
+	
+	return NULL;
 }
 
 // return -1 if myID is not in team
@@ -2659,7 +2529,7 @@ calcfreqM(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList,
 	warnx << "calcfreqM: Size of unique sig list: " << allT[0].size() << "\n";
 }
 
-// xgossip(+)
+// xgossip
 void
 add2vecomapx(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList, std::vector<double> weightList, chordID teamID)
 {
@@ -2695,7 +2565,7 @@ add2vecomapx(std::vector<std::vector<POLY> > sigList, std::vector<double> freqLi
 	warnx << "totalT[tind].size(): " << totalT[tind].size() << "\n";
 }
 
-// vanilla gossip
+// vanillaxgossip
 void
 add2vecomapv(std::vector<std::vector<POLY> > sigList, std::vector<double> freqList, std::vector<double> weightList)
 {
@@ -3367,9 +3237,9 @@ printdouble(std::string fmt, double num)
 }
 
 void
-printteamids()
+printteamidfreq()
 {
-	warnx << "printteamds:\n";
+	warnx << "printteamidfreq:\n";
 
 	for (teamidfreq::iterator itr = teamidminhash.begin(); itr != teamidminhash.end(); itr++) {
 		warnx << "teamID: " << itr->first;
@@ -3377,6 +3247,36 @@ printteamids()
 		warnx << "\n";
 	}
 	warnx << "teamidminhash.size(): " << teamidminhash.size() << "\n";
+}
+
+void
+printteamids()
+{
+	warnx << "printteamids:\n";
+
+	for (teamid2totalT::iterator itr = teamindex.begin(); itr != teamindex.end(); itr++) {
+		warnx << "teamID: " << itr->first;
+		warnx << " tix: " << itr->second;
+		warnx << "\n";
+	}
+	warnx << "teamindex.size(): " << teamindex.size() << "\n";
+}
+
+// print all lists and teamIDs
+void
+printlistall()
+{
+	chordID teamID;
+
+	for (int i = 0; i < (int)totalT.size(); i++) {
+		teamID = findteamid(i);
+		if (teamID == NULL) {
+			warnx << "printlistall: teamID is NULL\n";
+			continue;
+		}
+		warnx << "teamID(i=" << i << "): " << teamID << "\n";
+		printlist(totalT[i], 0, -1);
+	}
 }
 
 void
@@ -3461,9 +3361,9 @@ usage(void)
 	warn << "\t" << __progname << " -H -I -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -u -p\n\n";
 	warn << "Generate init file for sigdir:\n";
 	warn << "\t" << __progname << " -r -s sigdir -P initfile\n\n";
-	warn << "Vanilla Gossip:\n";
+	warn << "VanillaXGossip:\n";
 	warn << "\t" << __progname << " -S dhash-sock -G g-sock -L log.gpsi -s sigdir -g -t 120 -q 165 -p\n\n";
-	warn << "XGossip+:\n";
+	warn << "XGossip:\n";
 	warn << "\t" << __progname << " -S dhash-sock -G g-sock -L log.gpsi -s sigdir -g -t 120 -T 1 -w 900\n"
 	     << "\t     -H -d 1122941 -j irrpoly-deg9.dat -u -B 50 -R 10 -I -E -P initfile -p\n\n";
 	warn << "Options:\n"
@@ -3471,39 +3371,39 @@ usage(void)
 	     << "	-c		discard out-of-round messages\n"
 	     << "	-D		<dir with init files>\n"
 	     << "	-d		<random prime number for LSH seed>\n"
-	     << "	-E		exec phase of XGossip+ (requires -H)\n"
+	     << "	-E		exec phase of XGossip (requires -H)\n"
 	     << "      	-F		<hash funcs file>\n"
 	     << "	-G		<gossip socket>\n"
 	     << "	-H		generate chordIDs/POLYs using LSH when gossiping\n"
 					"\t\t\t(requires -g, -s, -d, -j, -I, -w, -F)\n"
-	     << "	-I		init phase of XGossip+ (requires -H)\n"
+	     << "	-I		init phase of XGossip (requires -H)\n"
 	     << "      	-j		<irrpoly file>\n"
 	     << "	-L		<log file>\n"
 	     << "      	-m		use findMod instead of compute_hash\n"
 					"\t\t\t(vector of POLYs instead of chordIDs)\n"
 	     << "      	-n		<how many>\n"
 	     << "      	-P		<init phase file>\n"
-					"\t\t\t(after XGossip+ init state is complete)\n"
+					"\t\t\t(after XGossip init state is complete)\n"
 	     << "      	-p		verbose (print list of signatures)\n"
 	     << "      	-q		<initial estimate of # of peers in DHT>\n"
 	     << "	-R		rows for LSH (a.k.a. l hash functions)\n"
 	     << "	-S		<dhash socket>\n"
 	     << "	-s		<dir with sigs>\n"
 	     << "      	-T		<how often>\n"
-					"\t\t\t(interval between inserts in XGossip+)\n"
+					"\t\t\t(interval between inserts in XGossip)\n"
 	     << "      	-t		<how often>\n"
 					"\t\t\t(gossip interval)\n"
 	     << "	-u		make POLYs unique (convert multiset to set)\n"
 	     << "      	-w		<how long>\n"
-					"\t\t\t(wait time after XGossip+ init phase is done)\n"
+					"\t\t\t(wait time after XGossip init phase is done)\n"
 	     << "	-X		<how many times>\n"
-					"(multiply freq of sigs by)\n"
+					"\t\t\t(multiply freq of sigs by)\n"
 	     << "	-x		<xpath file>\n"
 	     << "	-Z		<team size>\n\n"
 	     << "Actions:\n"
 	     << "	-g		gossip (requires -S, -G, -s, -t)\n"
 	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j, -F)\n"
-					"\t\t\t(XGossip+)\n"
+					"\t\t\t(XGossip)\n"
 	     << "	-C		calculate distance\n"
 	     << "	-l		listen for gossip (requires -S, -G, -s)\n"
 	     << "	-M		test mergelists(p) (requires -D)\n"
