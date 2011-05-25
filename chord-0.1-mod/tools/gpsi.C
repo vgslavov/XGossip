@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.73 2011/04/27 14:48:43 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.74 2011/05/23 06:55:29 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.73 2011/04/27 14:48:43 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.74 2011/05/23 06:55:29 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -80,7 +80,8 @@ typedef std::vector<vecomap> totalvecomap;
 totalvecomap totalT;
 
 // map teamID to team's list index in totalT
-typedef std::map<chordID, int> teamid2totalT;
+// (store index in [0], use more only for Mflag with multiple init files)
+typedef std::map<chordID, std::vector<int> > teamid2totalT;
 teamid2totalT teamindex;
 
 typedef std::map<chordID, int> teamidfreq;
@@ -1907,7 +1908,7 @@ readgossip(int fd)
 		str2chordID(keyteamid, teamID);
 		teamid2totalT::iterator teamitr = teamindex.find(teamID);
 		if (teamitr != teamindex.end()) {
-			tind = teamitr->second;
+			tind = teamitr->second[0];
 			warnx << "teamID found at teamindex[" << tind << "]\n";
 			mapType::iterator sigitr = totalT[tind][0].find(sig);
 			if (sigitr != totalT[tind][0].end()) {
@@ -1960,7 +1961,7 @@ loadinitstate(FILE *initfp)
 	std::vector<POLY> sig;
 	std::vector<std::string> tokens;
 	std::string linestr;
-	int tind;
+	int tind, tsize;
 	int n = 0;
 	char *line = NULL;
 	size_t len = 0;
@@ -1969,6 +1970,7 @@ loadinitstate(FILE *initfp)
 
 	uniqueSigList.clear();
 	tmpvecomap.clear();
+	tsize = totalT.size();
 	while ((read = getline(&line, &len, initfp)) != -1) {
 		linestr.clear();
 		linestr.assign(line);
@@ -1983,10 +1985,11 @@ loadinitstate(FILE *initfp)
 			std::string t = tokens[toksize-1].substr(0,tokens[toksize-1].size()-1);
 			str z(t.c_str());
 			str2chordID(z, teamID);
-			warnx << "teamID(" << tind << "): " << teamID << "\n";
-			teamindex[teamID] = tind;
+			warnx << "teamID(" << tind << ":" << tsize + tind << "): "
+			      << teamID << "\n";
+			teamindex[teamID].push_back(tsize + tind);
 			// done with previous team, add its vecomap
-			// (but don't do it for the very first index line
+			// (but don't do it for the very first index line)
 			if (n != 0) {
 				tmpvecomap.push_back(uniqueSigList);
 				totalT.push_back(tmpvecomap);
@@ -2042,44 +2045,6 @@ loginitstate(FILE *initfp)
 			fprintf(initfp, "%f:", freq);
 			fprintf(initfp, "%f\n", weight);
 		}
-	}
-}
-
-void
-loginitstateold(FILE *initfp)
-{
-	std::vector<POLY> sig;
-	sig.clear();
-	str sigbuf;
-	// merged list is first
-	int listnum = 0;
-	double freq, weight;
-
-	teamid2totalT::iterator teamitr = teamindex.begin();
-	for (int i = 0; i < (int)totalT.size(); i++) {
-		// TODO: need assert?
-		//assert(teamitr == teamindex.end());
-		if (teamitr == teamindex.end()) {
-			warnx << "teamindex < totalT at i=" << i
-			      << " : " << teamindex.size()
-			      << " < " << totalT.size() << "\n";
-			break;
-		}
-		strbuf z;
-		z << teamitr->first;
-		str teamID(z);
-		fprintf(initfp, "index:%d:listsize:%d:teamID:%s\n", i, totalT[i][listnum].size(), teamID.cstr());
-		for (mapType::iterator itr = totalT[i][listnum].begin();
-		     itr != totalT[i][listnum].end(); itr++) {
-			sig = itr->first;
-			freq = itr->second[0];
-			weight = itr->second[1];
-			sig2str(sig, sigbuf);
-			fprintf(initfp, "%s:", sigbuf.cstr());
-			fprintf(initfp, "%f:", freq);
-			fprintf(initfp, "%f\n", weight);
-		}
-		++teamitr;
 	}
 }
 
@@ -2233,13 +2198,13 @@ initgossiprecv(chordID ID, chordID teamID, std::vector<POLY> sig, double freq, d
 	teamid2totalT::iterator teamitr = teamindex.find(teamID);
 	if (teamitr != teamindex.end()) {
 		warnx << "teamID found\n";
-		tind = teamitr->second;
+		tind = teamitr->second[0];
 	} else {
 		warnx << "teamID NOT found: adding new vecomap\n";
 		warnx << "totalT.size() [before]: " << totalT.size() << "\n";
 		tind = totalT.size();
 		// don't add 1, since it's 0-based
-		teamindex[teamID] = tind;
+		teamindex[teamID].push_back(tind);
 		// ?
 		totalT.push_back(tmpveco);
 	}
@@ -2361,8 +2326,10 @@ findteamid(int tix)
 {
 	teamid2totalT::iterator itr;
 	for (itr = teamindex.begin(); itr != teamindex.end(); itr++) {
-		if (itr->second == tix) {
-			return itr->first;
+		for (int i = 0; i < (int)itr->second.size(); i++) {
+			if (itr->second[i] == tix) {
+				return itr->first;
+			}
 		}
 	}
 	
@@ -2547,7 +2514,7 @@ add2vecomapx(std::vector<std::vector<POLY> > sigList, std::vector<double> freqLi
 	// find if list for team exists
 	teamid2totalT::iterator teamitr = teamindex.find(teamID);
 	if (teamitr != teamindex.end()) {
-		tind = teamitr->second;
+		tind = teamitr->second[0];
 		warnx << "teamID found at teamindex[" << tind << "]\n";
 		totalT[tind].push_back(uniqueSigList);
 	} else {
@@ -2556,7 +2523,7 @@ add2vecomapx(std::vector<std::vector<POLY> > sigList, std::vector<double> freqLi
 		tmpvecomap.push_back(uniqueSigList);
 		totalT.push_back(tmpvecomap);
 		tind = totalT.size() - 1;
-		teamindex[teamID] = tind;
+		teamindex[teamID].push_back(tind);
 	}
 
 	warnx << "tind: " << tind << "\n";
@@ -3256,7 +3223,14 @@ printteamids()
 
 	for (teamid2totalT::iterator itr = teamindex.begin(); itr != teamindex.end(); itr++) {
 		warnx << "teamID: " << itr->first;
-		warnx << " tix: " << itr->second;
+		warnx << " tix: ";
+		if (itr->second.size() > 1) {
+			for (int i = 0; i < (int)itr->second.size(); i++) {
+				warnx << itr->second[i] << ", ";
+			}
+		} else {
+			warnx << itr->second[0];
+		}
 		warnx << "\n";
 	}
 	warnx << "teamindex.size(): " << teamindex.size() << "\n";
