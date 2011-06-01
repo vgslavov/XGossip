@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.74 2011/05/23 06:55:29 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.75 2011/05/25 02:52:00 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.74 2011/05/23 06:55:29 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.75 2011/05/25 02:52:00 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -118,8 +118,8 @@ void multiplyfreq(vecomap&, int, int, int);
 char *netstring_decode(FILE *);
 void netstring_encode(const char *, FILE *);
 void printdouble(std::string, double);
-void printlist(vecomap, int, int);
-void printlistall();
+int printlist(vecomap, int, int);
+int printlistall();
 void printteamids();
 void printteamidfreq();
 chordID randomID(void);
@@ -454,7 +454,8 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 				make_team(NULL, teamID, team);
 				range = team.size();
 				// randomness verified
-				randcol = randomNumGenZ(range-1);
+				//randcol = randomNumGenZ(range-1);
+				randcol = randomNumGenZ(range);
 				ID = team[randcol];
 				warnx << "ID in randcol " << randcol << ": " << ID << "\n";
 				strbuf t;
@@ -573,7 +574,7 @@ lshpoly(vecomap teamvecomap, std::vector<std::vector<POLY> > &matrix, int intval
 		matrix.push_back(minhash);
 		int range = (int)minhash.size();
 		// randomness verified
-		int randcol = randomNumGenZ(range-1);
+		int randcol = randomNumGenZ(range);
 		mypoly = (matrix.back())[randcol];
 		warnx << "POLY in randcol " << randcol << ": " << mypoly << "\n";
 
@@ -649,7 +650,7 @@ querychordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, Insert
 
 			int range = (int)minhash.size();
 			// randomness verified
-			int randcol = randomNumGenZ(range-1);
+			int randcol = randomNumGenZ(range);
 			ID = (matrix.back())[randcol];
 			//warnx << "ID in randcol " << randcol << ": " << ID << "\n";
 			strbuf t;
@@ -686,7 +687,7 @@ int
 main(int argc, char *argv[])
 {
 	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag;
-	int ch, gintval, initintval, waitintval, nids, valLen, logfd, nlists;
+	int ch, gintval, initintval, waitintval, nids, valLen, logfd;
 	double beginTime, endTime;
 	char *value;
 	struct stat statbuf;
@@ -704,7 +705,7 @@ main(int argc, char *argv[])
 	std::vector<POLY> sig;
 
 	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = xflag = 0;
-	gintval = waitintval = nids = nlists = 0;
+	gintval = waitintval = nids = 0;
 	initintval = -1;
 	rxseq.clear();
 	txseq.clear();
@@ -1353,7 +1354,7 @@ main(int argc, char *argv[])
 						make_team(NULL, teamID, team);
 						int range = team.size();
 						// randomness verified
-						int randcol = randomNumGenZ(range-1);
+						int randcol = randomNumGenZ(range);
 						ID = team[randcol];
 						// TODO: check if p is succ(ID)
 						//ID = (matrix.back())[randcol];
@@ -1418,6 +1419,9 @@ main(int argc, char *argv[])
 		warnx << "testing merging...\n";
 		getdir(initdir, initfiles);
 		acc = "r";
+		int nlists = 0;
+		int zerofiles = 0;
+		int totallists = 0;
 		warnx << "loading lists from files...\n";
 		for (unsigned int i = 0; i < initfiles.size(); i++) {
 			warnx << "file: " << initfiles[i].c_str() << "\n";
@@ -1425,11 +1429,14 @@ main(int argc, char *argv[])
 				warnx << "can't open init file" << initfiles[i].c_str() << "\n";
 				continue;
 			}
-			nlists += loadinitstate(initfp);
+			nlists = loadinitstate(initfp);
+			if (nlists == 0) ++zerofiles;
+			totallists += nlists;
 			fclose(initfp);
 		}
 		beginTime = getgtod();    
-		warnx << "total lists/teams added: " << nlists << "\n";
+		warnx << "total lists added: " << totallists << "\n";
+		warnx << "total 0-sized init files: " << zerofiles << "\n";
 		warnx << "totalT.size(): " << totalT.size() << "\n";
 		if (plist == 1) {
 			warnx << "teamids (before merging)\n";
@@ -1443,12 +1450,14 @@ main(int argc, char *argv[])
 		endTime = getgtod();    
 		printdouble("merge lists time: ", endTime - beginTime);
 		warnx << "\n";
+		/*
 		if (plist == 1) {
 			warnx << "teamids (after merging)\n";
 			printteamids();
 			warnx << "lists (after merging)\n";
 			printlistall();
 		}
+		*/
 		return 0;
 	// don't exit if listening
 	} else if (lflag == 1) {
@@ -2005,8 +2014,11 @@ loadinitstate(FILE *initfp)
 		uniqueSigList[sig].push_back(freq);
 		uniqueSigList[sig].push_back(weight);
 	}
-	tmpvecomap.push_back(uniqueSigList);
-	totalT.push_back(tmpvecomap);
+
+	if (n != 0) {
+		tmpvecomap.push_back(uniqueSigList);
+		totalT.push_back(tmpvecomap);
+	}
 
 	if (line) free(line);
 	warnx << "loadinitstate: teams added: " << n << "\n";
@@ -3219,13 +3231,26 @@ printteamidfreq()
 void
 printteamids()
 {
+	double avglists;
+	int nlists, high, low, tixsize;
+
+	nlists = 0;
+	// set to extreme values
+	high = 0;
+	low = teamsize;
+
 	warnx << "printteamids:\n";
 
 	for (teamid2totalT::iterator itr = teamindex.begin(); itr != teamindex.end(); itr++) {
 		warnx << "teamID: " << itr->first;
+		tixsize = itr->second.size();
+		nlists += tixsize;
+		if (low > tixsize) low = tixsize;
+		if (high < tixsize) high = tixsize;
+		warnx << " tixsize: " << tixsize;
 		warnx << " tix: ";
-		if (itr->second.size() > 1) {
-			for (int i = 0; i < (int)itr->second.size(); i++) {
+		if (tixsize > 1) {
+			for (int i = 0; i < tixsize; i++) {
 				warnx << itr->second[i] << ", ";
 			}
 		} else {
@@ -3234,13 +3259,19 @@ printteamids()
 		warnx << "\n";
 	}
 	warnx << "teamindex.size(): " << teamindex.size() << "\n";
+	avglists = (double)nlists / (double)teamindex.size();
+	printdouble("avg lists/teamID: ", avglists);
+	warnx << "\n";
+	warnx << "lowest # of lists/teamID: " << low << "\n";
+	warnx << "highest # of lists/teamID: " << high << "\n";
 }
 
 // print all lists and teamIDs
-void
+int
 printlistall()
 {
 	chordID teamID;
+	int totalsigs = 0;
 
 	for (int i = 0; i < (int)totalT.size(); i++) {
 		teamID = findteamid(i);
@@ -3249,15 +3280,18 @@ printlistall()
 			continue;
 		}
 		warnx << "teamID(i=" << i << "): " << teamID << "\n";
-		printlist(totalT[i], 0, -1);
+		totalsigs += printlist(totalT[i], 0, -1);
 	}
+
+	warnx << "totalsigs: " << totalsigs << "\n";
+	return totalsigs;
 }
 
-void
+int
 printlist(vecomap teamvecomap, int listnum, int seq)
 {
 	bool multi;
-	int n, nmulti, ixsim, setsize;
+	int n, nmulti, ixsim, setsize, totalsigs;
 	double freq, weight, avg;
 	double sumavg, sumsum;
 	double avgsim, highsim, cursim;
@@ -3269,13 +3303,14 @@ printlist(vecomap teamvecomap, int listnum, int seq)
 
 	sumavg = sumsum = 0;
 	avgsim = highsim = cursim = 0;
-	n = nmulti = ixsim = 0;
+	totalsigs = n = nmulti = ixsim = 0;
 	warnx << "list T_" << listnum << ": txseq: " << seq << " len: " << teamvecomap[listnum].size() << "\n";
 	warnx << "hdrB: sig freq weight avg avg*n:peers avg*q:mgroups cmp2prev multi\n";
 	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
 		sig = itr->first;
 		freq = itr->second[0];
 		weight = itr->second[1];
+		++totalsigs;
 		avg = freq / weight;
 		sumavg += avg;
 		sumsum += (avg * peers);
@@ -3320,6 +3355,9 @@ printlist(vecomap teamvecomap, int listnum, int seq)
 		avgsim /= (setsize - 1);
 	printdouble(" avgsim: ", avgsim);
 	warnx << " multisets: " << nmulti << "\n";
+
+	// subtract dummies
+	return totalsigs - 2;
 }
 
 void
