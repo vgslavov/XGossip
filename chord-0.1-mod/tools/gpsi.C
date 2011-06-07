@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.75 2011/05/25 02:52:00 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.76 2011/06/01 14:36:43 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.75 2011/05/25 02:52:00 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.76 2011/06/01 14:36:43 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -119,7 +119,7 @@ char *netstring_decode(FILE *);
 void netstring_encode(const char *, FILE *);
 void printdouble(std::string, double);
 int printlist(vecomap, int, int);
-int printlistall();
+int printlistall(int seq = -1);
 void printteamids();
 void printteamidfreq();
 chordID randomID(void);
@@ -1330,7 +1330,7 @@ main(int argc, char *argv[])
 			warnx << "\n";
 			//delspecial(0);
 			if (plist == 1) {
-				printlistall();
+				printlistall(txseq.back());
 			}
 
 			if (mflag == 1) {
@@ -3268,7 +3268,7 @@ printteamids()
 
 // print all lists and teamIDs
 int
-printlistall()
+printlistall(int seq)
 {
 	chordID teamID;
 	int totalsigs = 0;
@@ -3280,7 +3280,7 @@ printlistall()
 			continue;
 		}
 		warnx << "teamID(i=" << i << "): " << teamID << "\n";
-		totalsigs += printlist(totalT[i], 0, -1);
+		totalsigs += printlist(totalT[i], 0, seq);
 	}
 
 	warnx << "totalsigs: " << totalsigs << "\n";
