@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.76 2011/06/01 14:36:43 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.77 2011/06/07 06:06:07 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.76 2011/06/01 14:36:43 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.77 2011/06/07 06:06:07 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -118,7 +118,7 @@ void multiplyfreq(vecomap&, int, int, int);
 char *netstring_decode(FILE *);
 void netstring_encode(const char *, FILE *);
 void printdouble(std::string, double);
-int printlist(vecomap, int, int);
+int printlist(vecomap, int, int, bool hdr = true);
 int printlistall(int seq = -1);
 void printteamids();
 void printteamidfreq();
@@ -431,17 +431,20 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 			minhash = myLSH->getHashCode(sig);
 		}
 
+		sort(minhash.begin(), minhash.end());
+
 		//warnx << "minhash.size(): " << minhash.size() << "\n";
+		/*
 		if (plist == 1) {
 			warnx << "sig" << n << ": ";
 			warnx << "minhash IDs: " << "\n";
-			sort(minhash.begin(), minhash.end());
 			for (int i = 0; i < (int)minhash.size(); i++) {
 				warnx << minhash[i] << "\n";
 			}
 		}
+		*/
 
-		calcteamids(minhash);
+		//calcteamids(minhash);
 
 		if ((Qflag == 1 || gflag == 1) && msgtype != INVALID) {
 			std::vector<chordID> team;
@@ -519,7 +522,7 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 	}
 	*/
 
-	if (plist == 1) printteamidfreq();
+	//if (plist == 1) printteamidfreq();
 
 	return 0;
 }
@@ -2515,6 +2518,7 @@ add2vecomapx(std::vector<std::vector<POLY> > sigList, std::vector<double> freqLi
 	int tind;
 	mapType uniqueSigList;
 	vecomap tmpvecomap;
+	tind = 0;
 
 	warnx << "add2vecomap\n";
 
@@ -2530,12 +2534,16 @@ add2vecomapx(std::vector<std::vector<POLY> > sigList, std::vector<double> freqLi
 		warnx << "teamID found at teamindex[" << tind << "]\n";
 		totalT[tind].push_back(uniqueSigList);
 	} else {
+		warnx << "warning: teamID NOT found: " << teamID << "\n";
+
+		/*
 		warnx << "teamID NOT found: adding new vecomap\n";
 		warnx << "totalT.size() [before]: " << totalT.size() << "\n";
 		tmpvecomap.push_back(uniqueSigList);
 		totalT.push_back(tmpvecomap);
 		tind = totalT.size() - 1;
 		teamindex[teamID].push_back(tind);
+		*/
 	}
 
 	warnx << "tind: " << tind << "\n";
@@ -3279,8 +3287,10 @@ printlistall(int seq)
 			warnx << "printlistall: teamID is NULL\n";
 			continue;
 		}
-		warnx << "teamID(i=" << i << "): " << teamID << "\n";
-		totalsigs += printlist(totalT[i], 0, seq);
+		warnx << "list T_0: txseq: " << seq
+		      << " teamID(i=" << i << "): " << teamID
+		      << " len: " << totalT[i][0].size() << "\n";
+		totalsigs += printlist(totalT[i], 0, seq, false);
 	}
 
 	warnx << "totalsigs: " << totalsigs << "\n";
@@ -3288,7 +3298,7 @@ printlistall(int seq)
 }
 
 int
-printlist(vecomap teamvecomap, int listnum, int seq)
+printlist(vecomap teamvecomap, int listnum, int seq, bool hdr)
 {
 	bool multi;
 	int n, nmulti, ixsim, setsize, totalsigs;
@@ -3304,7 +3314,13 @@ printlist(vecomap teamvecomap, int listnum, int seq)
 	sumavg = sumsum = 0;
 	avgsim = highsim = cursim = 0;
 	totalsigs = n = nmulti = ixsim = 0;
-	warnx << "list T_" << listnum << ": txseq: " << seq << " len: " << teamvecomap[listnum].size() << "\n";
+
+	// print header
+	if (hdr == true) {
+		warnx << "list T_" << listnum << ": txseq: " << seq
+		      << " len: " << teamvecomap[listnum].size() << "\n";
+	}
+
 	warnx << "hdrB: sig freq weight avg avg*n:peers avg*q:mgroups cmp2prev multi\n";
 	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
 		sig = itr->first;
