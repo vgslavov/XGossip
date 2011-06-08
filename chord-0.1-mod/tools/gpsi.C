@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.77 2011/06/07 06:06:07 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.78 2011/06/08 02:12:29 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.77 2011/06/07 06:06:07 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.78 2011/06/08 02:12:29 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -2533,6 +2533,7 @@ add2vecomapx(std::vector<std::vector<POLY> > sigList, std::vector<double> freqLi
 		tind = teamitr->second[0];
 		warnx << "teamID found at teamindex[" << tind << "]\n";
 		totalT[tind].push_back(uniqueSigList);
+		warnx << "totalT[tind].size(): " << totalT[tind].size() << "\n";
 	} else {
 		warnx << "warning: teamID NOT found: " << teamID << "\n";
 
@@ -2549,7 +2550,6 @@ add2vecomapx(std::vector<std::vector<POLY> > sigList, std::vector<double> freqLi
 	warnx << "tind: " << tind << "\n";
 	warnx << "totalT.size(): " << totalT.size() << "\n";
 	warnx << "teamindex.size(): " << teamindex.size() << "\n";
-	warnx << "totalT[tind].size(): " << totalT[tind].size() << "\n";
 }
 
 // vanillaxgossip
