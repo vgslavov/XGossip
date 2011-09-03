@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.78 2011/06/08 02:12:29 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.79 2011/06/08 05:35:00 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.78 2011/06/08 02:12:29 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.79 2011/06/08 05:35:00 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -48,7 +48,6 @@ static char *hashfile;
 static char *irrpolyfile;
 static char *initfile;
 static char *logfile;
-static char *xpathfile;
 std::vector<POLY> irrnums;
 std::vector<int> hasha;
 std::vector<int> hashb;
@@ -106,6 +105,7 @@ chordID findteamid(int);
 void informteam(chordID, chordID, std::vector<POLY>);
 void initgossiprecv(chordID, chordID, std::vector<POLY>, double, double);
 DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
+void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 std::vector<POLY> inverse(std::vector<POLY>);
 void listengossip(void);
 //void *listengossip(void *);
@@ -124,15 +124,15 @@ void printteamids();
 void printteamidfreq();
 chordID randomID(void);
 void readgossip(int);
+void readquery(std::string, std::vector<std::vector <POLY> >&);
 void readsig(std::string, std::vector<std::vector <POLY> >&);
 void readValues(FILE *, std::multimap<POLY, std::pair<std::string, enum OPTYPE> >&);
-//void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 void delspecial(int);
 bool sig2str(std::vector<POLY>, str&);
 bool string2sig(std::string, std::vector<POLY>&);
 bool sigcmp(std::vector<POLY>, std::vector<POLY>);
-double sig_inter(std::vector<POLY>, std::vector<POLY>, bool&);
-double sig_uni(std::vector<POLY>, std::vector<POLY>, bool&);
+int set_inter(std::vector<POLY> s1, std::vector<POLY> s2, bool &multi);
+int set_uni(std::vector<POLY> s1, std::vector<POLY> s2, bool &multi);
 double signcmp(std::vector<POLY>, std::vector<POLY>, bool&);
 void tokenize(const std::string&, std::vector<std::string>&, const std::string&);
 void usage(void);
@@ -702,9 +702,12 @@ main(int argc, char *argv[])
 	str sigbuf;
 	std::string initdir;
 	std::string sigdir;
+	std::string xpathdir;
 	std::vector<std::string> initfiles;
 	std::vector<std::string> sigfiles;
+	std::vector<std::string> xpathfiles;
 	std::vector<std::vector<POLY> > sigList;
+	std::vector<std::vector<POLY> > queryList;
 	std::vector<POLY> sig;
 
 	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = xflag = 0;
@@ -819,7 +822,7 @@ main(int argc, char *argv[])
 			break;
 		case 'x':
 			xflag = 1;
-			xpathfile = optarg;
+			xpathdir = optarg;
 			break;
 		case 'Z':
 			teamsize = strtol(optarg, NULL, 10);
@@ -904,8 +907,8 @@ main(int argc, char *argv[])
 	    (Eflag == 1 || Iflag == 1))
 		usage();
 
-	// sigs are required when listening or reading
-	if ((lflag == 1 || rflag == 1) && sflag == 0) usage();
+	// sigs/queries are required when listening or reading
+	if ((lflag == 1 || rflag == 1) && (sflag == 0 && xflag == 0)) usage();
 
 	// set up log file: log.gpsi
 	if (Lflag == 1) {
@@ -932,116 +935,25 @@ main(int argc, char *argv[])
 		}
 	}
 
-	// TODO: read XPath query in memory
-	// (copied from psi.C)
-	if (Qflag == 1 && xflag == 1) {
-		if (stat(xpathfile, &statbuf) != 0)
-			fatal << "'" << xpathfile << "' does not exist" << "\n";
+	// reading and querying using XPath files
+	if ((rflag == 1 || Qflag == 1) && xflag == 1) {
+		getdir(xpathdir, xpathfiles);
+		queryList.clear();
 
-		// Read the query signatures from a file
-		FILE *qfp = fopen(xpathfile, "r");
-		assert(qfp);
-
-		// Open the tags files too...
-		std::string tagsfile = xpathfile + std::string(TAGFILE);
-			
-		FILE *fpTags = fopen(tagsfile.c_str(), "r");
-		assert(fpTags);
-
-		// Open the tag depth file...
-		std::string tagdepth = xpathfile + std::string(TAGDEPTH);
-		FILE *fpTagDepth = fopen(tagdepth.c_str(), "r");
-		assert(fpTagDepth);
-
-		// Open the value file...
-		std::string valfile = xpathfile + std::string(VALFILE);
-		FILE *fpVal = fopen(valfile.c_str(), "r");
-		assert(fpVal);
-
-		// DON'T use readData to retrieve signatures from input files...
-		// since the size filed uses POLY as a basic unit and not byte...
-		// Format is <n = # of sigs><sig size><sig>... n times...
-		int numSigs;
-		if (fread(&numSigs, sizeof(numSigs), 1, qfp) != 1) {
-			warnx << "break\n";
-			//break;
+		warnx << "reading queries from files...\n";
+		for (unsigned int i = 0; i < xpathfiles.size(); i++) {
+			readquery(xpathfiles[i], queryList);
 		}
-		assert(numSigs > 0);
-
-		std::vector<std::vector<POLY> > listOfSigs;
-		listOfSigs.clear();
-			
-		for (int t = 0; t < numSigs; t++) {
-			POLY *buf;
-			int size;
-			if (fread(&size, sizeof(int), 1, qfp) != 1) {
-				assert(0);
-			}
-				
-			buf = new POLY[size];
-			assert(buf);
-			if (fread(buf, sizeof(POLY), size, qfp) != (size_t) size) {
-				assert(0);
-			}
-				
-			std::vector<POLY> sig;
-			sig.clear();
-			for (int i = 0; i < size; i++) {
-				sig.push_back(buf[i]);
-			}
-
-			listOfSigs.push_back(sig);
-			sig2str(sig, sigbuf);
-			warnx << sigbuf << "\n";
-
-			// free the allocated memory
-			delete[] buf;
+		warnx << "calculating frequencies...\n";
+		beginTime = getgtod();    
+		calcfreq(queryList);
+		endTime = getgtod();    
+		printdouble("calcfreq time (+sorting): ", endTime - beginTime);
+		warnx << "\n";
+		if (plist == 1) {
+			// both init phases use allT
+			printlist(allT, 0, -1);
 		}
-			
-		//warnx << "******* Processing query " << count << " ********\n";
-		//numReads = numWrites = dataReadSize = cacheHits = 0;
-
-		// Read the distinct tags
-		std::vector<std::string> distinctTags;
-		distinctTags.clear();
-
-		// Tag depth
-		std::vector<std::string> tagDepth;
-		tagDepth.clear();
-			
-		readTags(fpTags, distinctTags);
-		warnx << "distinctTags:\n";
-		for (int i = 0; i < (int) distinctTags.size(); i++) {
-			warnx << distinctTags[i].c_str() << "\n";
-		}
-		readTags(fpTagDepth, tagDepth);
-		warnx << "tagDepth:\n";
-		for (int i = 0; i < (int) tagDepth.size(); i++) {
-			warnx << tagDepth[i].c_str() << "\n";
-		}
-
-		// Pick the highest depth entry
-		int maxDepth = -1;
-		int maxDepthId = -1;
-		for (int p = 0; p < (int) tagDepth.size(); p++) {
-			if (atoi(tagDepth[p].c_str()) > maxDepth) {
-				maxDepth = atoi(tagDepth[p].c_str());
-				maxDepthId = p;
-			}
-		}
-		warnx << "maxDepth: " << maxDepth << ", maxDepthId: " << maxDepthId << "\n";
-
-		// Read the values
-		std::multimap<POLY, std::pair<std::string, enum OPTYPE> > valList;
-		valList.clear();
-		readValues(fpVal, valList);
-
-		/*
-		std::vector<POLY> valSig;
-		valSig.clear();
-		*/
-
-		// TODO: verify
 	}
 
 	// set up hash file: hash.dat
@@ -1726,11 +1638,14 @@ readgossip(int fd)
 	std::vector<double> weightList;
 	InsertType msgtype;
 	std::vector<POLY> sig;
+	std::vector<POLY> querysig;
 	double freq, weight;
-	int n, msglen, recvlen, nothing, tind;
+	int n, msglen, recvlen, nothing, tind, ninter;
 	int ret, seq;
+	bool multi;
 
-	msglen = recvlen = nothing = 0;
+	ninter = msglen = recvlen = nothing = 0;
+	multi = 0;
 	warnx << "reading from socket:\n";
 
 	do {
@@ -1897,11 +1812,12 @@ readgossip(int fd)
 		if (msgtype == QUERYS) {
 			warnx << "QUERYS";
 		} else {
+			// TODO: handle Xpath queries
 			warnx << "QUERYX";
 		}
 
-		sig.clear();
-		ret = getKeyValue(gmsg.cstr(), key, keyteamid, sig, freq, weight, recvlen);
+		querysig.clear();
+		ret = getKeyValue(gmsg.cstr(), key, keyteamid, querysig, freq, weight, recvlen);
 		if (ret == -1) {
 			warnx << "error: getKeyValue failed\n";
 			fdcb(fd, selread, NULL);
@@ -1912,28 +1828,55 @@ readgossip(int fd)
 
 		warnx << " rxID: " << key << "\n";
 		warnx << " teamID: " << keyteamid << "\n";
-		sig2str(sig, sigbuf);
-		warnx << "sig: " << sigbuf << "\n";
-		warnx << "query result:\n";
+		sig2str(querysig, sigbuf);
+		warnx << "querysig: " << sigbuf << "\n";
+		warnx << "query result: ";
 
 		// find if list for team exists
 		str2chordID(keyteamid, teamID);
 		teamid2totalT::iterator teamitr = teamindex.find(teamID);
 		if (teamitr != teamindex.end()) {
+			bool sigfound = 0;
 			tind = teamitr->second[0];
 			warnx << "teamID found at teamindex[" << tind << "]\n";
-			mapType::iterator sigitr = totalT[tind][0].find(sig);
+			mapType::iterator sigitr = totalT[tind][0].find(querysig);
+			// exact signature found
 			if (sigitr != totalT[tind][0].end()) {
 				freq = sigitr->second[0];
 				weight = sigitr->second[1];
-				warnx << "sig found\n";
-				printdouble("f: ", freq);
+				warnx << "exact sig found: ";
+				warnx << "sig: " << sigbuf;
+				sig2str(sig, sigbuf);
+				printdouble(", f: ", freq);
 				printdouble(", w: ", weight);
 				printdouble(", avg: ", freq/weight);
 				warnx << "\n";
+				sigfound = 1;
+			}
+
+			// find if the query sig is a subset of any of the sigs
+			for (mapType::iterator itr = totalT[tind][0].begin(); itr != totalT[tind][0].end(); itr++) {
+				ninter = set_inter(querysig, itr->first, multi);
+				warnx << "ninter: " << ninter << ", querysig.size(): " << querysig.size() << "\n";
+				if (ninter == (int)querysig.size()) {
+					sigfound = 1;
+					warnx << "superset sig found: ";
+					sig2str(querysig, sigbuf);
+					warnx << "query sig: " << sigbuf;
+					sig2str(itr->first, sigbuf);
+					warnx << ", superset sig: " << sigbuf;
+					printdouble(", f: ", itr->second[0]);
+					printdouble(", w: ", itr->second[1]);
+					printdouble(", avg: ", itr->second[0]/itr->second[1]);
+					warnx << "\n";
+					if (multi == 1) warnx << "superset sig is a multiset\n";
+				}
+			}
+
+			if (sigfound == 0) {
+				warnx << "exact sig NOT found, superset sig NOT found\n";
 			} else {
-				warnx << "sig NOT found\n";
-		}
+			}
 		} else {
 			warnx << "teamID NOT found\n";
 		}
@@ -2136,13 +2079,116 @@ getdir(std::string dir, std::vector<std::string> &files)
 	return 0;
 }
 
+// copied from psi.C
+void
+readquery(std::string queryfile, std::vector<std::vector <POLY> > &queryList)
+{
+	double startTime, finishTime;
+	FILE *qfp;
+
+	startTime = getgtod();
+	// open queries
+	warnx << "queryfile: " << queryfile.c_str() << "\n";
+        qfp = fopen(queryfile.c_str(), "r");
+        assert(qfp);
+
+	// DON'T use readData to retrieve signatures from input files...
+	// since the size filed uses POLY as a basic unit and not byte...
+	// Format is <n = # of sigs><sig size><sig>... n times...
+	int numSigs;
+	if (fread(&numSigs, sizeof(numSigs), 1, qfp) != 1) {
+		warnx << "numSigs: " << numSigs << "\n";
+		//break;
+	}
+	warnx << "NUM sigs: " << numSigs << "\n";
+	assert(numSigs > 0);
+
+	for (int t = 0; t < numSigs; t++) {
+		POLY *buf;
+		int size;
+		if (fread(&size, sizeof(int), 1, qfp) != 1) {
+			assert(0);
+		}
+		warnx << "Signature size: " << size * sizeof(POLY) << " bytes\n";
+			
+		buf = new POLY[size];
+		assert(buf);
+		if (fread(buf, sizeof(POLY), size, qfp) != (size_t) size) {
+			assert(0);
+		}
+				
+		std::vector<POLY> sig;
+		sig.clear();
+		warnx << "Query signature (sorted): ";
+		for (int i = 0; i < size; i++) {
+			sig.push_back(buf[i]);
+		}
+		sort(sig.begin(), sig.end());
+		str sigbuf;
+		sig2str(sig, sigbuf);
+		warnx << sigbuf << "\n";
+		queryList.push_back(sig);
+
+		// free the allocated memory
+		delete[] buf;
+	}
+		
+	/*
+	warnx << "******* Processing query " << count << " ********\n";
+	numReads = numWrites = dataReadSize = cacheHits = 0;
+	strbuf s;
+	s << rootNodeID;
+	str rootID(s);
+
+	//if ((int) listOfSigs.size() > MAXSIGSPERQUERY) {
+	if (0) {
+		warnx << "Skipping this query...\n";
+	} else {
+		numDocs = 0;
+		listOfVisitedNodes.clear();
+				
+		double beginQueryTime = getgtod();
+		str junk("");
+		queryProcess(rootID, listOfSigs, junk);
+
+
+		double endQueryTime = getgtod();
+
+		std::cerr << "Query time: " << endQueryTime - beginQueryTime << " secs\n";
+		totalTime += (endQueryTime - beginQueryTime);
+		warnx << "Num docs: " << numDocs << "\n";
+	}
+		
+		#ifdef _DEBUG_
+			
+		#endif
+		warnx << "Data read in bytes: " << dataFetched << "\n";
+		warnx << "Data written in bytes: " << dataStored << "\n";
+		warnx << "Number of DHT lookups: " << numReads << "\n";
+		//warnx << " num writes: " << numWrites << "\n";
+		warnx << "Cache hits: " << cacheHits << "\n";
+		warnx << "******** Finished query processing *********\n\n\n";
+		count++;
+
+		if (count != maxCount + 1) {
+			warnx << "Sleeping...\n";
+			//sleep(1);
+			//sleep(1 + (int) ((double) randDelay * (rand() / (RAND_MAX + 1.0))));
+		}
+	}
+	*/
+
+	fclose(qfp);
+	warnx << "readquery: Size of query list: " << queryList.size() << "\n";
+	finishTime = getgtod();
+}
+
 // TODO: work w/ 0-sized sigs and path w/o trailing slash
 void
 readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 {
 	double startTime, finishTime;
 	FILE *sigfp;
-	chordID rootNodeID;
 
 	startTime = getgtod();
 	// open signatures
@@ -3321,7 +3367,7 @@ printlist(vecomap teamvecomap, int listnum, int seq, bool hdr)
 		      << " len: " << teamvecomap[listnum].size() << "\n";
 	}
 
-	warnx << "hdrB: sig freq weight avg avg*n:peers avg*q:mgroups cmp2prev multi\n";
+	warnx << "hdrB: sig freq weight avg avg*peers avg*teamsize cmp2prev multi\n";
 	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
 		sig = itr->first;
 		freq = itr->second[0];
@@ -3336,7 +3382,7 @@ printlist(vecomap teamvecomap, int listnum, int seq, bool hdr)
 		printdouble(" ", weight);
 		printdouble(" ", avg);
 		printdouble(" ", avg * peers);
-		printdouble(" ", avg * mgroups);
+		printdouble(" ", avg * teamsize);
 		// only check if 1st sig is a multiset
 		if (n == 0) {
 			prevsig = sig;
@@ -3356,7 +3402,7 @@ printlist(vecomap teamvecomap, int listnum, int seq, bool hdr)
 		++n;
 		prevsig = sig;
 	}
-	warnx << "hdrE: sig freq weight avg avg*n:peers avg*q:mgroups cmp2prev multi\n";
+	warnx << "hdrE: sig freq weight avg avg*peers avg*teamsize cmp2prev multi\n";
 	printdouble("printlist: sumavg: ", sumavg);
 	printdouble(" multisetsize: ", sumsum);
 	// subtract dummy (what about 2 dummies?)
@@ -3382,18 +3428,18 @@ usage(void)
 	warn << "Usage: " << __progname << " [-h] [actions...] [options...]\n\n";
 	warn << "Examples:\n\n";
 	warn << "Send signature query:\n";
-	warn << "\t" << __progname << " -Q -S dhash-sock -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -u\n\n";
+	warn << "\t" << __progname << " -Q -S dhash-sock -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 5 -R 10 -Z 4\n\n";
 	warn << "Send xpath query:\n";
-	warn << "\t" << __progname << " -Q -S dhash-sock -x xpathsig -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -u\n\n";
+	warn << "\t" << __progname << " -Q -S dhash-sock -x xpathdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16\n\n";
 	warn << "LSH on sig dir:\n";
-	warn << "\t" << __progname << " -H -I -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -u -p\n\n";
+	warn << "\t" << __progname << " -H -I -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16 -p\n\n";
 	warn << "Generate init file for sigdir:\n";
 	warn << "\t" << __progname << " -r -s sigdir -P initfile\n\n";
 	warn << "VanillaXGossip:\n";
 	warn << "\t" << __progname << " -S dhash-sock -G g-sock -L log.gpsi -s sigdir -g -t 120 -q 165 -p\n\n";
 	warn << "XGossip:\n";
 	warn << "\t" << __progname << " -S dhash-sock -G g-sock -L log.gpsi -s sigdir -g -t 120 -T 1 -w 900\n"
-	     << "\t     -H -d 1122941 -j irrpoly-deg9.dat -u -B 50 -R 10 -I -E -P initfile -p\n\n";
+	     << "\t     -H -d 1122941 -j irrpoly-deg9.dat -B 50 -R 10 -I -E -P initfile -p\n\n";
 	warn << "Options:\n"
 	     << "	-B		bands for LSH (a.k.a. m groups)\n"
 	     << "	-c		discard out-of-round messages\n"
@@ -3421,12 +3467,12 @@ usage(void)
 					"\t\t\t(interval between inserts in XGossip)\n"
 	     << "      	-t		<how often>\n"
 					"\t\t\t(gossip interval)\n"
-	     << "	-u		make POLYs unique (convert multiset to set)\n"
+	     << "(	-u		make POLYs unique (convert multiset to set))\n"
 	     << "      	-w		<how long>\n"
 					"\t\t\t(wait time after XGossip init phase is done)\n"
 	     << "	-X		<how many times>\n"
 					"\t\t\t(multiply freq of sigs by)\n"
-	     << "	-x		<xpath file>\n"
+	     << "	-x		<dir with xpath files>\n"
 	     << "	-Z		<team size>\n\n"
 	     << "Actions:\n"
 	     << "	-g		gossip (requires -S, -G, -s, -t)\n"
@@ -3436,7 +3482,7 @@ usage(void)
 	     << "	-l		listen for gossip (requires -S, -G, -s)\n"
 	     << "	-M		test mergelists(p) (requires -D)\n"
 	     << "	-Q		send query (requires -S, -d, -j, -s or -x)\n"
-	     << "	-r		read signatures (requires -s)\n"
+	     << "	-r		read signatures (requires -s or -x)\n"
 	     << "	-v		print version\n"
 	     << "	-z		generate random chordID (requires -n)\n";
 	exit(0);
