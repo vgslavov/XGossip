@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.80 2011/09/03 22:02:51 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.81 2011/09/05 06:56:42 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.80 2011/09/03 22:02:51 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.81 2011/09/05 06:56:42 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1358,7 +1358,7 @@ main(int argc, char *argv[])
 						if (compact == 1) {
 							compressedList.clear();
 							outBitmap.clear();
-							compressSignatures(totalT[i][0], compressedList, outBitmap);
+							//compressSignatures(totalT[i][0], compressedList, outBitmap);
 							//makeKeyValue(&value, valLen, key, teamID, compressedList, outputBitmap, txseq.back(), XGOSSIP);
 						} else {
 							makeKeyValue(&value, valLen, key, teamID, totalT[i][0], txseq.back(), XGOSSIP);
