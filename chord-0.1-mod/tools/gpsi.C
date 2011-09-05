@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.79 2011/06/08 05:35:00 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.80 2011/09/03 22:02:51 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.79 2011/06/08 05:35:00 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.80 2011/09/03 22:02:51 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -57,6 +57,7 @@ int gflag = 0;
 int Qflag = 0;
 int uflag = 0;
 int discardmsg = 0;
+int compact = 0;
 int peers = 0;
 int teamsize = 5;
 int freqbyx = 1;
@@ -136,6 +137,7 @@ int set_uni(std::vector<POLY> s1, std::vector<POLY> s2, bool &multi);
 double signcmp(std::vector<POLY>, std::vector<POLY>, bool&);
 void tokenize(const std::string&, std::vector<std::string>&, const std::string&);
 void usage(void);
+void vecomap2vec(vecomap teamvecomap, int listnum, std::vector<std::vector <POLY> >&sigList);
 
 DHTStatus insertStatus;
 std::string INDEXNAME;
@@ -397,7 +399,7 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 	DHTStatus status;
 	char *value;
 	int valLen, n, range, randcol;
-	double freq, weight;
+	double freq, weight, beginTime, endTime;
 	str sigbuf;
 
 	matrix.clear();
@@ -450,6 +452,7 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 			std::vector<chordID> team;
 			chordID teamID;
 			team.clear();
+			beginTime = getgtod();    
 			for (int i = 0; i < (int)minhash.size(); i++) {
 				teamID = minhash[i];
 				warnx << "teamID: " << teamID << "\n";
@@ -489,6 +492,9 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 			}
 			// don't forget to clear team list!
 			team.clear();
+			endTime = getgtod();    
+			printdouble("lshchordID: insert time (full sig): ", endTime - beginTime);
+			warnx << "\n";
 		}
 		// needed?
 		minhash.clear();
@@ -690,7 +696,7 @@ int
 main(int argc, char *argv[])
 {
 	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag;
-	int ch, gintval, initintval, waitintval, nids, valLen, logfd;
+	int ch, gintval, initintval, waitintval, nids, rounds, valLen, logfd;
 	double beginTime, endTime;
 	char *value;
 	struct stat statbuf;
@@ -709,10 +715,14 @@ main(int argc, char *argv[])
 	std::vector<std::vector<POLY> > sigList;
 	std::vector<std::vector<POLY> > queryList;
 	std::vector<POLY> sig;
+	std::vector<POLY> compressedList;
+	std::vector<std::vector<unsigned char> > outBitmap;
+
 
 	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = xflag = 0;
 	gintval = waitintval = nids = 0;
 	initintval = -1;
+	rounds = -1;
 	rxseq.clear();
 	txseq.clear();
 	// init txseq: txseq.back() segfaults!
@@ -722,13 +732,16 @@ main(int argc, char *argv[])
 	dummysig.push_back(1);
 
 	// parse arguments
-	while ((ch = getopt(argc, argv, "B:cD:d:EF:G:gHhIj:L:lMmn:P:pQq:R:rS:s:T:t:uvw:X:x:Z:z")) != -1)
+	while ((ch = getopt(argc, argv, "B:CcD:d:EF:G:gHhIj:L:lMmn:o:P:pQq:R:rS:s:T:t:uvw:X:x:Z:z")) != -1)
 		switch(ch) {
 		case 'B':
 			mgroups = strtol(optarg, NULL, 10);
 			break;
 		case 'R':
 			lfuncs = strtol(optarg, NULL, 10);
+			break;
+		case 'C':
+			compact = 1;
 			break;
 		case 'c':
 			discardmsg = 1;
@@ -786,6 +799,9 @@ main(int argc, char *argv[])
 			break;
 		case 'n':
 			nids = strtol(optarg, NULL, 10);
+			break;
+		case 'o':
+			rounds = strtol(optarg, NULL, 10);
 			break;
 		case 'P':
 			Pflag = 1;
@@ -1068,6 +1084,7 @@ main(int argc, char *argv[])
 		}
 		warnx << "calculating frequencies...\n";
 		beginTime = getgtod();    
+		warnx << "sigList.size() (all): " << sigList.size() << "\n";
 		calcfreq(sigList);
 		endTime = getgtod();    
 		printdouble("calcfreq time (+sorting): ", endTime - beginTime);
@@ -1079,6 +1096,44 @@ main(int argc, char *argv[])
 		if (plist == 1) {
 			// both init phases use allT
 			printlist(allT, 0, -1);
+		}
+
+		if (compact == 1) {
+			compressedList.clear();
+			outBitmap.clear();
+			sigList.clear();
+			vecomap2vec(allT, 0, sigList);
+
+			int sigbytesize = 0;
+			for (int i = 0; i < (int)sigList.size(); i++) {
+				sigbytesize += (sigList[i].size() * sizeof(POLY));
+			}
+
+			warnx << "sigList size (bytes): " << sigbytesize << "\n";
+			warnx << "sigList.size() (unique): " << sigList.size() << "\n";
+			compressSignatures(sigList, compressedList, outBitmap);
+
+			int compressedsize = compressedList.size() * sizeof(POLY);
+			warnx << "compressedList size (bytes): " << compressedsize << "\n";
+			warnx << "compressedList.size(): " << compressedList.size() << "\n";
+
+			int bitmapsize = 0;
+			for (int i = 0; i < (int)outBitmap.size(); i++) {
+				bitmapsize += (outBitmap[i].size() * sizeof(unsigned char));
+			}
+
+			warnx << "outBitmap size (bytes): " << bitmapsize << "\n";
+			warnx << "outBitmap.size(): " << outBitmap.size() << "\n";
+
+			warnx << "total compressed size (list+bitmap): " << compressedsize + bitmapsize << "\n";
+			/*
+			for (int i = 0; i < (int)compressedList.size(); i++) {
+				warnx << compressedList[i] << "\n";
+				for (int j = 0; j < ceil(sigList.size() / 8.0); j++) {
+					warnx << "--> " << outBitmap[i][j] << "\n";
+				}
+			}
+			*/
 		}
 
 		// create log.init of sigs (why?)
@@ -1167,8 +1222,17 @@ main(int argc, char *argv[])
 
 		srandom(loseed);
 
-		// gossip indefinitely
 		while (1) {
+			// by default, gossip indefinitely
+			if (txseq.back() == rounds) {
+				warnx << "txseq = " << rounds << "\n";
+				warnx << "done gossiping\n";
+				// stop gossiping, only listen
+				break;
+				// don't exit since each peer will reach a particular round at a different time
+				//return 0;
+			}
+
 			ID = make_randomID();
 			strbuf z;
 			z << ID;
@@ -1232,8 +1296,17 @@ main(int argc, char *argv[])
 		// needed?
 		//srandom(loseed);
 
-		// gossip indefinitely
 		while (1) {
+			// by default, gossip indefinitely
+			if (txseq.back() == rounds) {
+				warnx << "txseq = " << rounds << "\n";
+				warnx << "done gossiping\n";
+				// stop gossiping, only listen
+				break;
+				// don't exit since each peer will reach a particular round at a different time
+				//return 0;
+			}
+
 			beginTime = getgtod();    
 			warnx << "totalT.size(): " << totalT.size() << "\n";
 			for (int i = 0; i < (int)totalT.size(); i++) {
@@ -1281,7 +1354,16 @@ main(int argc, char *argv[])
 						str key(t);
 						str teamID(p);
 						warnx << "txID: " << ID << "\n";
-						makeKeyValue(&value, valLen, key, teamID, totalT[i][0], txseq.back(), XGOSSIP);
+
+						if (compact == 1) {
+							compressedList.clear();
+							outBitmap.clear();
+							compressSignatures(totalT[i][0], compressedList, outBitmap);
+							//makeKeyValue(&value, valLen, key, teamID, compressedList, outputBitmap, txseq.back(), XGOSSIP);
+						} else {
+							makeKeyValue(&value, valLen, key, teamID, totalT[i][0], txseq.back(), XGOSSIP);
+						}
+
 						status = insertDHT(ID, value, valLen, MAXRETRIES);
 						cleanup(value);
 						// don't forget to clear team list!
@@ -3257,6 +3339,14 @@ delspecial(int listnum)
 	warnx << "delspecial: setsize after: " << allT[listnum].size() << "\n";
 }
 
+void
+vecomap2vec(vecomap teamvecomap, int listnum, std::vector<std::vector <POLY> >&sigList)
+{
+	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
+		sigList.push_back(itr->first);
+	}
+}
+
 // verified
 void
 printdouble(std::string fmt, double num)
@@ -3367,7 +3457,7 @@ printlist(vecomap teamvecomap, int listnum, int seq, bool hdr)
 		      << " len: " << teamvecomap[listnum].size() << "\n";
 	}
 
-	warnx << "hdrB: sig freq weight avg avg*peers avg*teamsize cmp2prev multi\n";
+	warnx << "hdrB: sig freq weight avg avg*peers avg*teamsize cmp2prev multi size\n";
 	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
 		sig = itr->first;
 		freq = itr->second[0];
@@ -3398,11 +3488,12 @@ printlist(vecomap teamvecomap, int listnum, int seq, bool hdr)
 			ixsim = n;
 		}
 		printdouble(" ", cursim);
-		warnx << " " << multi << "\n";
+		warnx << " " << multi;
+		warnx << " " << sig.size() * sizeof(POLY) << "\n";
 		++n;
 		prevsig = sig;
 	}
-	warnx << "hdrE: sig freq weight avg avg*peers avg*teamsize cmp2prev multi\n";
+	warnx << "hdrE: sig freq weight avg avg*peers avg*teamsize cmp2prev multi size\n";
 	printdouble("printlist: sumavg: ", sumavg);
 	printdouble(" multisetsize: ", sumsum);
 	// subtract dummy (what about 2 dummies?)
@@ -3442,6 +3533,7 @@ usage(void)
 	     << "\t     -H -d 1122941 -j irrpoly-deg9.dat -B 50 -R 10 -I -E -P initfile -p\n\n";
 	warn << "Options:\n"
 	     << "	-B		bands for LSH (a.k.a. m groups)\n"
+	     << "	-C		compact signatures\n"
 	     << "	-c		discard out-of-round messages\n"
 	     << "	-D		<dir with init files>\n"
 	     << "	-d		<random prime number for LSH seed>\n"
@@ -3455,7 +3547,8 @@ usage(void)
 	     << "	-L		<log file>\n"
 	     << "      	-m		use findMod instead of compute_hash\n"
 					"\t\t\t(vector of POLYs instead of chordIDs)\n"
-	     << "      	-n		<how many>\n"
+	     << "      	-n		<how many chordIDs>\n"
+	     << "      	-o		<how many rounds>\n"
 	     << "      	-P		<init phase file>\n"
 					"\t\t\t(after XGossip init state is complete)\n"
 	     << "      	-p		verbose (print list of signatures)\n"
@@ -3478,7 +3571,6 @@ usage(void)
 	     << "	-g		gossip (requires -S, -G, -s, -t)\n"
 	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j, -F)\n"
 					"\t\t\t(XGossip)\n"
-	     << "	-C		calculate distance\n"
 	     << "	-l		listen for gossip (requires -S, -G, -s)\n"
 	     << "	-M		test mergelists(p) (requires -D)\n"
 	     << "	-Q		send query (requires -S, -d, -j, -s or -x)\n"
