@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.81 2011/09/05 06:56:42 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.82 2011/09/05 06:58:12 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.81 2011/09/05 06:56:42 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.82 2011/09/05 06:58:12 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -61,6 +61,10 @@ int compact = 0;
 int peers = 0;
 int teamsize = 5;
 int freqbyx = 1;
+int totalrxmsglen = 0;
+int totaltxmsglen = 0;
+int roundrxmsglen = 0;
+int roundtxmsglen = 0;
 bool initphase = 0;
 
 // paper:k, slides:bands
@@ -105,7 +109,7 @@ void doublefreqgroup(int, mapType);
 chordID findteamid(int);
 void informteam(chordID, chordID, std::vector<POLY>);
 void initgossiprecv(chordID, chordID, std::vector<POLY>, double, double);
-DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
+DHTStatus insertDHT(chordID, char *, int, double &, int = MAXRETRIES, chordID = 0);
 void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 std::vector<POLY> inverse(std::vector<POLY>);
 void listengossip(void);
@@ -399,7 +403,7 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 	DHTStatus status;
 	char *value;
 	int valLen, n, range, randcol;
-	double freq, weight, beginTime, endTime;
+	double freq, weight, beginTime, endTime, instime, totalinstime;
 	str sigbuf;
 
 	matrix.clear();
@@ -407,6 +411,7 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 	sig.clear();
 	lshsig.clear();
 	n = 0;
+	totalinstime = 0;
 	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
 		sig = itr->first;
 		freq = itr->second[0];
@@ -420,7 +425,11 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 			sig2 = sig;
 		*/
 
+		beginTime = getgtod();    
 		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
+		endTime = getgtod();    
+		printdouble("lshchordID: lsh time: ", endTime - beginTime);
+		warnx << "\n";
 		// convert multiset to set
 		if (uflag == 1) {
 			//sig2str(sig, sigbuf);
@@ -472,7 +481,9 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 				str teamID(p);
 				warnx << "inserting " << msgtype << ":\n";
 				makeKeyValue(&value, valLen, key, teamID, sig, freq, weight, msgtype);
-				status = insertDHT(ID, value, valLen, MAXRETRIES);
+				totaltxmsglen += valLen;
+				status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
+				totalinstime += instime;
 				cleanup(value);
 
 				// do not exit if insert FAILs!
@@ -492,8 +503,9 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 			}
 			// don't forget to clear team list!
 			team.clear();
-			endTime = getgtod();    
-			printdouble("lshchordID: insert time (full sig): ", endTime - beginTime);
+			endTime = getgtod();
+			printdouble("lshchordID: insert time (only): ", totalinstime);
+			printdouble("lshchordID: insert time (+others): ", endTime - beginTime);
 			warnx << "\n";
 		}
 		// needed?
@@ -545,7 +557,7 @@ lshpoly(vecomap teamvecomap, std::vector<std::vector<POLY> > &matrix, int intval
 	DHTStatus status;
 	char *value;
 	int valLen;
-	double freq, weight;
+	double freq, weight, instime;
 	//str sigbuf;
 
 	minhash.clear();
@@ -600,7 +612,8 @@ lshpoly(vecomap teamvecomap, std::vector<std::vector<POLY> > &matrix, int intval
 			warnx << "inserting " << msgtype << ":\n";
 			// TODO: generate teamID
 			makeKeyValue(&value, valLen, key, key, sig, freq, weight, msgtype);
-			status = insertDHT(ID, value, valLen, MAXRETRIES);
+			totaltxmsglen += valLen;
+			status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
 			cleanup(value);
 
 			// do not exit if insert FAILs!
@@ -631,7 +644,7 @@ querychordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, Insert
 	DHTStatus status;
 	char *value;
 	int valLen;
-	double freq, weight;
+	double freq, weight, instime;
 
 	minhash.clear();
 	sig.clear();
@@ -668,7 +681,8 @@ querychordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, Insert
 			warnx << "inserting " << msgtype << ":\n";
 			// TODO: generate teamID
 			makeKeyValue(&value, valLen, key, key, sig, freq, weight, msgtype);
-			status = insertDHT(ID, value, valLen, MAXRETRIES);
+			totaltxmsglen += valLen;
+			status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
 			cleanup(value);
 
 			// do not exit if insert FAILs!
@@ -697,7 +711,7 @@ main(int argc, char *argv[])
 {
 	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag;
 	int ch, gintval, initintval, waitintval, nids, rounds, valLen, logfd;
-	double beginTime, endTime;
+	double beginTime, endTime, instime;
 	char *value;
 	struct stat statbuf;
 	time_t rawtime;
@@ -1226,6 +1240,7 @@ main(int argc, char *argv[])
 			// by default, gossip indefinitely
 			if (txseq.back() == rounds) {
 				warnx << "txseq = " << rounds << "\n";
+				warnx << "totaltxmsglen: " << totaltxmsglen << "\n";
 				warnx << "done gossiping\n";
 				// stop gossiping, only listen
 				break;
@@ -1251,7 +1266,9 @@ main(int argc, char *argv[])
 			}
 			// after merging, everything is stored in totalT[0][0]
 			makeKeyValue(&value, valLen, key, key, totalT[0][0], txseq.back(), VXGOSSIP);
-			status = insertDHT(ID, value, valLen, MAXRETRIES);
+			totaltxmsglen += valLen;
+			roundtxmsglen += valLen;
+			status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
 			cleanup(value);
 
 			// do not exit if insert FAILs!
@@ -1264,6 +1281,9 @@ main(int argc, char *argv[])
 				warnx << "insert SUCCeeded\n";
 			}
 			txseq.push_back(txseq.back() + 1);
+			warnx << "roundtxmsglen: " << roundtxmsglen;
+			warnx << ", txseq: " << txseq.back() << "\n";
+			roundtxmsglen = 0;
 			warnx << "sleeping (gossip)...\n";
 			//sleep(gintval);
 			gossipsleep = 0;
@@ -1300,6 +1320,7 @@ main(int argc, char *argv[])
 			// by default, gossip indefinitely
 			if (txseq.back() == rounds) {
 				warnx << "txseq = " << rounds << "\n";
+				warnx << "totaltxmsglen: " << totaltxmsglen << "\n";
 				warnx << "done gossiping\n";
 				// stop gossiping, only listen
 				break;
@@ -1362,9 +1383,11 @@ main(int argc, char *argv[])
 							//makeKeyValue(&value, valLen, key, teamID, compressedList, outputBitmap, txseq.back(), XGOSSIP);
 						} else {
 							makeKeyValue(&value, valLen, key, teamID, totalT[i][0], txseq.back(), XGOSSIP);
+							totaltxmsglen += valLen;
+							roundtxmsglen += valLen;
 						}
 
-						status = insertDHT(ID, value, valLen, MAXRETRIES);
+						status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
 						cleanup(value);
 						// don't forget to clear team list!
 						team.clear();
@@ -1389,6 +1412,9 @@ main(int argc, char *argv[])
 						return 0;
 					}
 				}
+				warnx << "roundtxmsglen: " << roundtxmsglen;
+				warnx << ", txseq: " << txseq.back() << "\n";
+				roundtxmsglen = 0;
 				txseq.push_back(txseq.back() + 1);
 				warnx << "sleeping (xgossip)...\n";
 				gossipsleep = 0;
@@ -1471,7 +1497,7 @@ main(int argc, char *argv[])
 
 // copied from psi.C
 DHTStatus
-insertDHT(chordID ID, char *value, int valLen, int STOPCOUNT, chordID guess)
+insertDHT(chordID ID, char *value, int valLen, double &instime, int STOPCOUNT, chordID guess)
 {
 	//warnx << "txID: " << ID << "\n";
 	dataStored += valLen;
@@ -1511,7 +1537,8 @@ insertDHT(chordID ID, char *value, int valLen, int STOPCOUNT, chordID guess)
 		//char timebuf[1024];
 		//snprintf(timebuf, sizeof(timebuf), "%f", endTime - beginTime);
 		//warnx << "key insert time: " << timebuf << " secs\n";
-		printdouble("key insert time: ", endTime - beginTime);
+		instime = endTime - beginTime;
+		printdouble("key insert time: ", instime);
 		warnx << "\n";
 		// Insert was successful
 		if (!insertError) {
@@ -2405,6 +2432,7 @@ informteam(chordID myID, chordID teamID, std::vector<POLY> sig)
 	char *value;
 	int valLen;
 	int idindex;
+	double instime = 0;
 
 	warnx << "teamID: " << teamID << "\n";
 	idindex = make_team(myID, teamID, team);
@@ -2431,9 +2459,10 @@ informteam(chordID myID, chordID teamID, std::vector<POLY> sig)
 	double freq = 0;
 	double weight = 1;
 	makeKeyValue(&value, valLen, key, teamidstr, sig, freq, weight, INFORMTEAM);
+	totaltxmsglen += valLen;
 	warnx << "inserting INFORMTEAM:\n";
 	warnx << "myID: " << myID << " nextID: " << nextID << " teamID: " << teamID << "\n";
-	status = insertDHT(nextID, value, valLen, MAXRETRIES);
+	status = insertDHT(nextID, value, valLen, instime, MAXRETRIES);
 	cleanup(value);
 
 	if (status != SUCC) {
