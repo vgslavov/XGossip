@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.82 2011/09/05 06:58:12 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.83 2011/09/06 00:51:55 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.82 2011/09/05 06:58:12 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.83 2011/09/06 00:51:55 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1282,7 +1282,7 @@ main(int argc, char *argv[])
 			}
 			txseq.push_back(txseq.back() + 1);
 			warnx << "roundtxmsglen: " << roundtxmsglen;
-			warnx << ", txseq: " << txseq.back() << "\n";
+			warnx << " txseq: " << txseq.back() << "\n";
 			roundtxmsglen = 0;
 			warnx << "sleeping (gossip)...\n";
 			//sleep(gintval);
@@ -1413,7 +1413,7 @@ main(int argc, char *argv[])
 					}
 				}
 				warnx << "roundtxmsglen: " << roundtxmsglen;
-				warnx << ", txseq: " << txseq.back() << "\n";
+				warnx << " txseq: " << txseq.back() << "\n";
 				roundtxmsglen = 0;
 				txseq.push_back(txseq.back() + 1);
 				warnx << "sleeping (xgossip)...\n";
@@ -1935,7 +1935,7 @@ readgossip(int fd)
 			return;
 		}
 
-		warnx << " rxID: " << key << "\n";
+		warnx << " rxID: " << key;
 		warnx << " teamID: " << keyteamid << "\n";
 		sig2str(querysig, sigbuf);
 		warnx << "querysig: " << sigbuf << "\n";
