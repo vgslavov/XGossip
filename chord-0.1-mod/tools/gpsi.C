@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.84 2011/09/07 17:14:52 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.85 2011/09/08 17:30:26 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.84 2011/09/07 17:14:52 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.85 2011/09/08 17:30:26 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -137,6 +137,7 @@ bool sig2str(std::vector<POLY>, str&);
 bool string2sig(std::string, std::vector<POLY>&);
 bool sigcmp(std::vector<POLY>, std::vector<POLY>);
 int set_inter(std::vector<POLY> s1, std::vector<POLY> s2, bool &multi);
+int set_inter_noskip(std::vector<POLY> s1, std::vector<POLY> s2, bool &multi);
 int set_uni(std::vector<POLY> s1, std::vector<POLY> s2, bool &multi);
 double signcmp(std::vector<POLY>, std::vector<POLY>, bool&);
 void tokenize(const std::string&, std::vector<std::string>&, const std::string&);
@@ -1967,7 +1968,7 @@ readgossip(int fd)
 
 			// find if the query sig is a subset of any of the sigs
 			for (mapType::iterator itr = totalT[tind][0].begin(); itr != totalT[tind][0].end(); itr++) {
-				ninter = set_inter(querysig, itr->first, multi);
+				ninter = set_inter_noskip(querysig, itr->first, multi);
 				warnx << "ninter: " << ninter << ", querysig.size(): " << querysig.size() << "\n";
 				if (ninter == (int)querysig.size()) {
 					sigfound = 1;
@@ -1987,6 +1988,7 @@ readgossip(int fd)
 			if (sigfound == 0) {
 				warnx << "exact sig NOT found, superset sig NOT found\n";
 			} else {
+				// TODO: ?
 			}
 		} else {
 			warnx << "teamID NOT found\n";
@@ -2751,6 +2753,63 @@ sigcmp(std::vector<POLY> s1, std::vector<POLY> s2)
 	}
 }
 
+// return number of elements in the intersection of s1 and s2
+// s1 and s2 are assumed to be sorted
+// logic copied from set_intersection() in <algorithm>
+// works with multisets (DOES NOT skip duplicates)
+// complexity:
+// at most, performs 2*(count1+count2)-1 comparisons or applications of comp
+// (where countX is the distance between firstX and lastX)
+int
+set_inter_noskip(std::vector<POLY> s1, std::vector<POLY> s2, bool &multi)
+{
+	std::vector<POLY>::iterator s1itr = s1.begin();
+	std::vector<POLY>::iterator s2itr = s2.begin();
+	POLY s1prev, s2prev;
+	int n, s1skip, s2skip;
+
+	//warnx << "\n";
+	s1prev = s2prev = n = s1skip = s2skip = 0;
+	while (s1itr != s1.end() && s2itr != s2.end()) {
+		// DON'T skip duplicates, just count them
+		if (s1prev == *s1itr) {
+			//warnx << "skipping duplicate\n";
+			++s1skip;
+			//s1prev = *s1itr;
+			//++s1itr;
+		} else if (s2prev == *s2itr) {
+			//warnx << "skipping duplicate\n";
+			++s2skip;
+			//s2prev = *s2itr;
+			//++s2itr;
+		}
+
+		if (*s1itr < *s2itr) {
+			s1prev = *s1itr;
+			++s1itr;
+		} else if (*s2itr < *s1itr) {
+			s2prev = *s2itr;
+			++s2itr;
+		} else {
+			//warnx << "both: " << *s1itr << "\n";
+			s1prev = *s1itr;
+			s2prev = *s2itr;
+			++s1itr;
+			++s2itr;
+			// count only same elements
+			++n;
+		}
+	}
+	//warnx << "s1skip(inter): " << s1skip << "\n";
+	//warnx << "s2skip(inter): " << s2skip << "\n";
+	// TODO: if s1 is multi (s1 is prevsig, s2 is cursig)
+	if (s2skip != 0)
+		multi = 1;
+	else
+		multi = 0;
+
+	return n;
+}
 // return number of elements in the intersection of s1 and s2
 // s1 and s2 are assumed to be sorted
 // logic copied from set_intersection() in <algorithm>
