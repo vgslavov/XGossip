@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.83 2011/09/06 00:51:55 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.84 2011/09/07 17:14:52 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.83 2011/09/06 00:51:55 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.84 2011/09/07 17:14:52 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -505,6 +505,8 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 			team.clear();
 			endTime = getgtod();
 			printdouble("lshchordID: insert time (only): ", totalinstime);
+			totalinstime = 0;
+			warnx << "\n";
 			printdouble("lshchordID: insert time (+others): ", endTime - beginTime);
 			warnx << "\n";
 		}
@@ -2230,6 +2232,8 @@ readquery(std::string queryfile, std::vector<std::vector <POLY> > &queryList)
 		sig.clear();
 		warnx << "Query signature (sorted): ";
 		for (int i = 0; i < size; i++) {
+			// XXX: discard "1"s
+			if (buf[i] == 1) continue;
 			sig.push_back(buf[i]);
 		}
 		sort(sig.begin(), sig.end());
