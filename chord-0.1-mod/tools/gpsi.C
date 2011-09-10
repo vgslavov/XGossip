@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.85 2011/09/08 17:30:26 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.86 2011/09/08 20:52:29 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.85 2011/09/08 17:30:26 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.86 2011/09/08 20:52:29 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -51,6 +51,7 @@ static char *logfile;
 std::vector<POLY> irrnums;
 std::vector<int> hasha;
 std::vector<int> hashb;
+std::vector<std::vector<POLY> > queryList;
 int lshseed = 0;
 int plist = 0;
 int gflag = 0;
@@ -730,7 +731,6 @@ main(int argc, char *argv[])
 	std::vector<std::string> sigfiles;
 	std::vector<std::string> xpathfiles;
 	std::vector<std::vector<POLY> > sigList;
-	std::vector<std::vector<POLY> > queryList;
 	std::vector<POLY> sig;
 	std::vector<POLY> compressedList;
 	std::vector<std::vector<unsigned char> > outBitmap;
@@ -968,27 +968,6 @@ main(int argc, char *argv[])
 		}
 	}
 
-	// reading and querying using XPath files
-	if ((rflag == 1 || Qflag == 1) && xflag == 1) {
-		getdir(xpathdir, xpathfiles);
-		queryList.clear();
-
-		warnx << "reading queries from files...\n";
-		for (unsigned int i = 0; i < xpathfiles.size(); i++) {
-			readquery(xpathfiles[i], queryList);
-		}
-		warnx << "calculating frequencies...\n";
-		beginTime = getgtod();    
-		calcfreq(queryList);
-		endTime = getgtod();    
-		printdouble("calcfreq time (+sorting): ", endTime - beginTime);
-		warnx << "\n";
-		if (plist == 1) {
-			// both init phases use allT
-			printlist(allT, 0, -1);
-		}
-	}
-
 	// set up hash file: hash.dat
 	FILE *hashfp = NULL;
 	if (Fflag == 1) {
@@ -1161,6 +1140,73 @@ main(int argc, char *argv[])
 			fclose(initfp);
 		}
 		*/
+	}
+
+	// reading and querying using XPath files
+	if ((rflag == 1 || Qflag == 1) && xflag == 1) {
+		getdir(xpathdir, xpathfiles);
+		queryList.clear();
+
+		warnx << "reading queries from files...\n";
+		for (unsigned int i = 0; i < xpathfiles.size(); i++) {
+			readquery(xpathfiles[i], queryList);
+		}
+		// store queries in a vector, not a map
+		// (different xpath queries may transform into the same sig)
+		/*
+		warnx << "calculating frequencies...\n";
+		beginTime = getgtod();    
+		calcfreq(queryList);
+		endTime = getgtod();    
+		printdouble("calcfreq time (+sorting): ", endTime - beginTime);
+		warnx << "\n";
+		*/
+		if (plist == 1) {
+			// both init phases use allT
+			//printlist(allT, 0, -1);
+			warnx << "queries:\n";
+			for (unsigned int i = 0; i < queryList.size(); i++) {
+				sig2str(queryList[i], sigbuf);
+				warnx << "query" << i << ": " << sigbuf << "\n";
+			}
+		}
+	}
+
+	// run queries on sigs
+	if (rflag == 1 && sflag == 1 && xflag == 1) {
+		int ninter;
+		int sigmatches = 0;
+		double totalavg = 0;
+		bool multi;
+		warnx << "running xpath queries locally...\n";
+		for (unsigned int i = 0; i < queryList.size(); i++) {
+			// find if the query sig is a subset of any of the sigs
+			for (mapType::iterator itr = allT[0].begin(); itr != allT[0].end(); itr++) {
+				ninter = set_inter_noskip(queryList[i], itr->first, multi);
+				//warnx << "ninter: " << ninter << ", querysig.size(): " << queryList[i].size() << "\n";
+				if (ninter == (int)queryList[i].size()) {
+					++sigmatches;
+					totalavg += (itr->second[0]/itr->second[1]);
+					if (plist == 1) {
+						//warnx << "superset sig found: ";
+						sig2str(itr->first, sigbuf);
+						warnx << "supersetsig: " << sigbuf;
+						printdouble(" f: ", itr->second[0]);
+						printdouble(" w: ", itr->second[1]);
+						printdouble(" avg: ", itr->second[0]/itr->second[1]);
+						warnx << "\n";
+						//if (multi == 1) warnx << "superset sig is a multiset\n";
+					}
+				}
+			}
+			sig2str(queryList[i], sigbuf);
+			warnx << "querysig" << i << ": " << sigbuf;
+			warnx << " sigmatches: " << sigmatches;
+			printdouble(" totalavg: ", totalavg);
+			warnx << "\n";
+			sigmatches = 0;
+			totalavg = 0;
+		}
 	}
 
 	time(&rawtime);
@@ -2205,13 +2251,15 @@ readquery(std::string queryfile, std::vector<std::vector <POLY> > &queryList)
         qfp = fopen(queryfile.c_str(), "r");
         assert(qfp);
 
+	while (1) {
+
 	// DON'T use readData to retrieve signatures from input files...
 	// since the size filed uses POLY as a basic unit and not byte...
 	// Format is <n = # of sigs><sig size><sig>... n times...
 	int numSigs;
 	if (fread(&numSigs, sizeof(numSigs), 1, qfp) != 1) {
 		warnx << "numSigs: " << numSigs << "\n";
-		//break;
+		break;
 	}
 	warnx << "NUM sigs: " << numSigs << "\n";
 	assert(numSigs > 0);
@@ -2292,6 +2340,7 @@ readquery(std::string queryfile, std::vector<std::vector <POLY> > &queryList)
 		}
 	}
 	*/
+	}
 
 	fclose(qfp);
 	warnx << "readquery: Size of query list: " << queryList.size() << "\n";
