@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.86 2011/09/08 20:52:29 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.87 2011/09/10 21:36:43 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.86 2011/09/08 20:52:29 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.87 2011/09/10 21:36:43 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -51,7 +51,6 @@ static char *logfile;
 std::vector<POLY> irrnums;
 std::vector<int> hasha;
 std::vector<int> hashb;
-std::vector<std::vector<POLY> > queryList;
 int lshseed = 0;
 int plist = 0;
 int gflag = 0;
@@ -72,6 +71,10 @@ bool initphase = 0;
 int mgroups = 10;
 // paper:l, slides:rows
 int lfuncs = 16;
+
+// multimap for storing queries
+typedef std::multimap<std::vector<POLY>, int, CompareSig> multimapType;
+multimapType queryMap;
 
 // map sigs to freq and weight
 typedef std::map<std::vector<POLY>, std::vector<double>, CompareSig> mapType;
@@ -97,6 +100,7 @@ typedef std::map<chordID, std::vector<int> > chordID2sig;
 typedef std::map<POLY, std::vector<int> > poly2sig;
 
 void acceptconn(int);
+void add2querymap(std::vector<std::vector<POLY> > queryList);
 // XGossip
 void add2vecomapx(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>, chordID);
 // VanillaXGossip
@@ -117,7 +121,8 @@ void listengossip(void);
 //void *listengossip(void *);
 void loginitstate(FILE *);
 int loadinitstate(FILE *);
-int lshchordID(vecomap, int, InsertType, int, int);
+int lshsig(vecomap, int, InsertType, int, int);
+int lshquery(multimapType, int, InsertType, int);
 int make_team(chordID, chordID, std::vector<chordID>&);
 void mergelists(vecomap&);
 void multiplyfreq(vecomap&, int, int, int);
@@ -392,7 +397,127 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 
 // TODO: verify
 int
-lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, int listnum = 0, int col = 0)
+lshquery(multimapType queryMap, int intval = -1, InsertType msgtype = INVALID, int col = 0)
+{
+	std::vector<std::vector<chordID> > matrix;
+	std::vector<chordID> minhash;
+	std::vector<chordID> buckets;
+	std::vector<POLY> querysig;
+	std::vector<POLY> lshquerysig;
+	chordID ID;
+	DHTStatus status;
+	char *value;
+	int valLen, n, range, randcol, qid;
+	double beginTime, endTime, instime, totalinstime;
+	str sigbuf;
+
+	matrix.clear();
+	minhash.clear();
+	querysig.clear();
+	lshquerysig.clear();
+	n = 0;
+	totalinstime = 0;
+	for (multimapType::iterator itr = queryMap.begin(); itr != queryMap.end(); itr++) {
+		querysig = itr->first;
+		qid = itr->second;
+
+		beginTime = getgtod();    
+		lsh *myLSH = new lsh(querysig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
+		endTime = getgtod();    
+		printdouble("lshquery: lsh time: ", endTime - beginTime);
+		warnx << "\n";
+		// convert multiset to set
+		if (uflag == 1) {
+			//sig2str(querysig, sigbuf);
+			//warnx << "multiset: " << sigbuf << "\n";
+			lshquerysig = myLSH->getUniqueSet(querysig);
+			//sig2str(lshsig, sigbuf);
+			//warnx << "set: " << sigbuf << "\n";
+			minhash = myLSH->getHashCode(lshquerysig);
+		} else {
+			minhash = myLSH->getHashCode(querysig);
+		}
+
+		sort(minhash.begin(), minhash.end());
+
+		//warnx << "minhash.size(): " << minhash.size() << "\n";
+		/*
+		if (plist == 1) {
+			warnx << "sig" << n << ": ";
+			warnx << "minhash IDs: " << "\n";
+			for (int i = 0; i < (int)minhash.size(); i++) {
+				warnx << minhash[i] << "\n";
+			}
+		}
+		*/
+
+		//calcteamids(minhash);
+
+		if ((Qflag == 1 || gflag == 1) && msgtype != INVALID) {
+			std::vector<chordID> team;
+			chordID teamID;
+			team.clear();
+			beginTime = getgtod();    
+			for (int i = 0; i < (int)minhash.size(); i++) {
+				teamID = minhash[i];
+				warnx << "teamID: " << teamID << "\n";
+				// TODO: check return status
+				make_team(NULL, teamID, team);
+				range = team.size();
+				// randomness verified
+				//randcol = randomNumGenZ(range-1);
+				randcol = randomNumGenZ(range);
+				ID = team[randcol];
+				warnx << "ID in randcol " << randcol << ": " << ID << "\n";
+				strbuf t;
+				strbuf p;
+				t << ID;
+				p << team[0];
+				str key(t);
+				str teamID(p);
+				warnx << "inserting " << msgtype << ":\n";
+				makeKeyValue(&value, valLen, key, teamID, querysig, qid, msgtype);
+				totaltxmsglen += valLen;
+				status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
+				totalinstime += instime;
+				cleanup(value);
+
+				// do not exit if insert FAILs!
+				if (status != SUCC) {
+					// TODO: do I care?
+					warnx << "error: insert FAILed\n";
+				} else {
+					warnx << "insert SUCCeeded\n";
+				}
+
+				// TODO: how long (if at all)?
+				//warnx << "sleeping (lsh)...\n";
+
+				//initsleep = 0;
+				//delaycb(intval, 0, wrap(initsleepnow));
+				//while (initsleep == 0) acheck();
+			}
+			// don't forget to clear team list!
+			team.clear();
+			endTime = getgtod();
+			printdouble("lshquerysig: insert time (only): ", totalinstime);
+			totalinstime = 0;
+			warnx << "\n";
+			printdouble("lshquerysig: insert time (+others): ", endTime - beginTime);
+			warnx << "\n";
+		}
+		// needed?
+		minhash.clear();
+		delete myLSH;
+		++n;
+	}
+
+	return 0;
+}
+
+// TODO: verify
+int
+lshsig(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, int listnum = 0, int col = 0)
 {
 	std::vector<std::vector<chordID> > matrix;
 	std::vector<chordID> minhash;
@@ -430,7 +555,7 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 		beginTime = getgtod();    
 		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
 		endTime = getgtod();    
-		printdouble("lshchordID: lsh time: ", endTime - beginTime);
+		printdouble("lshsig: lsh time: ", endTime - beginTime);
 		warnx << "\n";
 		// convert multiset to set
 		if (uflag == 1) {
@@ -506,10 +631,10 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 			// don't forget to clear team list!
 			team.clear();
 			endTime = getgtod();
-			printdouble("lshchordID: insert time (only): ", totalinstime);
+			printdouble("lshsig: insert time (only): ", totalinstime);
 			totalinstime = 0;
 			warnx << "\n";
-			printdouble("lshchordID: insert time (+others): ", endTime - beginTime);
+			printdouble("lshsig: insert time (+others): ", endTime - beginTime);
 			warnx << "\n";
 		}
 		// needed?
@@ -549,7 +674,7 @@ lshchordID(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, i
 	return 0;
 }
 
-// TODO: allT -> totalT
+// obsolete: use lshsig instead
 int
 lshpoly(vecomap teamvecomap, std::vector<std::vector<POLY> > &matrix, int intval = -1, InsertType msgtype = INVALID, int listnum = 0, int col = 0)
 {
@@ -637,79 +762,6 @@ lshpoly(vecomap teamvecomap, std::vector<std::vector<POLY> > &matrix, int intval
 	return 0;
 }
 
-// obsolete: use lshchordID instead
-int
-querychordID(std::vector<std::vector<chordID> > &matrix, int intval = -1, InsertType msgtype = INVALID, int listnum = 0, int col = 0)
-{
-	std::vector<chordID> minhash;
-	std::vector<POLY> sig;
-	std::vector<POLY> lshsig;
-	chordID ID;
-	DHTStatus status;
-	char *value;
-	int valLen;
-	double freq, weight, instime;
-
-	minhash.clear();
-	sig.clear();
-	lshsig.clear();
-	for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
-		sig = itr->first;
-		freq = itr->second[0];
-		weight = itr->second[1];
-
-		lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
-		// convert multiset to set
-		if (uflag == 1) {
-			lshsig = myLSH->getUniqueSet(sig);
-			minhash = myLSH->getHashCode(lshsig);
-		} else {
-			minhash = myLSH->getHashCode(sig);
-		}
-
-		//matrix.push_back(minhash);
-
-		if (msgtype != INVALID) {
-			std::vector<chordID> team;
-			chordID teamID;
-			team.clear();
-
-			int range = (int)minhash.size();
-			// randomness verified
-			int randcol = randomNumGenZ(range);
-			ID = (matrix.back())[randcol];
-			//warnx << "ID in randcol " << randcol << ": " << ID << "\n";
-			strbuf t;
-			t << ID;
-			str key(t);
-			warnx << "inserting " << msgtype << ":\n";
-			// TODO: generate teamID
-			makeKeyValue(&value, valLen, key, key, sig, freq, weight, msgtype);
-			totaltxmsglen += valLen;
-			status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
-			cleanup(value);
-
-			// do not exit if insert FAILs!
-			if (status != SUCC) {
-				// TODO: do I care?
-				warnx << "error: insert FAILed\n";
-			} else {
-				warnx << "insert SUCCeeded\n";
-			}
-
-			// TODO: how long (if at all)?
-			//sleep(intval);
-			warnx << "sleeping (lsh)...\n";
-
-			initsleep = 0;
-			delaycb(intval, 0, wrap(initsleepnow));
-			while (initsleep == 0) acheck();
-		}
-		delete myLSH;
-	}
-	return 0;
-}
-
 int
 main(int argc, char *argv[])
 {
@@ -731,6 +783,7 @@ main(int argc, char *argv[])
 	std::vector<std::string> sigfiles;
 	std::vector<std::string> xpathfiles;
 	std::vector<std::vector<POLY> > sigList;
+	std::vector<std::vector<POLY> > queryList;
 	std::vector<POLY> sig;
 	std::vector<POLY> compressedList;
 	std::vector<std::vector<unsigned char> > outBitmap;
@@ -1151,8 +1204,7 @@ main(int argc, char *argv[])
 		for (unsigned int i = 0; i < xpathfiles.size(); i++) {
 			readquery(xpathfiles[i], queryList);
 		}
-		// store queries in a vector, not a map
-		// (different xpath queries may transform into the same sig)
+		add2querymap(queryList);
 		/*
 		warnx << "calculating frequencies...\n";
 		beginTime = getgtod();    
@@ -1165,10 +1217,16 @@ main(int argc, char *argv[])
 			// both init phases use allT
 			//printlist(allT, 0, -1);
 			warnx << "queries:\n";
+			for (multimapType::iterator itr = queryMap.begin(); itr != queryMap.end(); itr++) {
+				sig2str(itr->first, sigbuf);
+				warnx << "qid: " << itr->second << " querysig" << sigbuf << "\n";
+			}
+			/*
 			for (unsigned int i = 0; i < queryList.size(); i++) {
 				sig2str(queryList[i], sigbuf);
 				warnx << "query" << i << ": " << sigbuf << "\n";
 			}
+			*/
 		}
 	}
 
@@ -1179,28 +1237,28 @@ main(int argc, char *argv[])
 		double totalavg = 0;
 		bool multi;
 		warnx << "running xpath queries locally...\n";
-		for (unsigned int i = 0; i < queryList.size(); i++) {
+		for (multimapType::iterator qitr = queryMap.begin(); qitr != queryMap.end(); qitr++) {
 			// find if the query sig is a subset of any of the sigs
-			for (mapType::iterator itr = allT[0].begin(); itr != allT[0].end(); itr++) {
-				ninter = set_inter_noskip(queryList[i], itr->first, multi);
+			for (mapType::iterator sitr = allT[0].begin(); sitr != allT[0].end(); sitr++) {
+				ninter = set_inter_noskip(qitr->first, sitr->first, multi);
 				//warnx << "ninter: " << ninter << ", querysig.size(): " << queryList[i].size() << "\n";
-				if (ninter == (int)queryList[i].size()) {
+				if (ninter == (int)qitr->first.size()) {
 					++sigmatches;
-					totalavg += (itr->second[0]/itr->second[1]);
+					totalavg += (sitr->second[0]/sitr->second[1]);
 					if (plist == 1) {
 						//warnx << "superset sig found: ";
-						sig2str(itr->first, sigbuf);
+						sig2str(sitr->first, sigbuf);
 						warnx << "supersetsig: " << sigbuf;
-						printdouble(" f: ", itr->second[0]);
-						printdouble(" w: ", itr->second[1]);
-						printdouble(" avg: ", itr->second[0]/itr->second[1]);
+						printdouble(" f: ", sitr->second[0]);
+						printdouble(" w: ", sitr->second[1]);
+						printdouble(" avg: ", sitr->second[0]/sitr->second[1]);
 						warnx << "\n";
 						//if (multi == 1) warnx << "superset sig is a multiset\n";
 					}
 				}
 			}
-			sig2str(queryList[i], sigbuf);
-			warnx << "querysig" << i << ": " << sigbuf;
+			sig2str(qitr->first, sigbuf);
+			warnx << "qid: " << qitr->second << " querysig: " << sigbuf;
 			warnx << " sigmatches: " << sigmatches;
 			printdouble(" totalavg: ", totalavg);
 			warnx << "\n";
@@ -1245,7 +1303,7 @@ main(int argc, char *argv[])
 			pmatrix.clear();
 		// InitGossipSend: use compute_hash()
 		} else {
-			lshchordID(allT, initintval, INITGOSSIP);
+			lshsig(allT, initintval, INITGOSSIP);
 		}
 
 		endTime = getgtod();    
@@ -1477,10 +1535,10 @@ main(int argc, char *argv[])
 		beginTime = getgtod();
 		if (xflag == 1) {
 			warnx << "using xpath...\n";
-			lshchordID(allT, initintval, QUERYX);
+			lshquery(queryMap, initintval, QUERYX);
 		} else {
 			warnx << "using sig...\n";
-			lshchordID(allT, initintval, QUERYS);
+			lshsig(allT, initintval, QUERYS);
 		}
 		endTime = getgtod();    
 		printdouble("query time: ", endTime - beginTime - initintval);
@@ -1798,12 +1856,13 @@ readgossip(int fd)
 	std::vector<POLY> sig;
 	std::vector<POLY> querysig;
 	double freq, weight;
-	int n, msglen, recvlen, nothing, tind, ninter;
+	int n, msglen, recvlen, nothing, tind, ninter, qid;
 	int ret, seq;
 	bool multi;
 
 	ninter = msglen = recvlen = nothing = 0;
 	multi = 0;
+	qid = -1;
 	warnx << "reading from socket:\n";
 
 	do {
@@ -1967,15 +2026,17 @@ readgossip(int fd)
 		str2chordID(keyteamid, teamID);
 		initgossiprecv(ID, teamID, sig, freq, weight);
 	} else if (msgtype == QUERYS || msgtype == QUERYX) {
+		querysig.clear();
+
 		if (msgtype == QUERYS) {
 			warnx << "QUERYS";
+			// TODO: do we need the freq/weight of the query sig?
+			ret = getKeyValue(gmsg.cstr(), key, keyteamid, querysig, freq, weight, recvlen);
 		} else {
-			// TODO: handle Xpath queries
 			warnx << "QUERYX";
+			ret = getKeyValue(gmsg.cstr(), key, keyteamid, querysig, qid, recvlen);
 		}
 
-		querysig.clear();
-		ret = getKeyValue(gmsg.cstr(), key, keyteamid, querysig, freq, weight, recvlen);
 		if (ret == -1) {
 			warnx << "error: getKeyValue failed\n";
 			fdcb(fd, selread, NULL);
@@ -1987,7 +2048,8 @@ readgossip(int fd)
 		warnx << " rxID: " << key;
 		warnx << " teamID: " << keyteamid << "\n";
 		sig2str(querysig, sigbuf);
-		warnx << "querysig: " << sigbuf << "\n";
+		warnx << "qid: " << qid;
+		warnx << " querysig: " << sigbuf << "\n";
 		warnx << "query result: ";
 
 		// find if list for team exists
@@ -2015,27 +2077,24 @@ readgossip(int fd)
 			// find if the query sig is a subset of any of the sigs
 			for (mapType::iterator itr = totalT[tind][0].begin(); itr != totalT[tind][0].end(); itr++) {
 				ninter = set_inter_noskip(querysig, itr->first, multi);
-				warnx << "ninter: " << ninter << ", querysig.size(): " << querysig.size() << "\n";
+				//warnx << "ninter: " << ninter << ", querysig.size(): " << querysig.size() << "\n";
 				if (ninter == (int)querysig.size()) {
 					sigfound = 1;
 					warnx << "superset sig found: ";
 					sig2str(querysig, sigbuf);
 					warnx << "query sig: " << sigbuf;
 					sig2str(itr->first, sigbuf);
-					warnx << ", superset sig: " << sigbuf;
-					printdouble(", f: ", itr->second[0]);
-					printdouble(", w: ", itr->second[1]);
-					printdouble(", avg: ", itr->second[0]/itr->second[1]);
+					warnx << " superset sig: " << sigbuf;
+					printdouble(" f: ", itr->second[0]);
+					printdouble(" w: ", itr->second[1]);
+					printdouble(" avg: ", itr->second[0]/itr->second[1]);
 					warnx << "\n";
 					if (multi == 1) warnx << "superset sig is a multiset\n";
 				}
 			}
 
-			if (sigfound == 0) {
+			if (sigfound == 0)
 				warnx << "exact sig NOT found, superset sig NOT found\n";
-			} else {
-				// TODO: ?
-			}
 		} else {
 			warnx << "teamID NOT found\n";
 		}
@@ -2674,6 +2733,18 @@ sig2str(std::vector<POLY> sig, str &buf)
 	return true;
 }
 
+void
+add2querymap(std::vector<std::vector<POLY> > queryList)
+{
+	int qid = 0;
+
+	for (int i = 0; i < (int)queryList.size(); i++) {
+		queryMap.insert(std::pair<std::vector<POLY>, int>(queryList[i], qid));
+		++qid;
+	}
+	warnx << "queries added: " << qid << "\n";
+}
+
 // verified
 // use allT only in init phases
 void
@@ -2686,7 +2757,7 @@ calcfreq(std::vector<std::vector<POLY> > sigList)
 	uniqueSigList[sigList[0]].push_back(1);
 
 	// skip dummy
-	for (int i = 1; i < (int) sigList.size(); i++) {
+	for (int i = 1; i < (int)sigList.size(); i++) {
 		mapType::iterator itr = uniqueSigList.find(sigList[i]);
 		if (itr != uniqueSigList.end()) {
 			// do not increment weight when sig has duplicates!
