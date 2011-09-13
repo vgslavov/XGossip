@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.87 2011/09/10 21:36:43 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.88 2011/09/12 18:26:06 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.87 2011/09/10 21:36:43 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.88 2011/09/12 18:26:06 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1219,7 +1219,7 @@ main(int argc, char *argv[])
 			warnx << "queries:\n";
 			for (multimapType::iterator itr = queryMap.begin(); itr != queryMap.end(); itr++) {
 				sig2str(itr->first, sigbuf);
-				warnx << "qid: " << itr->second << " querysig" << sigbuf << "\n";
+				warnx << "qid: " << itr->second << " querysig: " << sigbuf << "\n";
 			}
 			/*
 			for (unsigned int i = 0; i < queryList.size(); i++) {
@@ -1245,6 +1245,7 @@ main(int argc, char *argv[])
 				if (ninter == (int)qitr->first.size()) {
 					++sigmatches;
 					totalavg += (sitr->second[0]/sitr->second[1]);
+					/*
 					if (plist == 1) {
 						//warnx << "superset sig found: ";
 						sig2str(sitr->first, sigbuf);
@@ -1255,6 +1256,7 @@ main(int argc, char *argv[])
 						warnx << "\n";
 						//if (multi == 1) warnx << "superset sig is a multiset\n";
 					}
+					*/
 				}
 			}
 			sig2str(qitr->first, sigbuf);
@@ -1855,14 +1857,15 @@ readgossip(int fd)
 	InsertType msgtype;
 	std::vector<POLY> sig;
 	std::vector<POLY> querysig;
-	double freq, weight;
-	int n, msglen, recvlen, nothing, tind, ninter, qid;
+	double freq, weight, totalavg;
+	int n, msglen, recvlen, nothing, tind, ninter, qid, sigmatches;
 	int ret, seq;
 	bool multi;
 
-	ninter = msglen = recvlen = nothing = 0;
+	sigmatches = ninter = msglen = recvlen = nothing = 0;
 	multi = 0;
 	qid = -1;
+	totalavg = 0;
 	warnx << "reading from socket:\n";
 
 	do {
@@ -2048,19 +2051,20 @@ readgossip(int fd)
 		warnx << " rxID: " << key;
 		warnx << " teamID: " << keyteamid << "\n";
 		sig2str(querysig, sigbuf);
-		warnx << "qid: " << qid;
-		warnx << " querysig: " << sigbuf << "\n";
-		warnx << "query result: ";
+		warnx << "queryresult: ";
 
 		// find if list for team exists
 		str2chordID(keyteamid, teamID);
 		teamid2totalT::iterator teamitr = teamindex.find(teamID);
 		if (teamitr != teamindex.end()) {
-			bool sigfound = 0;
 			tind = teamitr->second[0];
-			warnx << "teamID found at teamindex[" << tind << "]\n";
+			//warnx << "teamID found at teamindex[" << tind << "]";
+			warnx << "teamID found"; 
+			warnx << " qid: " << qid << " querysig: " << sigbuf;
 			mapType::iterator sigitr = totalT[tind][0].find(querysig);
+			// TODO: this is more efficient, but duplicates results of superset below
 			// exact signature found
+			/*
 			if (sigitr != totalT[tind][0].end()) {
 				freq = sigitr->second[0];
 				weight = sigitr->second[1];
@@ -2073,13 +2077,16 @@ readgossip(int fd)
 				warnx << "\n";
 				sigfound = 1;
 			}
+			*/
 
 			// find if the query sig is a subset of any of the sigs
 			for (mapType::iterator itr = totalT[tind][0].begin(); itr != totalT[tind][0].end(); itr++) {
 				ninter = set_inter_noskip(querysig, itr->first, multi);
 				//warnx << "ninter: " << ninter << ", querysig.size(): " << querysig.size() << "\n";
 				if (ninter == (int)querysig.size()) {
-					sigfound = 1;
+					++sigmatches;
+					totalavg += (itr->second[0]/itr->second[1]);
+					/*
 					warnx << "superset sig found: ";
 					sig2str(querysig, sigbuf);
 					warnx << "query sig: " << sigbuf;
@@ -2090,13 +2097,20 @@ readgossip(int fd)
 					printdouble(" avg: ", itr->second[0]/itr->second[1]);
 					warnx << "\n";
 					if (multi == 1) warnx << "superset sig is a multiset\n";
+					*/
 				}
 			}
 
-			if (sigfound == 0)
-				warnx << "exact sig NOT found, superset sig NOT found\n";
+			sig2str(querysig, sigbuf);
+			//warnx << "qid: " << qid << " querysig: " << sigbuf;
+			warnx << " sigmatches: " << sigmatches;
+			printdouble(" totalavg: ", totalavg);
+			warnx << "\n";
+			sigmatches = 0;
+			totalavg = 0;
 		} else {
-			warnx << "teamID NOT found\n";
+			warnx << "teamID NOT found";
+			warnx << " qid: " << qid << " querysig: " << sigbuf << "\n";
 		}
 
 		/*
