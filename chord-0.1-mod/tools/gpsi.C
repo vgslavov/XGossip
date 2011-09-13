@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.88 2011/09/12 18:26:06 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.89 2011/09/13 16:20:55 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.88 2011/09/12 18:26:06 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.89 2011/09/13 16:20:55 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -109,6 +109,7 @@ int getdir(std::string, std::vector<std::string>&);
 void calcfreq(std::vector<std::vector <POLY> >);
 void calcfreqM(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 void calcteamids(std::vector <chordID>);
+void delspecial(int);
 void dividefreq(vecomap&, int, int, int);
 void doublefreqgroup(int, mapType);
 chordID findteamid(int);
@@ -138,7 +139,7 @@ void readgossip(int);
 void readquery(std::string, std::vector<std::vector <POLY> >&);
 void readsig(std::string, std::vector<std::vector <POLY> >&);
 void readValues(FILE *, std::multimap<POLY, std::pair<std::string, enum OPTYPE> >&);
-void delspecial(int);
+void run_query(int, std::vector<POLY>, int &, double &);
 bool sig2str(std::vector<POLY>, str&);
 bool string2sig(std::string, std::vector<POLY>&);
 bool sigcmp(std::vector<POLY>, std::vector<POLY>);
@@ -1219,7 +1220,7 @@ main(int argc, char *argv[])
 			warnx << "queries:\n";
 			for (multimapType::iterator itr = queryMap.begin(); itr != queryMap.end(); itr++) {
 				sig2str(itr->first, sigbuf);
-				warnx << "qid: " << itr->second << " querysig: " << sigbuf << "\n";
+				warnx << "QID: " << itr->second << " QUERYSIG: " << sigbuf << "\n";
 			}
 			/*
 			for (unsigned int i = 0; i < queryList.size(); i++) {
@@ -1234,7 +1235,7 @@ main(int argc, char *argv[])
 	if (rflag == 1 && sflag == 1 && xflag == 1) {
 		int ninter;
 		int sigmatches = 0;
-		double totalavg = 0;
+		double totalfreq = 0;
 		bool multi;
 		warnx << "running xpath queries locally...\n";
 		for (multimapType::iterator qitr = queryMap.begin(); qitr != queryMap.end(); qitr++) {
@@ -1244,7 +1245,9 @@ main(int argc, char *argv[])
 				//warnx << "ninter: " << ninter << ", querysig.size(): " << queryList[i].size() << "\n";
 				if (ninter == (int)qitr->first.size()) {
 					++sigmatches;
-					totalavg += (sitr->second[0]/sitr->second[1]);
+					// weight is always 1
+					totalfreq += sitr->second[0];
+					//totalavg += (sitr->second[0]/sitr->second[1]);
 					/*
 					if (plist == 1) {
 						//warnx << "superset sig found: ";
@@ -1260,12 +1263,13 @@ main(int argc, char *argv[])
 				}
 			}
 			sig2str(qitr->first, sigbuf);
-			warnx << "qid: " << qitr->second << " querysig: " << sigbuf;
+			warnx << "qid: " << qitr->second;
+			warnx << " querysig: " << sigbuf;
 			warnx << " sigmatches: " << sigmatches;
-			printdouble(" totalavg: ", totalavg);
+			printdouble(" totalfreq: ", totalfreq);
 			warnx << "\n";
 			sigmatches = 0;
-			totalavg = 0;
+			totalfreq = 0;
 		}
 	}
 
@@ -2030,7 +2034,6 @@ readgossip(int fd)
 		initgossiprecv(ID, teamID, sig, freq, weight);
 	} else if (msgtype == QUERYS || msgtype == QUERYX) {
 		querysig.clear();
-
 		if (msgtype == QUERYS) {
 			warnx << "QUERYS";
 			// TODO: do we need the freq/weight of the query sig?
@@ -2051,70 +2054,49 @@ readgossip(int fd)
 		warnx << " rxID: " << key;
 		warnx << " teamID: " << keyteamid << "\n";
 		sig2str(querysig, sigbuf);
-		warnx << "queryresult: ";
 
 		// find if list for team exists
 		str2chordID(keyteamid, teamID);
 		teamid2totalT::iterator teamitr = teamindex.find(teamID);
 		if (teamitr != teamindex.end()) {
 			tind = teamitr->second[0];
-			//warnx << "teamID found at teamindex[" << tind << "]";
+			warnx << "queryresult: ";
 			warnx << "teamID found"; 
+			//warnx << "teamID found at teamindex[" << tind << "]";
 			warnx << " qid: " << qid << " querysig: " << sigbuf;
-			mapType::iterator sigitr = totalT[tind][0].find(querysig);
-			// TODO: this is more efficient, but duplicates results of superset below
-			// exact signature found
-			/*
-			if (sigitr != totalT[tind][0].end()) {
-				freq = sigitr->second[0];
-				weight = sigitr->second[1];
-				warnx << "exact sig found: ";
-				warnx << "sig: " << sigbuf;
-				sig2str(sig, sigbuf);
-				printdouble(", f: ", freq);
-				printdouble(", w: ", weight);
-				printdouble(", avg: ", freq/weight);
-				warnx << "\n";
-				sigfound = 1;
-			}
-			*/
-
-			// find if the query sig is a subset of any of the sigs
-			for (mapType::iterator itr = totalT[tind][0].begin(); itr != totalT[tind][0].end(); itr++) {
-				ninter = set_inter_noskip(querysig, itr->first, multi);
-				//warnx << "ninter: " << ninter << ", querysig.size(): " << querysig.size() << "\n";
-				if (ninter == (int)querysig.size()) {
-					++sigmatches;
-					totalavg += (itr->second[0]/itr->second[1]);
-					/*
-					warnx << "superset sig found: ";
-					sig2str(querysig, sigbuf);
-					warnx << "query sig: " << sigbuf;
-					sig2str(itr->first, sigbuf);
-					warnx << " superset sig: " << sigbuf;
-					printdouble(" f: ", itr->second[0]);
-					printdouble(" w: ", itr->second[1]);
-					printdouble(" avg: ", itr->second[0]/itr->second[1]);
-					warnx << "\n";
-					if (multi == 1) warnx << "superset sig is a multiset\n";
-					*/
-				}
-			}
-
-			sig2str(querysig, sigbuf);
-			//warnx << "qid: " << qid << " querysig: " << sigbuf;
+			sigmatches = 0;
+			totalavg = 0;
+			run_query(tind, querysig, sigmatches, totalavg);
 			warnx << " sigmatches: " << sigmatches;
 			printdouble(" totalavg: ", totalavg);
-			warnx << "\n";
+			warnx << " teamID: " << teamID << "\n";
 			sigmatches = 0;
 			totalavg = 0;
 		} else {
+			/*
+			warnx << "queryresult: ";
 			warnx << "teamID NOT found";
-			warnx << " qid: " << qid << " querysig: " << sigbuf << "\n";
+			warnx << " qid: " << qid << " querysig: " << sigbuf;
+			warnx << " teamID: " << teamID << "\n";
+			*/
+			for (int i = 0; i < (int)totalT.size(); i++) {
+				warnx << "queryresult: ";
+				warnx << "teamID NOT found";
+				warnx << " qid: " << qid << " querysig: " << sigbuf;
+				sigmatches = 0;
+				totalavg = 0;
+				run_query(i, querysig, sigmatches, totalavg);
+				teamID = findteamid(i);
+				warnx << " sigmatches: " << sigmatches;
+				printdouble(" totalavg: ", totalavg);
+				warnx << " teamID: " << teamID << "\n";
+				sigmatches = 0;
+				totalavg = 0;
+			}
 		}
 
-		/*
 		// TODO: search other lists (not yet merged) and for other sigs?
+		/*
 		mapType::iterator itr = allT[0].find(sig);
 		if (itr != allT[0].end()) {
 			freq = itr->second[0];
@@ -2137,6 +2119,53 @@ readgossip(int fd)
 	fdcb(fd, selread, NULL);
 	close(fd);
 	++closefd;
+}
+
+void
+run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalavg)
+{
+	int ninter;
+	bool multi;
+
+	// TODO: this is more efficient, but duplicates results of superset below
+	/*
+	mapType::iterator sigitr = totalT[tind][0].find(querysig);
+	// exact signature found
+	if (sigitr != totalT[tind][0].end()) {
+		freq = sigitr->second[0];
+		weight = sigitr->second[1];
+		warnx << "exact sig found: ";
+		warnx << "sig: " << sigbuf;
+		sig2str(sig, sigbuf);
+		printdouble(", f: ", freq);
+		printdouble(", w: ", weight);
+		printdouble(", avg: ", freq/weight);
+		warnx << "\n";
+		sigfound = 1;
+	}
+	*/
+
+	// find if the query sig is a subset of any of the sigs
+	for (mapType::iterator itr = totalT[tind][0].begin(); itr != totalT[tind][0].end(); itr++) {
+		ninter = set_inter_noskip(querysig, itr->first, multi);
+		//warnx << "ninter: " << ninter << ", querysig.size(): " << querysig.size() << "\n";
+		if (ninter == (int)querysig.size()) {
+			++sigmatches;
+			totalavg += (itr->second[0]/itr->second[1]);
+			/*
+			warnx << "superset sig found: ";
+			sig2str(querysig, sigbuf);
+			warnx << "query sig: " << sigbuf;
+			sig2str(itr->first, sigbuf);
+			warnx << " superset sig: " << sigbuf;
+			printdouble(" f: ", itr->second[0]);
+			printdouble(" w: ", itr->second[1]);
+			printdouble(" avg: ", itr->second[0]/itr->second[1]);
+			warnx << "\n";
+			if (multi == 1) warnx << "superset sig is a multiset\n";
+			*/
+		}
+	}
 }
 
 int
