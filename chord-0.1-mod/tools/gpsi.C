@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.89 2011/09/13 16:20:55 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.90 2011/09/13 19:50:44 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.89 2011/09/13 16:20:55 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.90 2011/09/13 19:50:44 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -2079,19 +2079,33 @@ readgossip(int fd)
 			warnx << " qid: " << qid << " querysig: " << sigbuf;
 			warnx << " teamID: " << teamID << "\n";
 			*/
+			bool sigfound = 0;
 			for (int i = 0; i < (int)totalT.size(); i++) {
-				warnx << "queryresult: ";
-				warnx << "teamID NOT found";
-				warnx << " qid: " << qid << " querysig: " << sigbuf;
 				sigmatches = 0;
 				totalavg = 0;
 				run_query(i, querysig, sigmatches, totalavg);
+				if (sigmatches == 0) {
+					continue;
+				}
+				sigfound = 1;
+				warnx << "queryresult: ";
+				warnx << "teamID NOT found";
+				warnx << " qid: " << qid << " querysig: " << sigbuf;
 				teamID = findteamid(i);
 				warnx << " sigmatches: " << sigmatches;
 				printdouble(" totalavg: ", totalavg);
 				warnx << " teamID: " << teamID << "\n";
 				sigmatches = 0;
 				totalavg = 0;
+			}
+
+			if (sigfound == 0) {
+				warnx << "queryresult: ";
+				warnx << "teamID NOT found";
+				warnx << " qid: " << qid << " querysig: " << sigbuf;
+				warnx << " sigmatches: " << sigmatches;
+				printdouble(" totalavg: ", totalavg);
+				warnx << " teamID: " << teamID << "\n";
 			}
 		}
 
