@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.90 2011/09/13 19:50:44 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.91 2011/09/14 14:42:20 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.90 2011/09/13 19:50:44 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.91 2011/09/14 14:42:20 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -2064,21 +2064,23 @@ readgossip(int fd)
 			warnx << "teamID found"; 
 			//warnx << "teamID found at teamindex[" << tind << "]";
 			warnx << " qid: " << qid << " querysig: " << sigbuf;
-			sigmatches = 0;
-			totalavg = 0;
-			run_query(tind, querysig, sigmatches, totalavg);
-			warnx << " sigmatches: " << sigmatches;
-			printdouble(" totalavg: ", totalavg);
 			warnx << " teamID: " << teamID << "\n";
 			sigmatches = 0;
 			totalavg = 0;
+			run_query(tind, querysig, sigmatches, totalavg);
+			warnx << "queryresultend: ";
+			warnx << " sigmatches: " << sigmatches;
+			printdouble(" totalavg: ", totalavg);
+			warnx << "\n";
+			sigmatches = 0;
+			totalavg = 0;
 		} else {
-			/*
 			warnx << "queryresult: ";
 			warnx << "teamID NOT found";
 			warnx << " qid: " << qid << " querysig: " << sigbuf;
 			warnx << " teamID: " << teamID << "\n";
-			*/
+
+			/*
 			bool sigfound = 0;
 			for (int i = 0; i < (int)totalT.size(); i++) {
 				sigmatches = 0;
@@ -2107,6 +2109,7 @@ readgossip(int fd)
 				printdouble(" totalavg: ", totalavg);
 				warnx << " teamID: " << teamID << "\n";
 			}
+			*/
 		}
 
 		// TODO: search other lists (not yet merged) and for other sigs?
@@ -2140,6 +2143,7 @@ run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalav
 {
 	int ninter;
 	bool multi;
+	str sigbuf;
 
 	// TODO: this is more efficient, but duplicates results of superset below
 	/*
@@ -2166,18 +2170,13 @@ run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalav
 		if (ninter == (int)querysig.size()) {
 			++sigmatches;
 			totalavg += (itr->second[0]/itr->second[1]);
-			/*
-			warnx << "superset sig found: ";
-			sig2str(querysig, sigbuf);
-			warnx << "query sig: " << sigbuf;
 			sig2str(itr->first, sigbuf);
-			warnx << " superset sig: " << sigbuf;
+			warnx << "supersetsig: " << sigbuf;
 			printdouble(" f: ", itr->second[0]);
 			printdouble(" w: ", itr->second[1]);
 			printdouble(" avg: ", itr->second[0]/itr->second[1]);
 			warnx << "\n";
-			if (multi == 1) warnx << "superset sig is a multiset\n";
-			*/
+			//if (multi == 1) warnx << "superset sig is a multiset\n";
 		}
 	}
 }
