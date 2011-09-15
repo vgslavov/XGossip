@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.91 2011/09/14 14:42:20 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.92 2011/09/14 19:31:32 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.91 2011/09/14 14:42:20 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.92 2011/09/14 19:31:32 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -166,6 +166,7 @@ bool retrieveError;
 //std::map<std::vector<POLY>, double, CompareSig> uniqueWeightList;
 
 //std::vector<int> rxmsglen;
+std::vector<int> rxqseq;
 std::vector<int> rxseq;
 std::vector<int> txseq;
 
@@ -794,10 +795,12 @@ main(int argc, char *argv[])
 	gintval = waitintval = nids = 0;
 	initintval = -1;
 	rounds = -1;
+	rxqseq.clear();
 	rxseq.clear();
 	txseq.clear();
 	// init txseq: txseq.back() segfaults!
 	txseq.push_back(0);
+	rxqseq.push_back(0);
 	// init dummysig: segfault!
 	dummysig.clear();
 	dummysig.push_back(1);
@@ -2060,23 +2063,25 @@ readgossip(int fd)
 		teamid2totalT::iterator teamitr = teamindex.find(teamID);
 		if (teamitr != teamindex.end()) {
 			tind = teamitr->second[0];
-			warnx << "queryresult: ";
-			warnx << "teamID found"; 
+			warnx << "queryresult:";
+			warnx << " teamID found"; 
 			//warnx << "teamID found at teamindex[" << tind << "]";
 			warnx << " qid: " << qid << " querysig: " << sigbuf;
 			warnx << " teamID: " << teamID << "\n";
 			sigmatches = 0;
 			totalavg = 0;
 			run_query(tind, querysig, sigmatches, totalavg);
-			warnx << "queryresultend: ";
+			warnx << "queryresultend:";
+			warnx << " rxqseq: " << rxqseq.back();
 			warnx << " sigmatches: " << sigmatches;
 			printdouble(" totalavg: ", totalavg);
 			warnx << "\n";
 			sigmatches = 0;
 			totalavg = 0;
+			rxqseq.push_back(rxqseq.back() + 1);
 		} else {
-			warnx << "queryresult: ";
-			warnx << "teamID NOT found";
+			warnx << "queryresult:";
+			warnx << " teamID NOT found";
 			warnx << " qid: " << qid << " querysig: " << sigbuf;
 			warnx << " teamID: " << teamID << "\n";
 
