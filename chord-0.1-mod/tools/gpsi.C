@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.93 2011/09/15 16:16:54 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.94 2011/09/19 18:15:42 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.93 2011/09/15 16:16:54 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.94 2011/09/19 18:15:42 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -162,7 +162,7 @@ void readgossip(int);
 void readquery(std::string, std::vector<std::vector <POLY> >&);
 void readsig(std::string, std::vector<std::vector <POLY> >&);
 void readValues(FILE *, std::multimap<POLY, std::pair<std::string, enum OPTYPE> >&);
-void run_query(int, std::vector<POLY>, int &, double &, chordID = 0);
+int run_query(int, std::vector<POLY>, int &, double &, InsertType, chordID = 0);
 bool sig2str(std::vector<POLY>, str&);
 bool string2sig(std::string, std::vector<POLY>&);
 bool sigcmp(std::vector<POLY>, std::vector<POLY>);
@@ -1240,7 +1240,7 @@ main(int argc, char *argv[])
 		*/
 	}
 
-	// reading and querying using XPath files
+	// reading or querying using XPath files
 	if ((rflag == 1 || Qflag == 1) && xflag == 1) {
 		getdir(xpathdir, xpathfiles);
 		queryList.clear();
@@ -2189,7 +2189,7 @@ readgossip(int fd)
 			warnx << " teamID: " << teamID << "\n";
 			sigmatches = 0;
 			totalavg = 0;
-			run_query(tind, querysig, sigmatches, totalavg);
+			run_query(tind, querysig, sigmatches, totalavg, msgtype);
 			warnx << "queryresultend:";
 			warnx << " rxqseq: " << rxqseq.back();
 			warnx << " sigmatches: " << sigmatches;
@@ -2214,7 +2214,7 @@ readgossip(int fd)
 			totalavg = 0;
 			for (int i = 0; i < (int)totalT.size(); i++) {
 				teamID = findteamid(i);
-				run_query(i, querysig, sigmatches, totalavg, teamID);
+				run_query(i, querysig, sigmatches, totalavg, msgtype, teamID);
 			}
 
 			warnx << "queryresultend:";
@@ -2251,49 +2251,55 @@ readgossip(int fd)
 	++closefd;
 }
 
-void
-run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalavg, chordID teamID)
+int
+run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalavg, InsertType msgtype, chordID teamID)
 {
 	int ninter;
 	bool multi;
 	str sigbuf;
 
-	// TODO: this is more efficient, but duplicates results of superset below
-	/*
-	mapType::iterator sigitr = totalT[tind][0].find(querysig);
-	// exact signature found
-	if (sigitr != totalT[tind][0].end()) {
-		freq = sigitr->second[0];
-		weight = sigitr->second[1];
-		warnx << "exact sig found: ";
-		warnx << "sig: " << sigbuf;
-		sig2str(sig, sigbuf);
-		printdouble(", f: ", freq);
-		printdouble(", w: ", weight);
-		printdouble(", avg: ", freq/weight);
-		warnx << "\n";
-		sigfound = 1;
-	}
-	*/
-
-	// find if the query sig is a subset of any of the sigs
-	for (mapType::iterator itr = totalT[tind][0].begin(); itr != totalT[tind][0].end(); itr++) {
-		ninter = set_inter_noskip(querysig, itr->first, multi);
-		//warnx << "ninter: " << ninter << ", querysig.size(): " << querysig.size() << "\n";
-		if (ninter == (int)querysig.size()) {
+	// search for exact sig match
+	if (msgtype == QUERYS) {
+		mapType::iterator sigitr = totalT[tind][0].find(querysig);
+		// exact signature found
+		if (sigitr != totalT[tind][0].end()) {
 			++sigmatches;
-			totalavg += (itr->second[0]/itr->second[1]);
-			sig2str(itr->first, sigbuf);
-			warnx << "supersetsig: " << sigbuf;
-			printdouble(" f: ", itr->second[0]);
-			printdouble(" w: ", itr->second[1]);
-			printdouble(" avg: ", itr->second[0]/itr->second[1]);
+			totalavg += (sigitr->second[0]/sigitr->second[1]);
+			sig2str(sigitr->first, sigbuf);
+			warnx << "exactsig: " << sigbuf;
+			printdouble(", f: ", sigitr->second[0]);
+			printdouble(", w: ", sigitr->second[1]);
+			printdouble(", avg: ", sigitr->second[0]/sigitr->second[1]);
 			// teamID is set only when running queries for "teamID-NOT-found"
 			if (teamID != 0) warnx << " teamID: " << teamID;
 			warnx << "\n";
-			//if (multi == 1) warnx << "superset sig is a multiset\n";
 		}
+	// search for superset
+	} else if (msgtype == QUERYX) {
+		// find if the query sig is a subset of any of the sigs
+		for (mapType::iterator itr = totalT[tind][0].begin(); itr != totalT[tind][0].end(); itr++) {
+			ninter = set_inter_noskip(querysig, itr->first, multi);
+			//warnx << "ninter: " << ninter << ", querysig.size(): " << querysig.size() << "\n";
+			if (ninter == (int)querysig.size()) {
+				++sigmatches;
+				totalavg += (itr->second[0]/itr->second[1]);
+				sig2str(itr->first, sigbuf);
+				warnx << "supersetsig: " << sigbuf;
+				printdouble(" f: ", itr->second[0]);
+				printdouble(" w: ", itr->second[1]);
+				printdouble(" avg: ", itr->second[0]/itr->second[1]);
+				// teamID is set only when running queries for "teamID-NOT-found"
+				if (teamID != 0) warnx << " teamID: " << teamID;
+				warnx << "\n";
+				//if (multi == 1) warnx << "superset sig is a multiset\n";
+			}
+		}
+	} else {
+		warnx << "invalid msgtype: " << msgtype << "\n";
+		return -1;
 	}
+
+	return 0;
 }
 
 int
@@ -2329,9 +2335,9 @@ loadresults(FILE *initfp)
 		sig.clear();
 		int toksize = tokens.size();
 		if (strcmp(tokens[0].c_str(), "queryresult") == 0) {
-			qid = strtol(tokens[4].c_str(), NULL, 10);
+			qid = strtol(tokens[3].c_str(), NULL, 10);
 			querysig.clear();
-			string2sig(tokens[6], querysig);
+			string2sig(tokens[5], querysig);
 			// strip "\n" from teamID
 			std::string t = tokens[toksize-1].substr(0,tokens[toksize-1].size()-1);
 			str z(t.c_str());
