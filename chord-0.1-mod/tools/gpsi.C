@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.94 2011/09/19 18:15:42 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.95 2011/09/20 17:41:12 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.94 2011/09/19 18:15:42 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.95 2011/09/20 17:41:12 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -128,7 +128,7 @@ void add2vecomapx(std::vector<std::vector <POLY> >, std::vector<double>, std::ve
 // VanillaXGossip
 void add2vecomapv(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 int getdir(std::string, std::vector<std::string>&);
-void calcfreq(std::vector<std::vector <POLY> >);
+void calcfreq(std::vector<std::vector <POLY> >, bool);
 void calcfreqM(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 void calcteamids(std::vector <chordID>);
 void delspecial(int);
@@ -633,6 +633,11 @@ lshsig(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, int l
 				str key(t);
 				str teamID(p);
 				warnx << "inserting " << msgtype << ":\n";
+				sig2str(sig, sigbuf);
+				warnx << "txsig: " << sigbuf;
+				printdouble(" ", freq);
+				printdouble(" ", weight);
+				warnx << "\n";
 				makeKeyValue(&value, valLen, key, teamID, sig, freq, weight, msgtype);
 				totaltxmsglen += valLen;
 				status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
@@ -647,12 +652,10 @@ lshsig(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, int l
 					warnx << "insert SUCCeeded\n";
 				}
 
-				// TODO: how long (if at all)?
-				//warnx << "sleeping (lsh)...\n";
-
-				//initsleep = 0;
-				//delaycb(intval, 0, wrap(initsleepnow));
-				//while (initsleep == 0) acheck();
+				warnx << "sleeping (lsh)...\n";
+				initsleep = 0;
+				delaycb(intval, 0, wrap(initsleepnow));
+				while (initsleep == 0) acheck();
 			}
 			// don't forget to clear team list!
 			team.clear();
@@ -1168,7 +1171,9 @@ main(int argc, char *argv[])
 		// insert dummy
 		// the polynomial "1" has a degree 0
 		// don't add dummy when querying and when gossiping using LSH
+		bool usedummy = 0;
 		if (Hflag == 0 && Qflag == 0) {
+			usedummy = 1;
 			sigList.push_back(dummysig);
 		}
 
@@ -1179,7 +1184,7 @@ main(int argc, char *argv[])
 		warnx << "calculating frequencies...\n";
 		beginTime = getgtod();    
 		warnx << "sigList.size() (all): " << sigList.size() << "\n";
-		calcfreq(sigList);
+		calcfreq(sigList, usedummy);
 		endTime = getgtod();    
 		printdouble("calcfreq time (+sorting): ", endTime - beginTime);
 		warnx << "\n";
@@ -1370,9 +1375,11 @@ main(int argc, char *argv[])
 			warnx << "writing " << initfile << "...\n";
 			loginitstate(initfp);
 			fclose(initfp);
+			/*
 			if (plist == 1) {
 				printlistall();
 			}
+			*/
 			warnx << "openfd: " << openfd << "\n";
 			warnx << "closefd: " << closefd << "\n";
 		}
@@ -2146,11 +2153,11 @@ readgossip(int fd)
 
 		warnx << " rxID: " << key << "\n";
 		warnx << " teamID: " << keyteamid << "\n";
-		//sig2str(sig, sigbuf);
-		//warnx << "sig: " << sigbuf;
-		//printdouble(" ", freq);
-		//printdouble(" ", weight);
-		//warnx << "\n";
+		sig2str(sig, sigbuf);
+		warnx << "rxsig: " << sigbuf;
+		printdouble(" ", freq);
+		printdouble(" ", weight);
+		warnx << "\n";
 		str2chordID(key, ID);
 		str2chordID(keyteamid, teamID);
 		initgossiprecv(ID, teamID, sig, freq, weight);
@@ -2837,7 +2844,7 @@ initgossiprecv(chordID ID, chordID teamID, std::vector<POLY> sig, double freq, d
 	std::vector<POLY> hldsig;
 	mapType uniqueSigList;
 	vecomap tmpveco;
-	str buf;
+	str sigbuf;
 
 	dummysig.clear();
 	dummysig.push_back(1);
@@ -2855,7 +2862,7 @@ initgossiprecv(chordID ID, chordID teamID, std::vector<POLY> sig, double freq, d
 		tind = totalT.size();
 		// don't add 1, since it's 0-based
 		teamindex[teamID].push_back(tind);
-		// ?
+		// add empty vecomap otherwise a push_back() below will fail
 		totalT.push_back(tmpveco);
 	}
 	warnx << "tind: " << tind << "\n";
@@ -2864,7 +2871,6 @@ initgossiprecv(chordID ID, chordID teamID, std::vector<POLY> sig, double freq, d
 	warnx << "totalT[tind].size(): " << totalT[tind].size() << "\n";
 
 	if (totalT[tind].size() == 0) {
-		warnx << "totalT.size() == 0\n";
 		uniqueSigList[hldsig].push_back(0);
 		uniqueSigList[hldsig].push_back(1);
 		totalT[tind].push_back(uniqueSigList);
@@ -2876,6 +2882,11 @@ initgossiprecv(chordID ID, chordID teamID, std::vector<POLY> sig, double freq, d
 	// s is regular and T_h[s] exists
 	if ((sig != dummysig) && (sigitr != totalT[tind][listnum].end())) {
 		warnx << "initgossiprecv: update freq\n";
+		sig2str(sig, sigbuf);
+		warnx << "initgossiprecv: sig: " << sigbuf;
+		printdouble(" cur-f: ", sigitr->second[0]);
+		printdouble(" cur-w: ", sigitr->second[1]);
+		warnx << "\n";
 		sigitr->second[0] += freq;
 	// s is regular and T_h[s] does not exist
 	} else if ((sig != dummysig) && (sigitr == totalT[tind][listnum].end())) {
@@ -3114,16 +3125,20 @@ add2querymap(std::vector<std::vector<POLY> > queryList)
 // verified
 // use allT only in init phases
 void
-calcfreq(std::vector<std::vector<POLY> > sigList)
+calcfreq(std::vector<std::vector<POLY> > sigList, bool usedummy)
 {
 	mapType uniqueSigList;
+	int i = 0;
 
-	// dummy's freq is 0 and weight is 1
-	uniqueSigList[sigList[0]].push_back(0);
-	uniqueSigList[sigList[0]].push_back(1);
+	if (usedummy == 1) {
+		// dummy's freq is 0 and weight is 1
+		uniqueSigList[sigList[0]].push_back(0);
+		uniqueSigList[sigList[0]].push_back(1);
+		// skip dummy
+		i = 1;
+	}
 
-	// skip dummy
-	for (int i = 1; i < (int)sigList.size(); i++) {
+	for (; i < (int)sigList.size(); i++) {
 		mapType::iterator itr = uniqueSigList.find(sigList[i]);
 		if (itr != uniqueSigList.end()) {
 			// do not increment weight when sig has duplicates!
@@ -4153,7 +4168,7 @@ usage(void)
 					"\t\t\t(gossip interval)\n"
 	     << "(	-u		make POLYs unique (convert multiset to set))\n"
 	     << "      	-w		<how long>\n"
-					"\t\t\t(wait time after XGossip init phase is done)\n"
+					"\t\t\t(wait interval after XGossip init phase is done)\n"
 	     << "	-X		<how many times>\n"
 					"\t\t\t(multiply freq of sigs by)\n"
 	     << "	-x		<dir with xpath files>\n"
