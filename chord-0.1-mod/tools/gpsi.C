@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.95 2011/09/20 17:41:12 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.96 2011/09/21 18:36:39 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.95 2011/09/20 17:41:12 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.96 2011/09/21 18:36:39 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -516,12 +516,10 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 					warnx << "insert SUCCeeded\n";
 				}
 
-				// TODO: how long (if at all)?
-				//warnx << "sleeping (lsh)...\n";
-
-				//initsleep = 0;
-				//delaycb(intval, 0, wrap(initsleepnow));
-				//while (initsleep == 0) acheck();
+				warnx << "sleeping (lsh)...\n";
+				initsleep = 0;
+				delaycb(intval, 0, wrap(initsleepnow));
+				while (initsleep == 0) acheck();
 			}
 			// don't forget to clear team list!
 			team.clear();
@@ -1337,7 +1335,11 @@ main(int argc, char *argv[])
 	if (gflag == 1 || lflag == 1) {
 		warnx << "listening for gossip...\n";
 		listengossip();		
-		//sleep(5);
+		int listensleep = 30;
+		warnx << "waiting " << listensleep << "s for others to start listening\n";
+		initsleep = 0;
+		delaycb(listensleep, 0, wrap(initsleepnow));
+		while (initsleep == 0) acheck();
 	}
 
 	// XGossip init phase and "action H" (not gossiping)
