@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.96 2011/09/21 18:36:39 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.97 2011/09/22 14:08:20 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.96 2011/09/21 18:36:39 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.97 2011/09/22 14:08:20 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -149,6 +149,7 @@ int lshsig(vecomap, int, InsertType, int, int);
 int lshquery(sig2idmulti, int, InsertType, int);
 int make_team(chordID, chordID, std::vector<chordID>&);
 void mergelists(vecomap&);
+void mergeinit();
 void multiplyfreq(vecomap&, int, int, int);
 char *netstring_decode(FILE *);
 void netstring_encode(const char *, FILE *);
@@ -515,12 +516,8 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 				} else {
 					warnx << "insert SUCCeeded\n";
 				}
-
-				warnx << "sleeping (lsh)...\n";
-				initsleep = 0;
-				delaycb(intval, 0, wrap(initsleepnow));
-				while (initsleep == 0) acheck();
 			}
+
 			// don't forget to clear team list!
 			team.clear();
 			endTime = getgtod();
@@ -529,6 +526,11 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 			warnx << "\n";
 			printdouble("lshquerysig: insert time (+others): ", endTime - beginTime);
 			warnx << "\n";
+
+			warnx << "sleeping (lshquery)...\n";
+			initsleep = 0;
+			delaycb(intval, 0, wrap(initsleepnow));
+			while (initsleep == 0) acheck();
 		}
 		// needed?
 		minhash.clear();
@@ -649,11 +651,6 @@ lshsig(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, int l
 				} else {
 					warnx << "insert SUCCeeded\n";
 				}
-
-				warnx << "sleeping (lsh)...\n";
-				initsleep = 0;
-				delaycb(intval, 0, wrap(initsleepnow));
-				while (initsleep == 0) acheck();
 			}
 			// don't forget to clear team list!
 			team.clear();
@@ -663,6 +660,11 @@ lshsig(vecomap teamvecomap, int intval = -1, InsertType msgtype = INVALID, int l
 			warnx << "\n";
 			printdouble("lshsig: insert time (+others): ", endTime - beginTime);
 			warnx << "\n";
+
+			warnx << "sleeping (lshsig)...\n";
+			initsleep = 0;
+			delaycb(intval, 0, wrap(initsleepnow));
+			while (initsleep == 0) acheck();
 		}
 		// needed?
 		minhash.clear();
@@ -1638,12 +1640,23 @@ main(int argc, char *argv[])
 				warnx << "lists (before merging)\n";
 				printlistall();
 			}
+
+			// put everything in allT[0]
+			warnx << "merging everything into allT[0]...\n";
+			mergeinit();
+
+			if (plist == 1) {
+				printlist(allT, 0, -1);
+			}
+
+			/*
 			for (int i = 0; i < (int)totalT.size(); i++) {
 				mergelists(totalT[i]);
 			}
 			endTime = getgtod();    
 			printdouble("merge lists time: ", endTime - beginTime);
 			warnx << "\n";
+			*/
 			/*
 			if (plist == 1) {
 				warnx << "teamids (after merging)\n";
@@ -3531,6 +3544,33 @@ signcmp_bad(std::vector<POLY> s1, std::vector<POLY> s2)
 	//warnx << "\nsame: " << same << "\n";
 	//warnx << "total: " << total << "\n";
 	return (double)same/total;
+}
+
+// put everything in allT
+void
+mergeinit()
+{
+	mapType uniqueSigList;
+	int listnum = 0;
+
+	allT.clear();
+	allT.push_back(uniqueSigList);
+
+	for (int i = 0; i < (int)totalT.size(); i++) {
+		// TODO: do we always store sigs in totalT[i][0]?
+		for (mapType::iterator titr = totalT[i][listnum].begin(); titr != totalT[i][listnum].end(); titr++) {
+			mapType::iterator aitr = allT[listnum].find(titr->first);
+			if (aitr != allT[listnum].end()) {
+				aitr->second[0] += titr->second[0];
+				// don't touch weight
+				//aitr->second[1] += titr->second[1];
+			} else {
+				allT[listnum][titr->first].push_back(titr->second[0]);
+				// set weight to 1 because there is no gossiping
+				allT[listnum][titr->first].push_back(1);
+			}
+		}
+	}
 }
 
 // TODO: verify
