@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.97 2011/09/22 14:08:20 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.98 2011/09/23 17:05:24 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.97 2011/09/22 14:08:20 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.98 2011/09/23 17:05:24 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -90,6 +90,14 @@ id2sigs qid2sigs;
 typedef std::map<int, std::vector<chordID> > id2chordIDs;
 id2chordIDs qid2teamIDs;
 
+// id, string
+typedef std::map<int, std::vector<std::string> > id2strings;
+id2strings qid2dtd;
+
+// strings, sig
+typedef std::map<std::string, std::vector<std::vector<POLY> > > string2sigs;
+string2sigs dtd2sigs;
+
 // sig, (<freq,weight> | <avg,avg,...>)
 typedef std::map<std::vector<POLY>, std::vector<double>, CompareSig> mapType;
 
@@ -122,7 +130,9 @@ typedef std::map<chordID, std::vector<int> > chordID2sig;
 typedef std::map<POLY, std::vector<int> > poly2sig;
 
 void acceptconn(int);
-void add2querymap(std::vector<std::vector<POLY> > queryList);
+void addqid(int, std::vector<POLY>);
+bool addteamID(int, chordID);
+void add2querymap(std::vector<std::vector<POLY> >, std::vector<std::string>);
 // XGossip
 void add2vecomapx(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>, chordID);
 // VanillaXGossip
@@ -144,10 +154,10 @@ void listengossip(void);
 //void *listengossip(void *);
 void loginitstate(FILE *);
 int loadinitstate(FILE *);
-int loadresults(FILE *);
+int loadresults(FILE *, InsertType &);
 int lshsig(vecomap, int, InsertType, int, int);
 int lshquery(sig2idmulti, int, InsertType, int);
-int make_team(chordID, chordID, std::vector<chordID>&);
+int make_team(chordID, chordID, std::vector<chordID> &);
 void mergelists(vecomap&);
 void mergeinit();
 void multiplyfreq(vecomap&, int, int, int);
@@ -160,21 +170,21 @@ void printteamids();
 void printteamidfreq();
 chordID randomID(void);
 void readgossip(int);
-void readquery(std::string, std::vector<std::vector <POLY> >&);
-void readsig(std::string, std::vector<std::vector <POLY> >&);
-void readValues(FILE *, std::multimap<POLY, std::pair<std::string, enum OPTYPE> >&);
+void readquery(std::string, std::vector<std::vector <POLY> > &, std::vector<std::string> &);
+void readsig(std::string, std::vector<std::vector <POLY> > &);
+void readValues(FILE *, std::multimap<POLY, std::pair<std::string, enum OPTYPE> > &);
 int run_query(int, std::vector<POLY>, int &, double &, InsertType, chordID = 0);
-bool sig2str(std::vector<POLY>, str&);
-bool string2sig(std::string, std::vector<POLY>&);
+bool sig2str(std::vector<POLY>, str &);
+bool string2sig(std::string, std::vector<POLY> &);
 bool sigcmp(std::vector<POLY>, std::vector<POLY>);
 bool samesig(std::vector<POLY>, std::vector<POLY>);
-int set_inter(std::vector<POLY> s1, std::vector<POLY> s2, bool &multi);
-int set_inter_noskip(std::vector<POLY> s1, std::vector<POLY> s2, bool &multi);
-int set_uni(std::vector<POLY> s1, std::vector<POLY> s2, bool &multi);
-double signcmp(std::vector<POLY>, std::vector<POLY>, bool&);
-void tokenize(const std::string&, std::vector<std::string>&, const std::string&);
+int set_inter(std::vector<POLY>, std::vector<POLY>, bool &);
+int set_inter_noskip(std::vector<POLY>, std::vector<POLY>, bool &);
+int set_uni(std::vector<POLY>, std::vector<POLY>, bool &);
+double signcmp(std::vector<POLY>, std::vector<POLY>, bool &);
+void tokenize(const std::string &, std::vector<std::string> &, const std::string &);
 void usage(void);
-void vecomap2vec(vecomap teamvecomap, int listnum, std::vector<std::vector <POLY> >&sigList);
+void vecomap2vec(vecomap teamvecomap, int listnum, std::vector<std::vector <POLY> > &);
 
 DHTStatus insertStatus;
 std::string INDEXNAME;
@@ -431,8 +441,12 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 	std::vector<chordID> buckets;
 	std::vector<POLY> querysig;
 	std::vector<POLY> lshquerysig;
+	std::vector<POLY> regularsig;
+	std::string dtd;
 	chordID ID;
 	DHTStatus status;
+	std::vector<chordID> team;
+	chordID teamID;
 	char *value;
 	int valLen, n, range, randcol, qid;
 	double beginTime, endTime, instime, totalinstime;
@@ -442,14 +456,32 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 	minhash.clear();
 	querysig.clear();
 	lshquerysig.clear();
+	regularsig.clear();
 	n = 0;
 	totalinstime = 0;
 	for (sig2idmulti::iterator itr = queryMap.begin(); itr != queryMap.end(); itr++) {
 		querysig = itr->first;
 		qid = itr->second;
+		id2strings::iterator ditr = qid2dtd.find(qid);
+		if (ditr != qid2dtd.end()) {
+			// TODO: assume 1 dtd per qid
+			dtd = ditr->second.back();
+		} else {
+			warnx << "lshquery: no DTD found for qid: " << qid << "\n";
+		}
 
+		string2sigs::iterator sitr = dtd2sigs.find(dtd);
+		if (sitr != dtd2sigs.end()) {
+			// TODO: assume 1 sig per DTD
+			regularsig = sitr->second.back();
+		} else {
+			warnx << "lshquery: no sig found for DTD: " << dtd.c_str() << "\n";
+		}
+
+		sig2str(querysig, sigbuf);
+		warnx << "running LSH on querysig: " << sigbuf << "\n";
 		beginTime = getgtod();    
-		lsh *myLSH = new lsh(querysig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
+		lsh *queryLSH = new lsh(querysig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
 		endTime = getgtod();    
 		printdouble("lshquery: lsh time: ", endTime - beginTime);
 		warnx << "\n";
@@ -457,13 +489,39 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 		if (uflag == 1) {
 			//sig2str(querysig, sigbuf);
 			//warnx << "multiset: " << sigbuf << "\n";
-			lshquerysig = myLSH->getUniqueSet(querysig);
+			lshquerysig = queryLSH->getUniqueSet(querysig);
 			//sig2str(lshsig, sigbuf);
 			//warnx << "set: " << sigbuf << "\n";
-			minhash = myLSH->getHashCode(lshquerysig);
+			minhash = queryLSH->getHashCode(lshquerysig);
 		} else {
-			minhash = myLSH->getHashCode(querysig);
+			minhash = queryLSH->getHashCode(querysig);
 		}
+
+		sort(minhash.begin(), minhash.end());
+
+		team.clear();
+		for (int i = 0; i < (int)minhash.size(); i++) {
+			teamID = minhash[i];
+			warnx << "teamID: " << teamID << "\n";
+			// TODO: check return status
+			make_team(NULL, teamID, team);
+			range = team.size();
+			// randomness verified
+			//randcol = randomNumGenZ(range-1);
+			randcol = randomNumGenZ(range);
+			ID = team[randcol];
+			warnx << "ID in randcol " << randcol << ": " << ID << "\n";
+		}
+
+		sig2str(regularsig, sigbuf);
+		warnx << "running LSH on regularsig: " << sigbuf << "\n";
+		beginTime = getgtod();    
+		lsh *sigLSH = new lsh(regularsig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
+		endTime = getgtod();    
+		printdouble("lshquery: lsh time: ", endTime - beginTime);
+		warnx << "\n";
+		minhash.clear();
+		minhash = sigLSH->getHashCode(regularsig);
 
 		sort(minhash.begin(), minhash.end());
 
@@ -481,8 +539,6 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 		//calcteamids(minhash);
 
 		if ((Qflag == 1 || gflag == 1) && msgtype != INVALID) {
-			std::vector<chordID> team;
-			chordID teamID;
 			team.clear();
 			beginTime = getgtod();    
 			for (int i = 0; i < (int)minhash.size(); i++) {
@@ -534,7 +590,8 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 		}
 		// needed?
 		minhash.clear();
-		delete myLSH;
+		delete sigLSH;
+		delete queryLSH;
 		++n;
 	}
 
@@ -796,6 +853,7 @@ main(int argc, char *argv[])
 {
 	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag, yflag, Zflag;
 	int ch, gintval, initintval, waitintval, nids, rounds, valLen, logfd;
+	int listnum;
 	double beginTime, endTime, instime;
 	char *value;
 	struct stat statbuf;
@@ -804,6 +862,7 @@ main(int argc, char *argv[])
 	chordID teamID;
 	std::vector<chordID> team;
 	DHTStatus status;
+	InsertType msgtype = NONE;
 	MergeType mergetype = OTHER;
 	str sigbuf;
 	std::string initdir;
@@ -813,6 +872,7 @@ main(int argc, char *argv[])
 	std::vector<std::string> initfiles;
 	std::vector<std::string> sigfiles;
 	std::vector<std::string> xpathfiles;
+	std::vector<std::string> dtdList;
 	std::vector<std::vector<POLY> > sigList;
 	std::vector<std::vector<POLY> > queryList;
 	std::vector<POLY> sig;
@@ -1195,6 +1255,11 @@ main(int argc, char *argv[])
 		if (plist == 1) {
 			// both init phases use allT
 			printlist(allT, 0, -1);
+			for (string2sigs::iterator itr = dtd2sigs.begin(); itr != dtd2sigs.end(); itr++) {
+				warnx << "DTD: " << itr->first.c_str();
+				sig2str(itr->second.back(), sigbuf);
+				warnx << " sig: " << sigbuf << "\n";
+			}
 		}
 
 		if (compact == 1) {
@@ -1249,12 +1314,13 @@ main(int argc, char *argv[])
 	if ((rflag == 1 || Qflag == 1) && xflag == 1) {
 		getdir(xpathdir, xpathfiles);
 		queryList.clear();
+		dtdList.clear();
 
 		warnx << "reading queries from files...\n";
 		for (unsigned int i = 0; i < xpathfiles.size(); i++) {
-			readquery(xpathfiles[i], queryList);
+			readquery(xpathfiles[i], queryList, dtdList);
 		}
-		add2querymap(queryList);
+		add2querymap(queryList, dtdList);
 		/*
 		warnx << "calculating frequencies...\n";
 		beginTime = getgtod();    
@@ -1267,9 +1333,21 @@ main(int argc, char *argv[])
 			// both init phases use allT
 			//printlist(allT, 0, -1);
 			warnx << "queries:\n";
+			int qid;
+			std::string dtd;
 			for (sig2idmulti::iterator itr = queryMap.begin(); itr != queryMap.end(); itr++) {
+				qid = itr->second;
+				id2strings::iterator ditr = qid2dtd.find(qid);
+				if (ditr != qid2dtd.end()) {
+					if (ditr->second.size() != 1) {
+						warnx << "more than 1 DTD per QID\n";
+					}
+					dtd = ditr->second.back();
+				} else {
+					warnx << "DTD missing\n";
+				}
 				sig2str(itr->first, sigbuf);
-				warnx << "QID: " << itr->second << " QUERYSIG: " << sigbuf << "\n";
+				warnx << "QID: " << qid << " DTD: " << dtd.c_str() << " QUERYSIG: " << sigbuf << "\n";
 			}
 			/*
 			for (unsigned int i = 0; i < queryList.size(); i++) {
@@ -1281,18 +1359,31 @@ main(int argc, char *argv[])
 	}
 
 	// run xpath queries on sigs locally
+	//if (sflag == 1 && xflag == 1) {
 	if (rflag == 1 && sflag == 1 && xflag == 1) {
 		int ninter;
 		int sigmatches = 0;
 		double totalfreq = 0;
 		bool multi;
+		// store all sigs in allT[allnum]
+		int allnum = 0;
+		// store results sigs in allT[resultsnum]
+		//int resultsnum = 1;
+		//mapType tmpvecomap;
+		//allT.push_back(tmpvecomap);
 		warnx << "running xpath queries locally...\n";
 		for (sig2idmulti::iterator qitr = queryMap.begin(); qitr != queryMap.end(); qitr++) {
 			// find if the query sig is a subset of any of the sigs
-			for (mapType::iterator sitr = allT[0].begin(); sitr != allT[0].end(); sitr++) {
+			for (mapType::iterator sitr = allT[allnum].begin(); sitr != allT[allnum].end(); sitr++) {
 				ninter = set_inter_noskip(qitr->first, sitr->first, multi);
 				//warnx << "ninter: " << ninter << ", querysig.size(): " << queryList[i].size() << "\n";
 				if (ninter == (int)qitr->first.size()) {
+					/*
+					if (Qflag == 1) {
+						allT[resultsnum][qitr->first][0] += sitr->second[0];
+						allT[resultsnum][qitr->first][1] += sitr->second[1];
+					}
+					*/
 					++sigmatches;
 					// weight is always 1
 					totalfreq += sitr->second[0];
@@ -1668,75 +1759,100 @@ main(int argc, char *argv[])
 		} else if (mergetype == RESULTS) {
 			warnx << "results files...\n";
 			warnx << "loading files...\n";
+			mapType uniqueSigList;
+			allT.clear();
+			allT.push_back(uniqueSigList);
 			for (unsigned int i = 0; i < initfiles.size(); i++) {
 				warnx << "file: " << initfiles[i].c_str() << "\n";
 				if ((initfp = fopen(initfiles[i].c_str(), acc.c_str())) == NULL) {
 					warnx << "can't open init file" << initfiles[i].c_str() << "\n";
 					continue;
 				}
-				if (loadresults(initfp) == -1) warnx << "loadresults failed\n";
+				if (loadresults(initfp, msgtype) == -1) warnx << "loadresults failed\n";
 				fclose(initfp);
 			}
-			warnx << "qid,querysig,sigmatches (*teamsize),totalavg (*teamsize),teamIDs\n";
-			for (id2sigs::iterator qitr = qid2querysig.begin(); qitr != qid2querysig.end(); qitr++) {
-				if (qitr->second.size() > 1)
-					warnx << "multiple queries for the same qid\n";
+			if (msgtype == QUERYX) {
+				warnx << "xpath query results...\n";
+				warnx << "qid,querysig,sigmatches (*teamsize),totalavg (*teamsize),teamIDs\n";
+				for (id2sigs::iterator qitr = qid2querysig.begin(); qitr != qid2querysig.end(); qitr++) {
+					if (qitr->second.size() > 1)
+						warnx << "multiple queries for the same qid\n";
 
-				// find sigs which match this qid
-				id2sigs::iterator sitr = qid2sigs.find(qitr->first);
-				if (sitr != qid2sigs.end()) {
-					// add up avg of different sigs and pick a random avg for same one
-					for (int i = 0; i < (int)sitr->second.size(); i++ ) {
-						// find id corresponding to this qid in allsig2avg
-						id2id::iterator iditr = qid2id.find(qitr->first);
-						if (iditr != qid2id.end()) {
-							avgid = iditr->second;
-						} else {
-							warnx << "qid2id: can't find qid: " << qitr->first << "\n";
-							continue;
+					// find sigs which match this qid
+					id2sigs::iterator sitr = qid2sigs.find(qitr->first);
+					if (sitr != qid2sigs.end()) {
+						// add up avg of different sigs and pick a random avg for same one
+						for (int i = 0; i < (int)sitr->second.size(); i++ ) {
+							// find id corresponding to this qid in allsig2avg
+							id2id::iterator iditr = qid2id.find(qitr->first);
+							if (iditr != qid2id.end()) {
+								avgid = iditr->second;
+							} else {
+								warnx << "qid2id: can't find qid: " << qitr->first << "\n";
+								continue;
+							}
+
+							// find vector<avg> of the sig in the sig2avg map for this qid
+							mapType::iterator saitr = allsig2avg[avgid].find(sitr->second[i]);
+							if (saitr != allsig2avg[avgid].end()) {
+								range = saitr->second.size();
+								// TODO: verify range
+								// pick random avg for that sig
+								randcol = randomNumGenZ(range);
+								//warnx << "sig2avg: range: " << range << " randcol: " << randcol << "\n";
+								totalavg += saitr->second[randcol];
+								++totalmatches;
+							} else {
+								warnx << "allsig2avg: where is the sig\n";
+								continue;
+							}
 						}
+					} else {
+						//warnx << "qid2sigs: can't find sigs for qid: " << qitr->first << "\n";
+					}
 
-						// find vector<avg> of the sig in the sig2avg map for this qid
-						mapType::iterator saitr = allsig2avg[avgid].find(sitr->second[i]);
-						if (saitr != allsig2avg[avgid].end()) {
-							range = saitr->second.size();
-							// TODO: verify range
-							randcol = randomNumGenZ(range);
-							//warnx << "sig2avg: range: " << range << " randcol: " << randcol << "\n";
-							totalavg += saitr->second[randcol];
-							++totalmatches;
-						} else {
-							warnx << "allsig2avg: where is the sig\n";
-							continue;
+					// qid
+					warnx << qitr->first << ",";
+					// querysig
+					sig2str(qitr->second[0], sigbuf);
+					warnx << sigbuf << ",";
+					warnx << totalmatches * teamsize << ",";
+					printdouble("", totalavg * teamsize);
+					warnx << ",";
+
+					// print teamIDs
+					id2chordIDs::iterator titr = qid2teamIDs.find(qitr->first);
+					if (titr != qid2teamIDs.end()) {
+						//warnx << "qid2teamIDs: qid: " << qitr->first << " teamIDs: " << titr->second.size() << "\n";
+						for (int i = 0; i < (int)titr->second.size(); i++ ) {
+							warnx << titr->second[i] << ",";
 						}
+					} else {
+						warnx << "qid2teamIDs: can't find teamIDs for qid: " << qitr->first << "\n";
 					}
-				} else {
-					//warnx << "qid2sigs: can't find sigs for qid: " << qitr->first << "\n";
+
+					warnx << "\n";
+					totalmatches = 0;
+					totalavg = 0;
 				}
-
-				sig2str(qitr->second[0], sigbuf);
-				// qid
-				warnx << qitr->first << ",";
-				// querysig
-				warnx << sigbuf << ",";
-				warnx << totalmatches * teamsize << ",";
-				printdouble("", totalavg * teamsize);
-				warnx << ",";
-
-				// print teamIDs
-				id2chordIDs::iterator titr = qid2teamIDs.find(qitr->first);
-				if (titr != qid2teamIDs.end()) {
-					//warnx << "qid2teamIDs: qid: " << qitr->first << " teamIDs: " << titr->second.size() << "\n";
-					for (int i = 0; i < (int)titr->second.size(); i++ ) {
-						warnx << titr->second[i] << ",";
-					}
-				} else {
-					warnx << "qid2teamIDs: can't find teamIDs for qid: " << qitr->first << "\n";
+			} else if (msgtype == QUERYS) {
+				listnum = 0;
+				int sid = 1;
+				warnx << "sig query results...\n";
+				warnx << "id,querysig,totalavg,totalavg (*teamsize)\n";
+				for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
+					warnx << sid << ",";
+					sig2str(itr->first, sigbuf);
+					warnx << sigbuf << ",";
+					totalavg = itr->second[0]/itr->second[1];
+					printdouble("", totalavg);
+					warnx << ",";
+					printdouble("", totalavg * teamsize);
+					warnx << "\n";
+					++sid;
 				}
-
-				warnx << "\n";
-				totalmatches = 0;
-				totalavg = 0;
+			} else {
+				warnx << "error: invalid msgtype\n";
 			}
 		}
 		return 0;
@@ -2289,9 +2405,9 @@ run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalav
 			totalavg += (sigitr->second[0]/sigitr->second[1]);
 			sig2str(sigitr->first, sigbuf);
 			warnx << "exactsig: " << sigbuf;
-			printdouble(", f: ", sigitr->second[0]);
-			printdouble(", w: ", sigitr->second[1]);
-			printdouble(", avg: ", sigitr->second[0]/sigitr->second[1]);
+			printdouble(" f: ", sigitr->second[0]);
+			printdouble(" w: ", sigitr->second[1]);
+			printdouble(" avg: ", sigitr->second[0]/sigitr->second[1]);
 			// teamID is set only when running queries for "teamID-NOT-found"
 			if (teamID != 0) warnx << " teamID: " << teamID;
 			warnx << "\n";
@@ -2324,8 +2440,46 @@ run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalav
 	return 0;
 }
 
+void
+addqid(int qid, std::vector<POLY> querysig)
+{
+	// map querysig to qid:
+	// store querysig in 1st position
+	id2sigs::iterator qitr = qid2querysig.find(qid);
+	if (qitr != qid2querysig.end()) {
+		if (samesig(querysig, qitr->second[0]) != 1)
+			warnx << "loadresults: different querysigs for the same qid\n";
+	} else {
+		qid2querysig[qid].push_back(querysig);
+	}
+}
+
+bool
+addteamID(int qid, chordID teamID)
+{
+	bool teamIDfound = 0;
+
+	// map teamID to qid
+	id2chordIDs::iterator titr = qid2teamIDs.find(qid);
+	if (titr != qid2teamIDs.end()) {
+		for (int i = 0; i < (int)titr->second.size(); i++) {
+			if (teamID == titr->second[i]) {
+				warnx << "loadresults: teamID already present\n";
+				teamIDfound = 1;
+				break;
+			}
+		}
+		if (teamIDfound != 1) titr->second.push_back(teamID);
+		teamIDfound = 0;
+	} else {
+		qid2teamIDs[qid].push_back(teamID);
+	}
+
+	return teamIDfound;
+}
+
 int
-loadresults(FILE *initfp)
+loadresults(FILE *initfp, InsertType &msgtype)
 {
 	chordID teamID;
 	std::vector<POLY> sig;
@@ -2335,7 +2489,7 @@ loadresults(FILE *initfp)
 	std::string linestr;
 	str sigbuf;
 	bool sigfound = 0;
-	bool teamIDfound = 0;
+	int listnum = 0;
 	int n = 0;
 	int sigmatches, qid, avgid;
 	char *line = NULL;
@@ -2346,17 +2500,29 @@ loadresults(FILE *initfp)
 	qid = 0;
 	while ((read = getline(&line, &len, initfp)) != -1) {
 		// skip 1st line
+		/*
 		if (n == 0) {
 			++n;
 			continue;
 		}
+		*/
 		linestr.clear();
 		linestr.assign(line);
 		tokens.clear();
 		tokenize(linestr, tokens, ": ");
 		sig.clear();
 		int toksize = tokens.size();
-		if (strcmp(tokens[0].c_str(), "queryresult") == 0) {
+		if (strcmp(tokens[0].c_str(), "rxmsglen") == 0) {
+			// TODO: record other fields?
+			if (strcmp(tokens[3].c_str(), "QUERYS") == 0)
+				msgtype = QUERYS;
+			else if (strcmp(tokens[3].c_str(), "QUERYX") == 0)
+				msgtype = QUERYX;
+			else {
+				warnx << "loadresults: error parsing\n";
+				return -1;
+			}
+		} else if (strcmp(tokens[0].c_str(), "queryresult") == 0) {
 			qid = strtol(tokens[3].c_str(), NULL, 10);
 			querysig.clear();
 			string2sig(tokens[5], querysig);
@@ -2366,43 +2532,14 @@ loadresults(FILE *initfp)
 			str2chordID(z, teamID);
 			sig2str(querysig, sigbuf);
 			//warnx << "qid: " << qid << " querysig: " << sigbuf << " teamID: " << teamID << "\n";
-			// map querysig to qid:
-			// store querysig in 1st position
-			id2sigs::iterator qitr = qid2querysig.find(qid);
-			if (qitr != qid2querysig.end()) {
-				if (samesig(querysig, qitr->second[0]) != 1)
-					warnx << "loadresults: different querysigs for the same qid\n";
-			} else {
-				qid2querysig[qid].push_back(querysig);
+			if (msgtype == QUERYX) {
+				addqid(qid, querysig);
+				// TODO: check return
+				addteamID(qid, teamID);
+			} else if (msgtype == QUERYS) {
+				// TODO: associate querysig with an id
 			}
-
-			// map teamID to qid
-			id2chordIDs::iterator titr = qid2teamIDs.find(qid);
-			if (titr != qid2teamIDs.end()) {
-				for (int i = 0; i < (int)titr->second.size(); i++) {
-					if (teamID == titr->second[i]) {
-						warnx << "loadresults: teamID already present\n";
-						teamIDfound = 1;
-						break;
-					}
-				}
-				if (teamIDfound != 1) titr->second.push_back(teamID);
-				teamIDfound = 0;
-			} else {
-				qid2teamIDs[qid].push_back(teamID);
-			}
-
-			/*
-			// map qid to querysig
-			sig2ids::iterator qitr = querysig2qids.find(querysig);
-			if (qitr != querysig2qids.end()) {
-				// store qid in 0 only
-				if (qitr->second[0] != qid)
-					warnx << "loadresults: multiple qids for the same query\n";
-			} else {
-				querysig2qids[querysig].push_back(qid);
-			}
-			*/
+		// only found in QUERYX msgs
 		} else if (strcmp(tokens[0].c_str(), "supersetsig") == 0) {
 			sig.clear();
 			string2sig(tokens[1], sig);
@@ -2410,6 +2547,8 @@ loadresults(FILE *initfp)
 			weight = strtod(tokens[5].c_str(), NULL);
 			avg = strtod(tokens[7].c_str(), NULL);
 			sig2str(sig, sigbuf);
+
+			//addqid2id(qid, sig, avg);
 
 			// XXX: assume that qid is still valid?
 			id2id::iterator iditr = qid2id.find(qid);
@@ -2447,21 +2586,30 @@ loadresults(FILE *initfp)
 			} else {
 				qid2sigs[qid].push_back(sig);
 			}
+		// only found in QUERYS msgs
+		} else if (strcmp(tokens[0].c_str(), "exactsig") == 0) {
+			sig.clear();
+			// TODO: don't strip "," in future versions
+			std::string exst = tokens[1].substr(0,tokens[1].size()-1);
+			string2sig(exst, sig);
+			exst = tokens[3].substr(0,tokens[3].size()-1);
+			freq = strtod(exst.c_str(), NULL);
+			exst = tokens[5].substr(0,tokens[5].size()-1);
+			weight = strtod(exst.c_str(), NULL);
+			// TODO: discard avg?
+			// avg doesn't have trailing ","
+			avg = strtod(tokens[7].c_str(), NULL);
+			sig2str(sig, sigbuf);
 
-			/*
-			// add sig and qid OR add qid to existing sig
-			sig2ids::iterator siitr = sig2qids.find(sig);
-			if (siitr != sig2qids.end()) {
-				siitr->second.push_back(qid);
+			mapType::iterator itr = allT[listnum].find(sig);
+			if (itr != allT[listnum].end()) {
+				itr->second[0] += freq;
+				itr->second[1] += weight;
 			} else {
-				sig2qids[sig].push_back(qid);
+				allT[listnum][sig].push_back(freq);
+				allT[listnum][sig].push_back(weight);
 			}
-			warnx << "supersetsig: " << sigbuf;
-			printdouble(" f: ", freq);
-			printdouble(" w: ", weight);
-			printdouble(" avg: ", avg);
-			warnx << "\n";
-			*/
+		// TODO: record queryresultend data?
 		} else if (strcmp(tokens[0].c_str(), "queryresultend") == 0) {
 			sigmatches = strtol(tokens[4].c_str(), NULL, 10);
 			totalavg = strtod(tokens[6].c_str(), NULL);
@@ -2470,6 +2618,7 @@ loadresults(FILE *initfp)
 			//warnx << "\n";
 		} else {
 			warnx << "loadresults: error parsing\n";
+			return -1;
 		}
 		++n;
 	}
@@ -2687,8 +2836,9 @@ getdir(std::string dir, std::vector<std::string> &files)
 
 // copied from psi.C
 void
-readquery(std::string queryfile, std::vector<std::vector <POLY> > &queryList)
+readquery(std::string queryfile, std::vector<std::vector <POLY> > &queryList, std::vector<std::string> &dtdList)
 {
+	std::vector<std::string> tokens;
 	double startTime, finishTime;
 	FILE *qfp;
 
@@ -2697,96 +2847,109 @@ readquery(std::string queryfile, std::vector<std::vector <POLY> > &queryList)
 	warnx << "queryfile: " << queryfile.c_str() << "\n";
         qfp = fopen(queryfile.c_str(), "r");
         assert(qfp);
+	tokens.clear();
+	tokenize(queryfile, tokens, "/");
+	// remove ".qry" extension
+	std::string file = tokens.back();
+	tokens.clear();
+	tokenize(file, tokens, ".");
+	std::string dtd;
+	for (unsigned int i = 0; i < tokens.size() - 1; i++) {
+		dtd += tokens[i];
+		// don't put a dot at the end of the DTD name
+		if (i != tokens.size() - 2)
+			dtd += ".";
+	} 
 
 	while (1) {
-
-	// DON'T use readData to retrieve signatures from input files...
-	// since the size filed uses POLY as a basic unit and not byte...
-	// Format is <n = # of sigs><sig size><sig>... n times...
-	int numSigs;
-	if (fread(&numSigs, sizeof(numSigs), 1, qfp) != 1) {
-		warnx << "numSigs: " << numSigs << "\n";
-		break;
-	}
-	warnx << "NUM sigs: " << numSigs << "\n";
-	assert(numSigs > 0);
-
-	for (int t = 0; t < numSigs; t++) {
-		POLY *buf;
-		int size;
-		if (fread(&size, sizeof(int), 1, qfp) != 1) {
-			assert(0);
+		// DON'T use readData to retrieve signatures from input files...
+		// since the size filed uses POLY as a basic unit and not byte...
+		// Format is <n = # of sigs><sig size><sig>... n times...
+		int numSigs;
+		if (fread(&numSigs, sizeof(numSigs), 1, qfp) != 1) {
+			warnx << "numSigs: " << numSigs << "\n";
+			break;
 		}
-		warnx << "Signature size: " << size * sizeof(POLY) << " bytes\n";
-			
-		buf = new POLY[size];
-		assert(buf);
-		if (fread(buf, sizeof(POLY), size, qfp) != (size_t) size) {
-			assert(0);
-		}
+		warnx << "NUM sigs: " << numSigs << "\n";
+		assert(numSigs > 0);
+
+		for (int t = 0; t < numSigs; t++) {
+			POLY *buf;
+			int size;
+			if (fread(&size, sizeof(int), 1, qfp) != 1) {
+				assert(0);
+			}
+			warnx << "Signature size: " << size * sizeof(POLY) << " bytes\n";
 				
-		std::vector<POLY> sig;
-		sig.clear();
-		warnx << "Query signature (sorted): ";
-		for (int i = 0; i < size; i++) {
-			// XXX: discard "1"s
-			if (buf[i] == 1) continue;
-			sig.push_back(buf[i]);
+			buf = new POLY[size];
+			assert(buf);
+			if (fread(buf, sizeof(POLY), size, qfp) != (size_t) size) {
+				assert(0);
+			}
+					
+			std::vector<POLY> sig;
+			sig.clear();
+			warnx << "Query signature (sorted): ";
+			for (int i = 0; i < size; i++) {
+				// XXX: discard "1"s
+				if (buf[i] == 1) continue;
+				sig.push_back(buf[i]);
+			}
+			sort(sig.begin(), sig.end());
+			str sigbuf;
+			sig2str(sig, sigbuf);
+			warnx << sigbuf << "\n";
+			queryList.push_back(sig);
+			dtdList.push_back(dtd);
+
+			// free the allocated memory
+			delete[] buf;
 		}
-		sort(sig.begin(), sig.end());
-		str sigbuf;
-		sig2str(sig, sigbuf);
-		warnx << sigbuf << "\n";
-		queryList.push_back(sig);
-
-		// free the allocated memory
-		delete[] buf;
-	}
-		
-	/*
-	warnx << "******* Processing query " << count << " ********\n";
-	numReads = numWrites = dataReadSize = cacheHits = 0;
-	strbuf s;
-	s << rootNodeID;
-	str rootID(s);
-
-	//if ((int) listOfSigs.size() > MAXSIGSPERQUERY) {
-	if (0) {
-		warnx << "Skipping this query...\n";
-	} else {
-		numDocs = 0;
-		listOfVisitedNodes.clear();
-				
-		double beginQueryTime = getgtod();
-		str junk("");
-		queryProcess(rootID, listOfSigs, junk);
-
-
-		double endQueryTime = getgtod();
-
-		std::cerr << "Query time: " << endQueryTime - beginQueryTime << " secs\n";
-		totalTime += (endQueryTime - beginQueryTime);
-		warnx << "Num docs: " << numDocs << "\n";
-	}
-		
-		#ifdef _DEBUG_
 			
-		#endif
-		warnx << "Data read in bytes: " << dataFetched << "\n";
-		warnx << "Data written in bytes: " << dataStored << "\n";
-		warnx << "Number of DHT lookups: " << numReads << "\n";
-		//warnx << " num writes: " << numWrites << "\n";
-		warnx << "Cache hits: " << cacheHits << "\n";
-		warnx << "******** Finished query processing *********\n\n\n";
-		count++;
+		/*
+		warnx << "******* Processing query " << count << " ********\n";
+		numReads = numWrites = dataReadSize = cacheHits = 0;
+		strbuf s;
+		s << rootNodeID;
+		str rootID(s);
 
-		if (count != maxCount + 1) {
-			warnx << "Sleeping...\n";
-			//sleep(1);
-			//sleep(1 + (int) ((double) randDelay * (rand() / (RAND_MAX + 1.0))));
+		//if ((int) listOfSigs.size() > MAXSIGSPERQUERY) {
+		if (0) {
+			warnx << "Skipping this query...\n";
+		} else {
+			numDocs = 0;
+			listOfVisitedNodes.clear();
+					
+			double beginQueryTime = getgtod();
+			str junk("");
+			queryProcess(rootID, listOfSigs, junk);
+
+
+			double endQueryTime = getgtod();
+
+			std::cerr << "Query time: " << endQueryTime - beginQueryTime << " secs\n";
+			totalTime += (endQueryTime - beginQueryTime);
+			warnx << "Num docs: " << numDocs << "\n";
 		}
-	}
-	*/
+			
+			#ifdef _DEBUG_
+				
+			#endif
+			warnx << "Data read in bytes: " << dataFetched << "\n";
+			warnx << "Data written in bytes: " << dataStored << "\n";
+			warnx << "Number of DHT lookups: " << numReads << "\n";
+			//warnx << " num writes: " << numWrites << "\n";
+			warnx << "Cache hits: " << cacheHits << "\n";
+			warnx << "******** Finished query processing *********\n\n\n";
+			count++;
+
+			if (count != maxCount + 1) {
+				warnx << "Sleeping...\n";
+				//sleep(1);
+				//sleep(1 + (int) ((double) randDelay * (rand() / (RAND_MAX + 1.0))));
+			}
+		}
+		*/
 	}
 
 	fclose(qfp);
@@ -2798,6 +2961,7 @@ readquery(std::string queryfile, std::vector<std::vector <POLY> > &queryList)
 void
 readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 {
+	std::vector<std::string> tokens;
 	double startTime, finishTime;
 	FILE *sigfp;
 
@@ -2807,7 +2971,18 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 	sigfp = fopen(sigfile.c_str(), "r");
 	// change to if?
 	assert(sigfp);
-
+	tokenize(sigfile, tokens, "/");
+	// remove ".$NUM.sig" extension
+	std::string file = tokens.back();
+	tokens.clear();
+	tokenize(file, tokens, ".");
+	std::string dtd;
+	for (unsigned int i = 0; i < tokens.size() - 2; i++) {
+		dtd += tokens[i];
+		// don't put a dot at the end of the DTD name
+		if (i != tokens.size() - 3)
+			dtd += ".";
+	}
 	// TODO: add maxcount arg?
 
 	// DONT use readData to retrieve signatures from input files...
@@ -2843,6 +3018,13 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 	sig2str(sig, buf);
 	warnx << buf << "\n";
 	sigList.push_back(sig);
+	// map dtd to sig
+	string2sigs::iterator itr = dtd2sigs.find(dtd);
+	if (itr != dtd2sigs.end()) {
+		itr->second.push_back(sig);
+	} else {
+		dtd2sigs[dtd].push_back(sig);
+	}
 
 	warnx << "readsig: Size of sig list: " << sigList.size() << "\n";
 	finishTime = getgtod();
@@ -3126,12 +3308,19 @@ sig2str(std::vector<POLY> sig, str &buf)
 }
 
 void
-add2querymap(std::vector<std::vector<POLY> > queryList)
+add2querymap(std::vector<std::vector<POLY> > queryList, std::vector<std::string> dtdList)
 {
 	int qid = 0;
+	assert(queryList.size() == dtdList.size());
 
 	for (int i = 0; i < (int)queryList.size(); i++) {
 		queryMap.insert(std::pair<std::vector<POLY>, int>(queryList[i], qid));
+		id2strings::iterator itr = qid2dtd.find(qid);
+		if (itr != qid2dtd.end()) {
+			warnx << "add2querymap: qid already exists\n";
+		} else {
+			qid2dtd[qid].push_back(dtdList[i]);
+		}
 		++qid;
 	}
 	warnx << "queries added: " << qid << "\n";
@@ -4209,6 +4398,7 @@ usage(void)
 	     << "      	-t		<how often>\n"
 					"\t\t\t(gossip interval)\n"
 	     << "(	-u		make POLYs unique (convert multiset to set))\n"
+					"\t\t\t(don't use)\n"
 	     << "      	-w		<how long>\n"
 					"\t\t\t(wait interval after XGossip init phase is done)\n"
 	     << "	-X		<how many times>\n"
@@ -4222,7 +4412,7 @@ usage(void)
 	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j, -F)\n"
 					"\t\t\t(XGossip)\n"
 	     << "	-l		listen for gossip (requires -S, -G, -s)\n"
-	     << "	-M		test mergelists(p) (requires -D, -y, -Z)\n"
+	     << "	-M		merge {results | init states} (requires -D, -y, -Z)\n"
 	     << "	-Q		send query (requires -S, -d, -j, -s or -x)\n"
 	     << "	-r		read signatures (requires -s or -x)\n"
 	     << "	-v		print version\n"
