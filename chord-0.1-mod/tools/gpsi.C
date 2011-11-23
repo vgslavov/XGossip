@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.98 2011/09/23 17:05:24 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.99 2011/10/02 15:33:41 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.98 2011/09/23 17:05:24 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.99 2011/10/02 15:33:41 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -57,7 +57,7 @@ int gflag = 0;
 int Qflag = 0;
 int uflag = 0;
 int discardmsg = 0;
-int compact = 0;
+int compress = 0;
 int peers = 0;
 int teamsize = 5;
 int freqbyx = 1;
@@ -184,7 +184,7 @@ int set_uni(std::vector<POLY>, std::vector<POLY>, bool &);
 double signcmp(std::vector<POLY>, std::vector<POLY>, bool &);
 void tokenize(const std::string &, std::vector<std::string> &, const std::string &);
 void usage(void);
-void vecomap2vec(vecomap teamvecomap, int listnum, std::vector<std::vector <POLY> > &);
+void vecomap2vec(vecomap, int, std::vector<std::vector <POLY> > &, std::vector<double> &, std::vector<double> &);
 
 DHTStatus insertStatus;
 std::string INDEXNAME;
@@ -874,6 +874,8 @@ main(int argc, char *argv[])
 	std::vector<std::string> xpathfiles;
 	std::vector<std::string> dtdList;
 	std::vector<std::vector<POLY> > sigList;
+	std::vector<double> freqList;
+	std::vector<double> weightList;
 	std::vector<std::vector<POLY> > queryList;
 	std::vector<POLY> sig;
 	std::vector<POLY> compressedList;
@@ -904,7 +906,7 @@ main(int argc, char *argv[])
 			lfuncs = strtol(optarg, NULL, 10);
 			break;
 		case 'C':
-			compact = 1;
+			compress = 1;
 			break;
 		case 'c':
 			discardmsg = 1;
@@ -1262,11 +1264,13 @@ main(int argc, char *argv[])
 			}
 		}
 
-		if (compact == 1) {
+		if (compress == 1) {
 			compressedList.clear();
 			outBitmap.clear();
 			sigList.clear();
-			vecomap2vec(allT, 0, sigList);
+			freqList.clear();
+			weightList.clear();
+			vecomap2vec(allT, 0, sigList, freqList, weightList);
 
 			int sigbytesize = 0;
 			for (int i = 0; i < (int)sigList.size(); i++) {
@@ -1633,11 +1637,38 @@ main(int argc, char *argv[])
 						str teamID(p);
 						warnx << "txID: " << ID << "\n";
 
-						if (compact == 1) {
+						if (compress == 1) {
 							compressedList.clear();
 							outBitmap.clear();
-							//compressSignatures(totalT[i][0], compressedList, outBitmap);
-							//makeKeyValue(&value, valLen, key, teamID, compressedList, outputBitmap, txseq.back(), XGOSSIP);
+							sigList.clear();
+							freqList.clear();
+							weightList.clear();
+							vecomap2vec(allT, 0, sigList, freqList, weightList);
+
+							int sigbytesize = 0;
+							for (int i = 0; i < (int)sigList.size(); i++) {
+								sigbytesize += (sigList[i].size() * sizeof(POLY));
+							}
+
+							warnx << "sigList size (bytes): " << sigbytesize << "\n";
+							warnx << "sigList.size() (unique): " << sigList.size() << "\n";
+							compressSignatures(sigList, compressedList, outBitmap);
+
+							int compressedsize = compressedList.size() * sizeof(POLY);
+							warnx << "compressedList size (bytes): " << compressedsize << "\n";
+							warnx << "compressedList.size(): " << compressedList.size() << "\n";
+
+							int bitmapsize = 0;
+							for (int i = 0; i < (int)outBitmap.size(); i++) {
+								bitmapsize += (outBitmap[i].size() * sizeof(unsigned char));
+							}
+
+							warnx << "outBitmap size (bytes): " << bitmapsize << "\n";
+							warnx << "outBitmap.size(): " << outBitmap.size() << "\n";
+
+							warnx << "total compressed size (list+bitmap): " << compressedsize + bitmapsize << "\n";
+
+							makeKeyValue(&value, valLen, key, teamID, compressedList, outBitmap, freqList, weightList, txseq.back(), XGOSSIPC);
 						} else {
 							makeKeyValue(&value, valLen, key, teamID, totalT[i][0], txseq.back(), XGOSSIP);
 							totaltxmsglen += valLen;
@@ -2122,9 +2153,12 @@ readgossip(int fd)
 	InsertType msgtype;
 	std::vector<POLY> sig;
 	std::vector<POLY> querysig;
+	std::vector<POLY> compressedList;
+	std::vector<std::vector<unsigned char> > outBitmap;
 	double freq, weight, totalavg;
 	int n, msglen, recvlen, nothing, tind, ninter, qid, sigmatches;
 	int ret, seq;
+	int numSigs;
 	bool multi;
 
 	ninter = msglen = recvlen = nothing = 0;
@@ -2188,7 +2222,7 @@ readgossip(int fd)
 
 	msgtype = getKeyValueType(gmsg.cstr());
 	warnx << " type: ";
-	if (msgtype == VXGOSSIP || msgtype == XGOSSIP) {
+	if (msgtype == VXGOSSIP || msgtype == XGOSSIP || msgtype == XGOSSIPC) {
 		// discard msg if in init phase
 		if (initphase == 1) {
 			warnx << "warning: phase=init, msgtype=" << msgtype << "\n";
@@ -2196,11 +2230,16 @@ readgossip(int fd)
 			return;
 		} else if (msgtype == VXGOSSIP) {
 			warnx << "VXGOSSIP";
-		} else {
+			ret = getKeyValue(gmsg.cstr(), key, keyteamid, sigList, freqList, weightList, seq, recvlen);
+		} else if (msgtype == XGOSSIP) {
 			warnx << "XGOSSIP";
+			ret = getKeyValue(gmsg.cstr(), key, keyteamid, sigList, freqList, weightList, seq, recvlen);
+		} else {
+			warnx << "XGOSSIPC";
+			ret = getKeyValue(gmsg.cstr(), key, keyteamid, compressedList, outBitmap, numSigs, freqList, weightList, seq, recvlen);
+			uncompressSignatures(sigList, compressedList, outBitmap, numSigs);
 		}
 
-		ret = getKeyValue(gmsg.cstr(), key, keyteamid, sigList, freqList, weightList, seq, recvlen);
 		if (ret == -1) {
 			warnx << "error: getKeyValue failed\n";
 			fdcb(fd, selread, NULL);
@@ -2214,7 +2253,7 @@ readgossip(int fd)
 		      << " txseq-cur: " << txseq.back()
 		      << " rxID: " << key;
 
-		if (msgtype == XGOSSIP) warnx << " teamID: " << keyteamid;
+		if (msgtype == XGOSSIP || msgtype == XGOSSIPC) warnx << " teamID: " << keyteamid;
 
 		warnx  << "\n";
 
@@ -4177,10 +4216,12 @@ delspecial(int listnum)
 }
 
 void
-vecomap2vec(vecomap teamvecomap, int listnum, std::vector<std::vector <POLY> >&sigList)
+vecomap2vec(vecomap teamvecomap, int listnum, std::vector<std::vector <POLY> >&sigList, std::vector<double> &freqList, std::vector<double> &weightList)
 {
 	for (mapType::iterator itr = teamvecomap[listnum].begin(); itr != teamvecomap[listnum].end(); itr++) {
 		sigList.push_back(itr->first);
+		freqList.push_back(itr->second[0]);
+		weightList.push_back(itr->second[1]);
 	}
 }
 
@@ -4370,7 +4411,7 @@ usage(void)
 	     << "\t     -H -d 1122941 -j irrpoly-deg9.dat -B 50 -R 10 -I -E -P initfile -p\n\n";
 	warn << "Options:\n"
 	     << "	-B		bands for LSH (a.k.a. m groups)\n"
-	     << "	-C		compact signatures\n"
+	     << "	-C		compress signatures (XGossip exec only)\n"
 	     << "	-c		discard out-of-round messages\n"
 	     << "	-D		<dir with init files>\n"
 	     << "	-d		<random prime number for LSH seed>\n"
