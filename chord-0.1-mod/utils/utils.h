@@ -1,4 +1,4 @@
-/*	$Id: utils.h,v 1.20 2010/11/27 17:58:50 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.h,v 1.21 2011/02/20 02:03:39 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #ifndef _UTILS_H_
@@ -226,18 +226,25 @@ struct Interval {
  void makeKeyValue(char **, int&, str&, double&, double& InsertType);
  void getKeyValue(const char *, str&, double&, double&);
 
-// vsfgd: xgossip/xgossip+
+// vsfgd: vxgossip/xgossip
  int getKeyValueLen(const char* buf);
  InsertType getKeyValueType(const char* buf);
 
-// vsfgd: xgossip/xgossip+ exec
+// vsfgd: vxgossip/xgossip exec
  int getKeyValue(const char*, str&, str&, std::vector<std::vector<POLY> >&, std::vector<double>&, std::vector<double>&, int&, int);
  void makeKeyValue(char **, int&, str&, str&, std::map<std::vector<POLY>, std::vector<double>, CompareSig>&, int&, InsertType);
+// with compression
+void makeKeyValue(char **, int&, str&, str&, std::vector<POLY>&, std::vector<std::vector<unsigned char> >&, std::vector<double>&, std::vector<double>&, int&, InsertType);
+int getKeyValue(const char*, str&, str&, std::vector<POLY>&, std::vector<std::vector<unsigned char> >&, int&, std::vector<double>&, std::vector<double>&, int&, int);
 
-// vsfgd: xgossip+ init
+// vsfgd: xgossip query
+int getKeyValue(const char*, str&, str&, std::vector<POLY>&, int&, int);
+void makeKeyValue(char **, int&, str&, str&, std::vector<POLY>&, int&, InsertType);
+
+// vsfgd: xgossip init
  int getKeyValue(const char*, str&, str&, std::vector<POLY>&, double&, double&, int);
  void makeKeyValue(char **, int&, str&, str&, std::vector<POLY>&, double&, double&, InsertType);
-// vsfgd: xgossip+ inform_team
+// vsfgd: xgossip inform_team
  int getKeyValue(const char*, str&, int);
  void makeKeyValue(char **, int&, str&, std::vector<chordID>&, InsertType);
 
@@ -281,4 +288,18 @@ void makeSigData(str& sigdata, std::vector<POLY>& mySig, enum RetrieveType type)
 int randomNumGen(int r);
 int randomNumGenZ(int r);
 bool isStrValue(std::string& input);
+
+// raopr: all compression code
+
+bool compressSignatures(std::vector<std::vector<POLY> >&, 
+			std::vector<POLY>&, std::vector<std::vector<unsigned char> >&);
+bool uncompressSignatures(std::vector<std::vector<POLY> >&, 
+			  std::vector<POLY>&, std::vector<std::vector<unsigned char> >&, int);
+
+void makeKeyValue(char **, std::vector<POLY>&, 
+		  std::vector<std::vector<unsigned char> >&, int);
+
+void getKeyValue(const char *, std::vector<POLY>&, 
+		 std::vector<std::vector<unsigned char> >&, int&);
+
 #endif

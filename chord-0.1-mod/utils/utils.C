@@ -1,10 +1,11 @@
-/*	$Id: utils.C,v 1.42 2010/11/27 17:58:38 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.43 2011/02/20 02:02:37 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
 #include <sys/time.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <math.h>
 
 #include <fstream>
 #include <map>
@@ -921,7 +922,7 @@ void getKeyValue(const char* buf, str& key, std::vector<POLY>& value)
 	return;
 }
 
-// vsfgd: xgossip
+// vsfgd: vxgossip
 int getKeyValueLen(const char* buf)
 {
 	const char *lenPtr;
@@ -932,7 +933,7 @@ int getKeyValueLen(const char* buf)
 	return len;
 }
 
-// vsfgd: xgossip
+// vsfgd: vxgossip
 InsertType getKeyValueType(const char* buf)
 {
 	InsertType msgType;
@@ -942,7 +943,111 @@ InsertType getKeyValueType(const char* buf)
 	return msgType;
 }
 
-// vsfgd: xgossip/xgossip+ exec
+// vsfgd: vxgossip/xgossip exec (compression)
+// format:
+// <msgtype><msglen><keysize><key><teamidsize><teamid><seq>
+// <numSigs><compressedsiglistlen><POLY><unsigned char>...
+// <freq><weight>...
+int getKeyValue(const char* buf, str& key, str& teamid, std::vector<POLY>& compressedList, std::vector<std::vector<unsigned char> >& outBitmap, int& numSigs, std::vector<double>& freqList, std::vector<double>& weightList, int& seq, int recvlen)
+{
+	// copy msgtype
+	InsertType msgType;
+	memcpy(&msgType, buf, sizeof(msgType));
+
+	// copy len
+	const char *lenPtr;
+	int len;
+	lenPtr = buf + sizeof(msgType);
+	memcpy(&len, lenPtr, sizeof(len));
+	//warnx << "getKeyValue: msglen: " << len << "\n";
+
+	// XXX: InsertType
+	//if ((recvlen + (int)sizeof(int)) != len) {
+	if (recvlen != len) {
+		//warnx << "getKeyValue: recvlen: " << recvlen
+		//	<< " len: "<< len << "\n";
+		warnx << "getKeyValue: len doesn't match\n";
+		return -1;
+	}
+
+	// copy keysize
+	const char *keySizePtr;
+	int keySize;
+	keySizePtr = lenPtr + sizeof(len);
+	memcpy(&keySize, keySizePtr, sizeof(keySize));
+
+	// copy key
+	const char *keyPtr;
+	keyPtr = keySizePtr + sizeof(keySize);
+	key = str(keyPtr, keySize);
+	//assert(key);
+
+	// copy teamidsize
+	const char *teamidSizePtr;
+	int teamidSize;
+	teamidSizePtr = keyPtr + keySize;
+	memcpy(&teamidSize, teamidSizePtr, sizeof(teamidSize));
+
+	// copy teamid
+	const char *teamidPtr;
+	teamidPtr = teamidSizePtr + sizeof(teamidSize);
+	teamid = str(teamidPtr, teamidSize);
+
+	// copy seq
+	const char *seqPtr;
+	seqPtr = teamidPtr + teamidSize;
+	memcpy(&seq, seqPtr, sizeof(seq));
+
+	// copy numSigs
+	const char *numSigsPtr;
+	numSigsPtr = seqPtr + sizeof(seq);
+	memcpy(&numSigs, numSigsPtr, sizeof(numSigs));
+
+	// copy compressedListLen
+	const char *compressedListPtr;
+	int compressedListLen;
+	compressedListPtr = numSigsPtr + sizeof(numSigs);
+	memcpy(&compressedListLen, compressedListPtr, sizeof(compressedListLen));
+
+	for (int i = 0; i < compressedListLen; i++) {
+		compressedList.push_back(*((POLY *) compressedListPtr));
+		compressedListPtr += sizeof(POLY);
+
+		std::vector<unsigned char> e;
+		e.clear();
+
+		for (int j = 0; j < (int) ceil(numSigs/8.0); j++) {
+			e.push_back(*((unsigned char *) compressedListPtr));
+			compressedListPtr += sizeof(unsigned char);
+		}
+
+		outBitmap.push_back(e);
+	}
+
+	std::vector<POLY> sig;
+	sig.clear();
+	double freq;
+	double weight;
+	const char *freqPtr = NULL;
+	const char *weightPtr = NULL;
+
+	freqPtr = compressedListPtr;
+	for (int i = 0; i < numSigs; i++) {
+		// copy freq
+		memcpy(&freq, freqPtr, sizeof(freq));
+		freqList.push_back(freq);
+
+		// copy weight
+		weightPtr = freqPtr + sizeof(freq);
+		memcpy(&weight, weightPtr, sizeof(weight));
+		weightList.push_back(weight);
+
+		freqPtr = weightPtr + sizeof(weight);
+	}
+	return 0;
+}
+
+// vsfgd: vxgossip/xgossip exec
 // format: <msgtype><totallen><keysize><key><teamidsize><teamid><seq><siglistlen><sigsize><sig><freq><weight>...
 int getKeyValue(const char* buf, str& key, str& teamid, std::vector<std::vector<POLY> >& sigList, std::vector<double>& freqList, std::vector<double>& weightList, int& seq, int recvlen)
 {
@@ -1045,7 +1150,7 @@ int getKeyValue(const char* buf, str& key, str& teamid, std::vector<std::vector<
 	return 0;
 }
 
-// vsfgd: xgossip+ init
+// vsfgd: xgossip init
 // format: <msgtype><msglen><keysize><key><teamidsize><teamid><sigsize><sig><freq><weight>
 int getKeyValue(const char* buf, str& key, str& teamid, std::vector<POLY>& sig, double& freq, double& weight, int recvlen)
 {
@@ -1118,7 +1223,75 @@ int getKeyValue(const char* buf, str& key, str& teamid, std::vector<POLY>& sig, 
 	return 0;
 }
 
-// vsfgd: xgossip+ inform_team?
+// vsfgd: xgossip query
+// format: <msgtype><msglen><keysize><key><teamidsize><teamid><sigsize><qid>
+int getKeyValue(const char* buf, str& key, str& teamid, std::vector<POLY>& sig, int& qid, int recvlen)
+{
+	// copy msgtype
+	InsertType msgType;
+	memcpy(&msgType, buf, sizeof(msgType));
+
+	// copy len
+	const char *lenPtr;
+	int len;
+	lenPtr = buf + sizeof(msgType);
+	memcpy(&len, lenPtr, sizeof(len));
+	//warnx << "getKeyValue: msglen: " << len << "\n";
+
+	// XXX: InsertType
+	//if ((recvlen + (int)sizeof(int)) != len) {
+	if (recvlen != len) {
+		//warnx << "getKeyValue: recvlen: " << recvlen
+		//	<< " len: "<< len << "\n";
+		warnx << "getKeyValue: len doesn't match\n";
+		return -1;
+	}
+
+	// copy keysize
+	const char *keySizePtr;
+	int keySize;
+	keySizePtr = lenPtr + sizeof(len);
+	memcpy(&keySize, keySizePtr, sizeof(keySize));
+
+	// copy key
+	const char *keyPtr;
+	keyPtr = keySizePtr + sizeof(keySize);
+	key = str(keyPtr, keySize);
+
+	// copy teamidsize
+	const char *teamidSizePtr;
+	int teamidSize;
+	teamidSizePtr = keyPtr + keySize;
+	memcpy(&teamidSize, teamidSizePtr, sizeof(teamidSize));
+
+	// copy teamid
+	const char *teamidPtr;
+	teamidPtr = teamidSizePtr + sizeof(teamidSize);
+	teamid = str(teamidPtr, teamidSize);
+
+	// copy siglen
+	const char *sigLenPtr;
+	int sigLen;
+	sigLenPtr = teamidPtr + teamidSize;
+	memcpy(&sigLen, sigLenPtr, sizeof(sigLen));
+
+	sigLenPtr += sizeof(sigLen);
+
+	const POLY *ptr = (POLY *) sigLenPtr;
+
+	for (int i = 0; i < sigLen/(int) sizeof(POLY); i++) {
+		sig.push_back(ptr[i]);
+	}
+	
+	// copy freq
+	const char *qidPtr;
+	qidPtr = sigLenPtr + sigLen;
+	memcpy(&qid, qidPtr, sizeof(qid));
+
+	return 0;
+}
+
+// vsfgd: xgossip inform_team?
 // format: <msgtype><msglen><keysize><key>
 int getKeyValue(const char* buf, str& key, int recvlen)
 {
@@ -1293,7 +1466,99 @@ void makeKeyValue(char **ptr, int& len, str& key, std::vector<POLY>& sig,
 	return;
 }
 
-// vsfgd: xgossip/xgossip+ exec
+// vsfgd: vxgossip/xgossip exec (compression)
+// format:
+// <msgtype><msglen><keysize><key><teamidsize><teamid><seq>
+// <numsigs><compressedsiglistlen><POLY><unsigned char>...
+// <freq><weight>...
+void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::vector<POLY>& compressedList, std::vector<std::vector<unsigned char> >& outBitmap, std::vector<double>& freqList, std::vector<double>& weightList, int& seq, InsertType type)
+{
+	int keyLen = key.len();
+	int teamidLen = teamid.len();
+	int compressedListLen = compressedList.size();
+	int sigListLen = freqList.size();
+	int numSigs = freqList.size();
+
+	assert(freqList.size() == weightList.size());
+	
+	// msgtype + msglen + keysize + key + teamidsize + teamid + seq
+	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(int) + teamidLen + sizeof(int);
+
+	// compressedListLen + compressedListLen * (POLY + sigListLen)
+	len += sizeof(int) + (int) compressedListLen * (sizeof(POLY) + (int) ceil(sigListLen/8.0));
+
+	// freqList + weightList: sigListLen + (2 * sigListLen * weight|freq)
+	len += sizeof(int) + (2 * sigListLen * sizeof(double));
+
+	// XXX: includes 4 bytes for type
+	warnx << "makeKeyValue:\ntxmsglen: " << len
+	      << " txlistlen: " << sigListLen
+	      << " txclistlen: " << compressedListLen << "\n";
+	// TODO: New vs new?
+	*ptr = New char[len];
+	//*ptr = new char[len];
+	assert(ptr);
+	char *buf = *ptr;
+
+	// copy type
+	memcpy(buf, &type, sizeof(type));
+	buf += sizeof(type);
+
+	// copy len
+	// XXX: is sizeof(type) always equal to sizeof(int)?
+	//len = len - sizeof(int);
+	//warnx << "makeKeyValue: len (msg): " << len << "\n";
+	memcpy(buf, &len, sizeof(len));
+	buf += sizeof(len);
+
+	// copy key
+	memcpy(buf, &keyLen, sizeof(keyLen));
+	buf += sizeof(keyLen);
+	memcpy(buf, key.cstr(), keyLen);
+	buf += keyLen;
+
+	// copy teamid
+	memcpy(buf, &teamidLen, sizeof(teamidLen));
+	buf += sizeof(teamidLen);
+	memcpy(buf, teamid.cstr(), teamidLen);
+	buf += teamidLen;
+
+	// copy seq
+	memcpy(buf, &seq, sizeof(seq));
+	buf += sizeof(seq);
+
+	// copy numSigs
+	memcpy(buf, &numSigs, sizeof(numSigs));
+	buf += sizeof(numSigs);
+
+	// copy compressedListLen
+	memcpy(buf, &compressedListLen, sizeof(compressedListLen));
+	buf += sizeof(compressedListLen);
+
+	// copy compressedList
+	for (int i = 0; i < compressedListLen; i++) {
+		memcpy(buf, &compressedList[i], sizeof(POLY));
+		buf += sizeof(POLY);
+
+		// copy outBitmap
+		for (int j = 0; j < (int) outBitmap[i].size(); j++) {
+			memcpy(buf, &outBitmap[i][j], sizeof(unsigned char));
+			buf += sizeof(unsigned char);
+		}
+	}
+
+	// copy freqList and weightList
+	for (int i = 0; i < numSigs; i++) {
+		memcpy(buf, &freqList[i], sizeof(double));
+		buf += sizeof(double);
+		memcpy(buf, &weightList[i], sizeof(double));
+		buf += sizeof(double);
+	}
+
+	return;
+}
+
+// vsfgd: vxgossip/xgossip exec
 // format: <msgtype><msglen><keysize><key><teamidsize><teamid><seq><siglistlen><sigsize><sig><freq><weight>...
 void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::map<std::vector<POLY>, std::vector<double>, CompareSig>& sigList, int& seq, InsertType type)
 {
@@ -1517,7 +1782,7 @@ void makeKeyValue(char **ptr, int& len, str& key, std::map<std::vector<POLY>, do
 	return;
 }
 
-// vsfgd: xgossip+ inform_team
+// vsfgd: xgossip inform_team
 // format: <msgtype><msglen><keysize><key><chordID>
 void makeKeyValue(char **ptr, int& len, str& key, std::vector<chordID>& minhash, InsertType type)
 {
@@ -1552,7 +1817,7 @@ void makeKeyValue(char **ptr, int& len, str& key, std::vector<chordID>& minhash,
 	memcpy(buf, &ID, sizeof(ID));
 }
 
-// vsfgd: xgossip+ init
+// vsfgd: xgossip init
 // format: <msgtype><msglen><keysize><key><teamidsize><teamid><sigsize><sig><freq><weight>
 void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::vector<POLY>& sig, double& freq, double& weight, InsertType type)
 {
@@ -1607,6 +1872,61 @@ void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::vector<POLY>
 	// Copy weight
 	memcpy(buf, &weight, sizeof(weight));
 	buf += sizeof(weight);
+
+	return;
+}
+
+// vsfgd: xgossip query
+// format: <msgtype><msglen><keysize><key><teamidsize><teamid><sigsize><sig><queryid>
+void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::vector<POLY>& sig, int& qid, InsertType type)
+{
+	int keyLen = key.len();
+	int teamidLen = teamid.len();
+	//warnx << "LENGTH: ++++ " << keyLen << "\n";
+	int sigLen = sig.size() * sizeof(POLY);
+	
+	// msgtype + msglen + keysize + key + teamidsize + teamid + sigsize + sig + qid
+	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(int) + teamidLen + sizeof(int) + sigLen + sizeof(int);
+	
+	// TODO: New vs new?
+	*ptr = New char[len];
+	//*ptr = new char[len];
+	assert(ptr);
+	char *buf = *ptr;
+
+	// Copy msgtype
+	memcpy(buf, &type, sizeof(type));
+	buf += sizeof(type);
+
+	// Copy msglen
+	memcpy(buf, &len, sizeof(len));
+	buf += sizeof(len);
+
+	// Copy key
+	memcpy(buf, &keyLen, sizeof(keyLen));
+	buf += sizeof(keyLen);
+	memcpy(buf, key.cstr(), keyLen);
+	buf += keyLen;
+
+	// Copy teamid
+	memcpy(buf, &teamidLen, sizeof(teamidLen));
+	buf += sizeof(teamidLen);
+	memcpy(buf, teamid.cstr(), teamidLen);
+	buf += teamidLen;
+
+	// Copy siglen
+	memcpy(buf, &sigLen, sizeof(sigLen));
+	buf += sizeof(sigLen);
+
+	POLY *sigPtr = (POLY *) buf;
+	for (int i = 0; i < (int) sig.size(); i++) {
+		sigPtr[i] = sig[i];
+	}
+	buf += sigLen;
+
+	// Copy qid
+	memcpy(buf, &qid, sizeof(qid));
+	buf += sizeof(qid);
 
 	return;
 }
@@ -2458,4 +2778,183 @@ lsh::getHashCodeFindMod(std::vector<POLY>& S, POLY polNumber)
 	//txt.close();
 	//hash is a vector of type chordID with m number of IDs
 	return hash;
+}
+
+// raopr: all compression code
+
+bool
+compressSignatures(std::vector<std::vector<POLY> >& inputSig, 
+			std::vector<POLY>& outputSig, std::vector<std::vector<unsigned char> >& outputBitmap)
+{
+  
+  // find # of sigs to compress
+  int numSigs = inputSig.size();
+  if (numSigs == 0) {
+    std::cout << "Nothing to compress..." << std::endl;
+    return false;
+  }
+
+  POLY minPoly;
+  std::vector<int> index;
+  
+  // init the indexes
+  for (int i = 0; i < numSigs; i++) {
+    index.push_back(0);
+    if (inputSig[i].size() == 0) {
+      std::cout << "At least one signature is empty." << std::endl;
+      return false;
+    }
+  }
+
+  // Create an empty bitmap
+  std::vector<unsigned char> ZEROVECTOR;
+  for (int j = 0; j < ceil(numSigs/8.0); j++) {
+      ZEROVECTOR.push_back(0x0);
+  }
+
+  // Create the bitmaps
+  while (1) {
+    // Check the loop break out condition
+    bool eov = true;
+    for (int i = 0; i < numSigs; i++) {
+      if (index[i] < (int) inputSig[i].size()) {
+	eov = false;
+	break;
+      }
+    }
+
+    // We are done if we have scanned all the sigs
+    if (eov == true) break;
+
+    minPoly = 0xffffffff;
+    // First find the min from all the sigs
+    for (int i = 0; i < numSigs; i++) {
+      if (index[i] < (int) inputSig[i].size()) {
+	if (inputSig[i][index[i]] < minPoly) {
+	  minPoly = inputSig[i][index[i]];
+	}
+      }
+      //else {
+      //std::cout << "Reached EOF for " << i << std::endl;
+      //}
+    }
+  
+    //std::cout << "MIN poly: " << minPoly << std::endl;
+
+    // Push the minPoly to the output signature
+    outputSig.push_back(minPoly);
+    // Push an zero vector
+    outputBitmap.push_back(ZEROVECTOR);
+
+    // Now loop through all the signatures and increment the indexes and
+    // update the bitmaps
+
+    for (int i = 0; i < numSigs; i++) {
+      // If it matches minPoly
+      if (inputSig[i][index[i]] == minPoly) {
+	// Adjust the bitmap
+	int bitmapid = i / 8;
+	
+	unsigned char mask = 0x80 >> (i % 8);
+
+	//printf("Bitmapid: %d mask: %c\n", bitmapid, mask);
+	// do a bitwise OR using the mask
+	outputBitmap[outputBitmap.size() - 1][bitmapid] = 
+	  outputBitmap[outputBitmap.size() - 1][bitmapid] | mask;
+	
+	// move to the next element
+	index[i]++;
+      }
+    }
+  }
+
+  return true;
+}
+
+bool
+uncompressSignatures(std::vector<std::vector<POLY> >& outputSig, 
+			  std::vector<POLY>& inputSig, std::vector<std::vector<unsigned char> >& inputBitmap, int numSigs)
+{
+  
+  // Initialize 
+  for (int i = 0; i < numSigs; i++) {
+    std::vector<POLY> e;
+    outputSig.push_back(e);
+  }
+
+  // Now extract the items
+  for (int i = 0; i < (int) inputSig.size(); i++) {
+    for (int j = 0; j < numSigs; j++) {
+      unsigned char mask = 0x80 >> (j % 8);
+      int bitmapid = j / 8;
+      if (inputBitmap[i][bitmapid] & mask) {
+	outputSig[j].push_back(inputSig[i]);
+      }
+    }
+  }
+  return true;
+}
+
+// format: <numSigs><inputSigLen><POLY=inputSig[i]><vector<unsigned char>=inputBitmap[i]>
+void
+makeKeyValue(char **inptr, std::vector<POLY>& inputSig, 
+		  std::vector<std::vector<unsigned char> >& inputBitmap, int numSigs)
+{
+  int len = sizeof(numSigs) + sizeof(int) + (int) inputSig.size() * (sizeof(POLY) + (int) ceil(numSigs/8.0));
+  unsigned char *ptr = new unsigned char[len];
+  *inptr = (char *) ptr;
+
+  // store the num of signatures
+  memcpy(ptr, &numSigs, sizeof(numSigs));
+  ptr += sizeof(numSigs);
+
+  // store the len of the aligned multiset
+  int alen = (int) inputSig.size();
+  memcpy(ptr, &alen, sizeof(alen));
+  ptr += sizeof(alen);
+
+  // store the aligned multiset
+  for (int i = 0; i < alen; i++) {
+    memcpy(ptr, &inputSig[i], sizeof(POLY));
+    ptr += sizeof(POLY);
+
+    // bitmap
+    for (int j = 0; j < (int) inputBitmap[i].size(); j++) {
+      memcpy(ptr, &inputBitmap[i][j], sizeof(unsigned char));
+      ptr += sizeof(unsigned char);
+    }
+  }
+
+  return;
+}
+
+void
+getKeyValue(const char *buf, std::vector<POLY>& outputSig, 
+		 std::vector<std::vector<unsigned char> >& outputBitmap, int& numSigs)
+{
+  const char *ptr = buf;
+  memcpy(&numSigs, ptr, sizeof(numSigs));
+  ptr += sizeof(numSigs);
+
+  int alen;
+  memcpy(&alen, ptr, sizeof(alen));
+  ptr += sizeof(alen);
+
+  printf("Num sigs: %d Alen %d\n", numSigs, alen);
+
+  for (int i = 0; i < alen; i++) {
+    outputSig.push_back(*((POLY *) ptr));
+    ptr += sizeof(POLY);
+    
+    std::vector<unsigned char> e;
+    e.clear();
+
+    for (int j = 0; j < (int) ceil(numSigs/8.0); j++) {
+      e.push_back(*((unsigned char *) ptr));
+      ptr += sizeof(unsigned char);
+    }
+    
+    outputBitmap.push_back(e);
+  }
+  return;
 }
