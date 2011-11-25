@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.99 2011/10/02 15:33:41 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.100 2011/11/23 20:37:16 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.99 2011/10/02 15:33:41 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.100 2011/11/23 20:37:16 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1610,8 +1610,11 @@ main(int argc, char *argv[])
 				for (int i = 0; i < (int)totalT.size(); i++) {
 					// TODO: needed?
 					if (gflag == 1) {
-						warnx << "inserting XGOSSIP:\n"
-						      << "txseq: " << txseq.back() << "\n";
+						warnx << "inserting ";
+						if (compress == 1) warnx << "XGOSSIPC:\n";
+						else warnx << "XGOSSIP:\n";
+
+						warnx << "txseq: " << txseq.back() << "\n";
 
 						teamID = findteamid(i);
 						if (teamID == NULL) {
@@ -1643,7 +1646,7 @@ main(int argc, char *argv[])
 							sigList.clear();
 							freqList.clear();
 							weightList.clear();
-							vecomap2vec(allT, 0, sigList, freqList, weightList);
+							vecomap2vec(totalT[i], 0, sigList, freqList, weightList);
 
 							int sigbytesize = 0;
 							for (int i = 0; i < (int)sigList.size(); i++) {
@@ -1671,9 +1674,10 @@ main(int argc, char *argv[])
 							makeKeyValue(&value, valLen, key, teamID, compressedList, outBitmap, freqList, weightList, txseq.back(), XGOSSIPC);
 						} else {
 							makeKeyValue(&value, valLen, key, teamID, totalT[i][0], txseq.back(), XGOSSIP);
-							totaltxmsglen += valLen;
-							roundtxmsglen += valLen;
 						}
+
+						totaltxmsglen += valLen;
+						roundtxmsglen += valLen;
 
 						status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
 						cleanup(value);
