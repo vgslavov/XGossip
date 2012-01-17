@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.101 2011/11/25 21:23:35 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.102 2012/01/17 18:58:45 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.101 2011/11/25 21:23:35 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.102 2012/01/17 18:58:45 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1257,10 +1257,12 @@ main(int argc, char *argv[])
 		if (plist == 1) {
 			// both init phases use allT
 			printlist(allT, 0, -1);
+			// print DTD names and how many sigs/DTD
 			for (string2sigs::iterator itr = dtd2sigs.begin(); itr != dtd2sigs.end(); itr++) {
 				warnx << "DTD: " << itr->first.c_str();
-				sig2str(itr->second.back(), sigbuf);
-				warnx << " sig: " << sigbuf << "\n";
+				warnx << " sigs: " << itr->second.size() << "\n";
+				//sig2str(itr->second.back(), sigbuf);
+				//warnx << " sig: " << sigbuf << "\n";
 			}
 		}
 
