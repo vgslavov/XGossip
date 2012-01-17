@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.100 2011/11/23 20:37:16 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.101 2011/11/25 21:23:35 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.100 2011/11/23 20:37:16 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.101 2011/11/25 21:23:35 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1294,6 +1294,19 @@ main(int argc, char *argv[])
 			warnx << "outBitmap.size(): " << outBitmap.size() << "\n";
 
 			warnx << "total compressed size (list+bitmap): " << compressedsize + bitmapsize << "\n";
+
+			std::vector<std::vector<POLY> > newsigList;
+			newsigList.clear();
+
+			int numSigs = sigList.size();
+			uncompressSignatures(newsigList, compressedList, outBitmap, numSigs);
+
+			warnx << "after uncompress:";
+			for (int i = 0; i < (int) newsigList.size(); i++) {
+				sig2str(newsigList[i], sigbuf);
+				warnx << "sig[" << i << "]: " << sigbuf << "\n";
+			}
+
 			/*
 			for (int i = 0; i < (int)compressedList.size(); i++) {
 				warnx << compressedList[i] << "\n";
@@ -1426,14 +1439,21 @@ main(int argc, char *argv[])
 	warnx << "mgroups: " << mgroups << "\n";
 	warnx << "lfuncs: " << lfuncs << "\n";
 	warnx << "teamsize: " << teamsize << "\n";
+	warnx << "compression: ";
+	if (compress == 1) warnx << "yes\n";
+	else warnx << "no\n";
+
 	std::vector<std::vector<POLY> > pmatrix;
 
 	// listen
 	if (gflag == 1 || lflag == 1) {
+		// enter init phase
+		if (Iflag == 1) initphase = 1;
+
 		warnx << "listening for gossip...\n";
 		listengossip();		
 		int listensleep = 30;
-		warnx << "waiting " << listensleep << "s for others to start listening\n";
+		warnx << "waiting " << listensleep << " sec for others to start listening\n";
 		initsleep = 0;
 		delaycb(listensleep, 0, wrap(initsleepnow));
 		while (initsleep == 0) acheck();
@@ -1444,8 +1464,6 @@ main(int argc, char *argv[])
 		warnx << "initgossipsend...\n";
 		warnx << "init interval: " << initintval << "\n";
 
-		// enter init phase
-		initphase = 1;
 		beginTime = getgtod();    
 	
 		// InitGossipSend: use findMod()
@@ -1649,8 +1667,11 @@ main(int argc, char *argv[])
 							vecomap2vec(totalT[i], 0, sigList, freqList, weightList);
 
 							int sigbytesize = 0;
+							warnx << "sigs before compression:\n";
 							for (int i = 0; i < (int)sigList.size(); i++) {
 								sigbytesize += (sigList[i].size() * sizeof(POLY));
+								sig2str(sigList[i], sigbuf);
+								warnx << "sig[" << i << "]: " << sigbuf << "\n";
 							}
 
 							warnx << "sigList size (bytes): " << sigbytesize << "\n";
@@ -2261,6 +2282,9 @@ readgossip(int fd)
 
 		warnx  << "\n";
 
+		warnx << "freqList.size(): " << freqList.size() << "\n";;
+		warnx << "weightList.size(): " << weightList.size() << "\n";
+
 		// count rounds off by one
 		n = seq - txseq.back();
 		if (n < 0) {
@@ -2281,20 +2305,22 @@ readgossip(int fd)
 			}
 		}
 
-#ifdef _DEBUG_
+//#ifdef _DEBUG_
 		for (int i = 0; i < (int) sigList.size(); i++) {
 			sig2str(sigList[i], sigbuf);
 			warnx << "sig[" << i << "]: " << sigbuf << "\n";
 		}
 		for (int i = 0; i < (int) freqList.size(); i++) {
-			printdouble("freq[i]: ", freqList[i]);
+			warnx << "freq[" << i << "]: ";
+			printdouble("", freqList[i]);
 			warnx << "\n";
 		}
 		for (int i = 0; i < (int) weightList.size(); i++) {
-			printdouble("weight[i]: ", weightList[i]);
+			warnx << "weight[" << i << "]: ";
+			printdouble("", weightList[i]);
 			warnx << "\n";
 		}
-#endif
+//#endif
 
 		rxseq.push_back(seq);
 		str2chordID(keyteamid, teamID);
@@ -4195,7 +4221,7 @@ dividefreq(vecomap &teamvecomap, int listnum, int fby, int wby)
 		weight = itr->second[1];
 		itr->second[1] = weight / wby;
 	}
-	warnx << "divideferq(" << fby << ", " << wby << "): setsize: " << teamvecomap[listnum].size() << "\n";
+	warnx << "dividefreq(" << fby << ", " << wby << "): setsize: " << teamvecomap[listnum].size() << "\n";
 }
 
 // obsolete
