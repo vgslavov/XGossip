@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.102 2012/01/17 18:58:45 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.103 2012/01/17 21:12:07 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.102 2012/01/17 18:58:45 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.103 2012/01/17 21:12:07 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -852,7 +852,7 @@ int
 main(int argc, char *argv[])
 {
 	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag, yflag, Zflag;
-	int ch, gintval, initintval, waitintval, nids, rounds, valLen, logfd;
+	int ch, gintval, initintval, waitintval, listenintval, nids, rounds, valLen, logfd;
 	int listnum;
 	double beginTime, endTime, instime;
 	char *value;
@@ -883,7 +883,7 @@ main(int argc, char *argv[])
 
 
 	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = xflag = yflag = Zflag = 0;
-	gintval = waitintval = nids = 0;
+	gintval = waitintval = listenintval = nids = 0;
 	initintval = -1;
 	rounds = -1;
 	rxqseq.clear();
@@ -897,7 +897,7 @@ main(int argc, char *argv[])
 	dummysig.push_back(1);
 
 	// parse arguments
-	while ((ch = getopt(argc, argv, "B:CcD:d:EF:G:gHhIj:L:lMmn:o:P:pQq:R:rS:s:T:t:uvw:X:x:y:Z:z")) != -1)
+	while ((ch = getopt(argc, argv, "B:CcD:d:EF:G:gHhIj:L:lMmn:o:P:pQq:R:rS:s:T:t:uvW:w:X:x:y:Z:z")) != -1)
 		switch(ch) {
 		case 'B':
 			mgroups = strtol(optarg, NULL, 10);
@@ -994,6 +994,9 @@ main(int argc, char *argv[])
 			break;
 		case 'u':
 			uflag = 1;
+			break;
+		case 'W':
+			listenintval = strtol(optarg, NULL, 10);
 			break;
 		case 'w':
 			waitintval = strtol(optarg, NULL, 10);
@@ -1454,17 +1457,16 @@ main(int argc, char *argv[])
 
 		warnx << "listening for gossip...\n";
 		listengossip();		
-		int listensleep = 30;
-		warnx << "waiting " << listensleep << " sec for others to start listening\n";
+		warnx << "listen interval: " << listenintval << "\n";
 		initsleep = 0;
-		delaycb(listensleep, 0, wrap(initsleepnow));
+		delaycb(listenintval, 0, wrap(initsleepnow));
 		while (initsleep == 0) acheck();
 	}
 
 	// XGossip init phase and "action H" (not gossiping)
 	if (Hflag == 1 && Iflag == 1) {
 		warnx << "initgossipsend...\n";
-		warnx << "init interval: " << initintval << "\n";
+		warnx << "interval b/w inserts: " << initintval << "\n";
 
 		beginTime = getgtod();    
 	
@@ -4427,7 +4429,7 @@ void
 usage(void)
 {
 	warn << "Usage: " << __progname << " [-h] [actions...] [options...]\n\n";
-	warn << "Examples:\n\n";
+	warn << "EXAMPLES:\n\n";
 	warn << "Send signature query:\n";
 	warn << "\t" << __progname << " -Q -S dhash-sock -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 5 -R 10 -Z 4\n\n";
 	warn << "Send xpath query:\n";
@@ -4441,46 +4443,64 @@ usage(void)
 	warn << "XGossip:\n";
 	warn << "\t" << __progname << " -S dhash-sock -G g-sock -L log.gpsi -s sigdir -g -t 120 -T 1 -w 900\n"
 	     << "\t     -H -d 1122941 -j irrpoly-deg9.dat -B 50 -R 10 -I -E -P initfile -p\n\n";
-	warn << "Options:\n"
-	     << "	-B		bands for LSH (a.k.a. m groups)\n"
+	warn << "OPTIONS:\n\n"
+             << "\tACTIONS (optional):\n"
 	     << "	-C		compress signatures (XGossip exec only)\n"
 	     << "	-c		discard out-of-round messages\n"
-	     << "	-D		<dir with init files>\n"
-	     << "	-d		<random prime number for LSH seed>\n"
-	     << "	-E		exec phase of XGossip (requires -H)\n"
-	     << "      	-F		<hash funcs file>\n"
-	     << "	-G		<gossip socket>\n"
 	     << "	-H		generate chordIDs/POLYs using LSH when gossiping\n"
 					"\t\t\t(requires -g, -s, -d, -j, -I, -w, -F)\n"
-	     << "	-I		init phase of XGossip (requires -H)\n"
-	     << "      	-j		<irrpoly file>\n"
-	     << "	-L		<log file>\n"
 	     << "      	-m		use findMod instead of compute_hash\n"
 					"\t\t\t(vector of POLYs instead of chordIDs)\n"
+	     << "      	-p		verbose (print list of signatures)\n"
+	     << "(	-u		make POLYs unique (convert multiset to set))\n"
+					"\t\t\t(don't use)\n\n"
+
+             << "\tDIRECTORIES:\n"
+	     << "	-D		<dir with init files>\n"
+	     << "	-s		<dir with sigs>\n"
+	     << "	-x		<dir with xpath files>\n\n"
+
+             << "\tFILES:\n"
+	     << "      	-F		<hash funcs file>\n"
+	     << "      	-j		<irrpoly file>\n"
+	     << "	-L		<log file>\n"
+	     << "      	-P		<init phase file>\n"
+					"\t\t\t(after XGossip init state is complete)\n\n"
+
+             << "\tNUMBERS:\n"
+	     << "	-B		<bands for LSH>\n"
+					"\t\t\t(a.k.a. m groups)\n"
+	     << "	-d		<random prime number for LSH seed>\n"
 	     << "      	-n		<how many chordIDs>\n"
 	     << "      	-o		<how many rounds>\n"
-	     << "      	-P		<init phase file>\n"
-					"\t\t\t(after XGossip init state is complete)\n"
-	     << "      	-p		verbose (print list of signatures)\n"
-	     << "      	-q		<initial estimate of # of peers in DHT>\n"
-	     << "	-R		rows for LSH (a.k.a. l hash functions)\n"
-	     << "	-S		<dhash socket>\n"
-	     << "	-s		<dir with sigs>\n"
+	     << "      	-q		<estimate of # of peers in DHT>\n"
+	     << "	-R		<rows for LSH>\n"
+					"\t\t\t(a.k.a. l hash functions)\n"
+	     << "	-X		<how many times>\n"
+					"\t\t\t(multiply freq of sigs by)\n"
+	     << "	-Z		<team size>\n\n"
+
+             << "\tPHASES/TYPES:\n"
+	     << "	-E		exec phase of XGossip (requires -H)\n"
+	     << "	-I		init phase of XGossip (requires -H)\n"
+	     << "	-y		<init | results>\n"
+					"\t\t\t(type for merging)\n\n"
+
+             << "\tSOCKETS:\n"
+	     << "	-G		<gossip socket>\n"
+	     << "	-S		<dhash socket>\n\n"
+
+             << "\tTIMES:\n"
 	     << "      	-T		<how often>\n"
 					"\t\t\t(interval between inserts in XGossip)\n"
 	     << "      	-t		<how often>\n"
 					"\t\t\t(gossip interval)\n"
-	     << "(	-u		make POLYs unique (convert multiset to set))\n"
-					"\t\t\t(don't use)\n"
+	     << "      	-W		<how long>\n"
+                                        "\t\t\t(wait interval before init/exec phase starts)\n"
 	     << "      	-w		<how long>\n"
-					"\t\t\t(wait interval after XGossip init phase is done)\n"
-	     << "	-X		<how many times>\n"
-					"\t\t\t(multiply freq of sigs by)\n"
-	     << "	-x		<dir with xpath files>\n"
-	     << "	-y		<init | results>\n"
-					"\t\t\t(type for merging)\n"
-	     << "	-Z		<team size>\n\n"
-	     << "Actions:\n"
+					"\t\t\t(wait interval after XGossip init phase is done)\n\n"
+
+	     << "ACTIONS:\n"
 	     << "	-g		gossip (requires -S, -G, -s, -t)\n"
 	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j, -F)\n"
 					"\t\t\t(XGossip)\n"
