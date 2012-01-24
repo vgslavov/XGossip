@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.103 2012/01/17 21:12:07 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.104 2012/01/23 16:43:05 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.103 2012/01/17 21:12:07 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.104 2012/01/23 16:43:05 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -854,7 +854,7 @@ main(int argc, char *argv[])
 	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag, yflag, Zflag;
 	int ch, gintval, initintval, waitintval, listenintval, nids, rounds, valLen, logfd;
 	int listnum;
-	double beginTime, endTime, instime;
+	double beginTime, beginreadTime, endTime, endreadTime, instime;
 	char *value;
 	struct stat statbuf;
 	time_t rawtime;
@@ -1118,6 +1118,10 @@ main(int argc, char *argv[])
 		errfd = logfd;
 	}
 
+	time(&rawtime);
+	warnx << "start ctime: " << ctime(&rawtime);
+	warnx << "start sincepoch: " << time(&rawtime) << "\n";
+
 	// set up init phase file: log.init
 	FILE *initfp = NULL;
 	std::string acc;
@@ -1230,6 +1234,7 @@ main(int argc, char *argv[])
 
 	// read signatures in memory
 	if ((rflag == 1 || gflag == 1 || Hflag == 1 || lflag == 1 || Qflag == 1) && sflag == 1) {
+		beginreadTime = getgtod();    
 		getdir(sigdir, sigfiles);
 		sigList.clear();
 
@@ -1330,6 +1335,9 @@ main(int argc, char *argv[])
 			fclose(initfp);
 		}
 		*/
+		endreadTime = getgtod();    
+		printdouble("read time: ", endreadTime - beginreadTime);
+		warnx << "\n";
 	}
 
 	// reading or querying using XPath files
@@ -1433,9 +1441,6 @@ main(int argc, char *argv[])
 		}
 	}
 
-	time(&rawtime);
-	warnx << "init ctime: " << ctime(&rawtime);
-	warnx << "init sincepoch: " << time(&rawtime) << "\n";
 	warnx << "rcsid: " << rcsid << "\n";
 	warnx << "host: " << host << "\n";
 	warnx << "pid: " << getpid() << "\n";
@@ -1452,6 +1457,9 @@ main(int argc, char *argv[])
 
 	// listen
 	if (gflag == 1 || lflag == 1) {
+		time(&rawtime);
+		warnx << "listen ctime: " << ctime(&rawtime);
+		warnx << "listen sincepoch: " << time(&rawtime) << "\n";
 		// enter init phase
 		if (Iflag == 1) initphase = 1;
 
@@ -1513,6 +1521,9 @@ main(int argc, char *argv[])
 	if (gflag == 1 && Hflag == 0) {
 		warnx << "vanillaxgossip exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
+		time(&rawtime);
+		warnx << "exec ctime: " << ctime(&rawtime);
+		warnx << "exec sincepoch: " << time(&rawtime) << "\n";
 
 		// from now on, work only with totalT
 		totalT.push_back(allT);
@@ -1592,9 +1603,9 @@ main(int argc, char *argv[])
 
 		warnx << "xgossip exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
+		time(&rawtime);
 		warnx << "exec ctime: " << ctime(&rawtime);
 		warnx << "exec sincepoch: " << time(&rawtime) << "\n";
-
 
 		// needed?
 		//srandom(loseed);
