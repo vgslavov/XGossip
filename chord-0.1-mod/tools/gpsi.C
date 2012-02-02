@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.104 2012/01/23 16:43:05 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.105 2012/01/24 18:41:09 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.104 2012/01/23 16:43:05 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.105 2012/01/24 18:41:09 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1603,6 +1603,7 @@ main(int argc, char *argv[])
 
 		warnx << "xgossip exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
+		warnx << "interval b/w inserts: " << initintval << "\n";
 		time(&rawtime);
 		warnx << "exec ctime: " << ctime(&rawtime);
 		warnx << "exec sincepoch: " << time(&rawtime) << "\n";
@@ -1752,6 +1753,7 @@ main(int argc, char *argv[])
 		}
 	} else if (Qflag == 1) {
 		initintval = 1;
+		warnx << "interval b/w inserts: " << initintval << "\n";
 		warnx << "querying ";
 		beginTime = getgtod();
 		if (xflag == 1) {
