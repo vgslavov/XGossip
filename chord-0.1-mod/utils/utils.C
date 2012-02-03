@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.43 2011/02/20 02:02:37 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.44 2011/11/23 20:41:29 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -1009,6 +1009,9 @@ int getKeyValue(const char* buf, str& key, str& teamid, std::vector<POLY>& compr
 	compressedListPtr = numSigsPtr + sizeof(numSigs);
 	memcpy(&compressedListLen, compressedListPtr, sizeof(compressedListLen));
 
+	// FUCKING pointers!
+	compressedListPtr += sizeof(compressedListLen);
+
 	for (int i = 0; i < compressedListLen; i++) {
 		compressedList.push_back(*((POLY *) compressedListPtr));
 		compressedListPtr += sizeof(POLY);
@@ -1469,7 +1472,7 @@ void makeKeyValue(char **ptr, int& len, str& key, std::vector<POLY>& sig,
 // vsfgd: vxgossip/xgossip exec (compression)
 // format:
 // <msgtype><msglen><keysize><key><teamidsize><teamid><seq>
-// <numsigs><compressedsiglistlen><POLY><unsigned char>...
+// <siglistlen><compressedsiglistlen><POLY><unsigned char>...
 // <freq><weight>...
 void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::vector<POLY>& compressedList, std::vector<std::vector<unsigned char> >& outBitmap, std::vector<double>& freqList, std::vector<double>& weightList, int& seq, InsertType type)
 {
@@ -1477,18 +1480,18 @@ void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::vector<POLY>
 	int teamidLen = teamid.len();
 	int compressedListLen = compressedList.size();
 	int sigListLen = freqList.size();
-	int numSigs = freqList.size();
 
 	assert(freqList.size() == weightList.size());
 	
 	// msgtype + msglen + keysize + key + teamidsize + teamid + seq
 	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(int) + teamidLen + sizeof(int);
 
-	// compressedListLen + compressedListLen * (POLY + sigListLen)
-	len += sizeof(int) + (int) compressedListLen * (sizeof(POLY) + (int) ceil(sigListLen/8.0));
+	// sigListLen + compressedListLen + compressedListLen * (POLY + sigListLen)
+	len += sizeof(int) + sizeof(int) + (int) compressedListLen * (sizeof(POLY) + (int) ceil(sigListLen/8.0));
+	//len += sizeof(int) + sizeof(int) + (int) compressedListLen * (sizeof(POLY) + sizeof(unsigned char));
 
-	// freqList + weightList: sigListLen + (2 * sigListLen * weight|freq)
-	len += sizeof(int) + (2 * sigListLen * sizeof(double));
+	// freqList + weightList: (2 * sigListLen * weight|freq)
+	len += (2 * sigListLen * sizeof(double));
 
 	// XXX: includes 4 bytes for type
 	warnx << "makeKeyValue:\ntxmsglen: " << len
@@ -1527,9 +1530,9 @@ void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::vector<POLY>
 	memcpy(buf, &seq, sizeof(seq));
 	buf += sizeof(seq);
 
-	// copy numSigs
-	memcpy(buf, &numSigs, sizeof(numSigs));
-	buf += sizeof(numSigs);
+	// copy sigListLen
+	memcpy(buf, &sigListLen, sizeof(sigListLen));
+	buf += sizeof(sigListLen);
 
 	// copy compressedListLen
 	memcpy(buf, &compressedListLen, sizeof(compressedListLen));
@@ -1548,7 +1551,7 @@ void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::vector<POLY>
 	}
 
 	// copy freqList and weightList
-	for (int i = 0; i < numSigs; i++) {
+	for (int i = 0; i < sigListLen; i++) {
 		memcpy(buf, &freqList[i], sizeof(double));
 		buf += sizeof(double);
 		memcpy(buf, &weightList[i], sizeof(double));
