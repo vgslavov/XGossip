@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.105 2012/01/24 18:41:09 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.106 2012/02/02 16:15:34 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.105 2012/01/24 18:41:09 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.106 2012/02/02 16:15:34 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -184,6 +184,7 @@ int set_uni(std::vector<POLY>, std::vector<POLY>, bool &);
 double signcmp(std::vector<POLY>, std::vector<POLY>, bool &);
 void tokenize(const std::string &, std::vector<std::string> &, const std::string &);
 void usage(void);
+bool validsig(std::vector<POLY>);
 void vecomap2vec(vecomap, int, std::vector<std::vector <POLY> > &, std::vector<double> &, std::vector<double> &);
 
 DHTStatus insertStatus;
@@ -1305,17 +1306,60 @@ main(int argc, char *argv[])
 
 			warnx << "total compressed size (list+bitmap): " << compressedsize + bitmapsize << "\n";
 
+			ID = make_randomID();
+			strbuf t;
+			t << ID;
+			str key(t);
+			str teamID(t);
+			txseq.push_back(777);
+			warnx << "key: " << key << "\n";
+			warnx << "teamID: " << teamID << "\n";
+			warnx << "seq: " << txseq.back() << "\n";
+			warnx << "numSigs: " << freqList.size() << "\n";
+			warnx << "compressedList.size(): " << compressedList.size() << "\n";
+			makeKeyValue(&value, valLen, key, teamID, compressedList, outBitmap, freqList, weightList, txseq.back(), XGOSSIPC);
+
+			int seq, numSigs;
+			str newkey;
+			str newteamID;
+			compressedList.clear();
+			outBitmap.clear();
+			freqList.clear();
+			weightList.clear();
+
+			int ret = getKeyValue(value, newkey, newteamID, compressedList, outBitmap, numSigs, freqList, weightList, seq, valLen);
+			if (ret == -1) warnx << "error: getKeyValue failed\n";
+			warnx << "key: " << newkey << "\n";
+			warnx << "teamID: " << newteamID << "\n";
+			warnx << "seq: " << seq << "\n";
+			warnx << "numSigs: " << numSigs << "\n";
+			warnx << "compressedList.size(): " << compressedList.size() << "\n";
+
+			//int numSigs = sigList.size();
 			std::vector<std::vector<POLY> > newsigList;
 			newsigList.clear();
-
-			int numSigs = sigList.size();
 			uncompressSignatures(newsigList, compressedList, outBitmap, numSigs);
 
-			warnx << "after uncompress:";
+			warnx << "after uncompress:\n";
+			assert(newsigList.size() == sigList.size());
+			bool multi;
+			double simi;
 			for (int i = 0; i < (int) newsigList.size(); i++) {
+				simi = signcmp(sigList[i], newsigList[i], multi);
+				printdouble("sim: ", simi);
+				warnx << " ";
 				sig2str(newsigList[i], sigbuf);
 				warnx << "sig[" << i << "]: " << sigbuf << "\n";
 			}
+
+			/*
+			newsigList.clear();
+			freqList.clear();
+			weightList.clear();
+
+			makeKeyValue(&value, valLen, key, teamID, allT[0], txseq.back(), XGOSSIP);
+			ret = getKeyValue(value, newkey, newteamID, newsigList, freqList, weightList, seq, recvlen);
+			*/
 
 			/*
 			for (int i = 0; i < (int)compressedList.size(); i++) {
@@ -1605,8 +1649,10 @@ main(int argc, char *argv[])
 		warnx << "gossip interval: " << gintval << "\n";
 		warnx << "interval b/w inserts: " << initintval << "\n";
 		time(&rawtime);
-		warnx << "exec ctime: " << ctime(&rawtime);
-		warnx << "exec sincepoch: " << time(&rawtime) << "\n";
+		warnx << "start gossip ctime: " << ctime(&rawtime);
+		warnx << "start gossip sincepoch: " << time(&rawtime) << "\n";
+
+		double begingossipTime = getgtod();    
 
 		// needed?
 		//srandom(loseed);
@@ -1617,6 +1663,13 @@ main(int argc, char *argv[])
 				warnx << "txseq = " << rounds << "\n";
 				warnx << "totaltxmsglen: " << totaltxmsglen << "\n";
 				warnx << "done gossiping\n";
+				time(&rawtime);
+				warnx << "stop gossip ctime: " << ctime(&rawtime);
+				warnx << "stop gossip sincepoch: " << time(&rawtime) << "\n";
+				double endgossipTime = getgtod();    
+				printdouble("xgossip exec phase time: ", endgossipTime - begingossipTime);
+				warnx << "\n";
+
 				// stop gossiping, only listen
 				break;
 				// don't exit since each peer will reach a particular round at a different time
@@ -2274,7 +2327,7 @@ readgossip(int fd)
 			warnx << "VXGOSSIP";
 			ret = getKeyValue(gmsg.cstr(), key, keyteamid, sigList, freqList, weightList, seq, recvlen);
 		} else if (msgtype == XGOSSIP) {
-			warnx << "XGOSSIP";
+		warnx << "XGOSSIP";
 			ret = getKeyValue(gmsg.cstr(), key, keyteamid, sigList, freqList, weightList, seq, recvlen);
 		} else {
 			warnx << "XGOSSIPC";
@@ -2325,6 +2378,7 @@ readgossip(int fd)
 //#ifdef _DEBUG_
 		for (int i = 0; i < (int) sigList.size(); i++) {
 			sig2str(sigList[i], sigbuf);
+			//if (validsig(sigList[i]) == false) warnx << "warning: invalid signature\n";
 			warnx << "sig[" << i << "]: " << sigbuf << "\n";
 		}
 		for (int i = 0; i < (int) freqList.size(); i++) {
@@ -3390,6 +3444,18 @@ sig2str(std::vector<POLY> sig, str &buf)
 		s << sig[i] << "-";
 
 	buf = s;
+	return true;
+}
+
+bool
+validsig(std::vector<POLY> sig)
+{
+	if (sig.size() <= 0) return false;
+
+	for (int i = 0; i < (int)sig.size(); i++)
+		if (sig[i] == 0)
+			return false;
+
 	return true;
 }
 
