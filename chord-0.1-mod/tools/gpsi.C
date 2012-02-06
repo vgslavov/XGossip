@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.106 2012/02/02 16:15:34 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.107 2012/02/03 18:39:13 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.106 2012/02/02 16:15:34 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.107 2012/02/03 18:39:13 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1566,8 +1566,8 @@ main(int argc, char *argv[])
 		warnx << "vanillaxgossip exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
 		time(&rawtime);
-		warnx << "exec ctime: " << ctime(&rawtime);
-		warnx << "exec sincepoch: " << time(&rawtime) << "\n";
+		warnx << "start exec ctime: " << ctime(&rawtime);
+		warnx << "start exec sincepoch: " << time(&rawtime) << "\n";
 
 		// from now on, work only with totalT
 		totalT.push_back(allT);
@@ -1649,8 +1649,8 @@ main(int argc, char *argv[])
 		warnx << "gossip interval: " << gintval << "\n";
 		warnx << "interval b/w inserts: " << initintval << "\n";
 		time(&rawtime);
-		warnx << "start gossip ctime: " << ctime(&rawtime);
-		warnx << "start gossip sincepoch: " << time(&rawtime) << "\n";
+		warnx << "start exec ctime: " << ctime(&rawtime);
+		warnx << "start exec sincepoch: " << time(&rawtime) << "\n";
 
 		double begingossipTime = getgtod();    
 
@@ -1664,8 +1664,8 @@ main(int argc, char *argv[])
 				warnx << "totaltxmsglen: " << totaltxmsglen << "\n";
 				warnx << "done gossiping\n";
 				time(&rawtime);
-				warnx << "stop gossip ctime: " << ctime(&rawtime);
-				warnx << "stop gossip sincepoch: " << time(&rawtime) << "\n";
+				warnx << "stop exec ctime: " << ctime(&rawtime);
+				warnx << "stop exec sincepoch: " << time(&rawtime) << "\n";
 				double endgossipTime = getgtod();    
 				printdouble("xgossip exec phase time: ", endgossipTime - begingossipTime);
 				warnx << "\n";
@@ -2375,7 +2375,7 @@ readgossip(int fd)
 			}
 		}
 
-//#ifdef _DEBUG_
+#ifdef _DEBUG_
 		for (int i = 0; i < (int) sigList.size(); i++) {
 			sig2str(sigList[i], sigbuf);
 			//if (validsig(sigList[i]) == false) warnx << "warning: invalid signature\n";
@@ -2391,7 +2391,7 @@ readgossip(int fd)
 			printdouble("", weightList[i]);
 			warnx << "\n";
 		}
-//#endif
+#endif
 
 		rxseq.push_back(seq);
 		str2chordID(keyteamid, teamID);
