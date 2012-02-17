@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.107 2012/02/03 18:39:13 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.108 2012/02/06 19:43:20 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.107 2012/02/03 18:39:13 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.108 2012/02/06 19:43:20 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -156,7 +156,7 @@ void loginitstate(FILE *);
 int loadinitstate(FILE *);
 int loadresults(FILE *, InsertType &);
 int lshsig(vecomap, int, InsertType, int, int);
-int lshquery(sig2idmulti, int, InsertType, int);
+int lshquery(sig2idmulti, int, InsertType, int, bool);
 int make_team(chordID, chordID, std::vector<chordID> &);
 void mergelists(vecomap&);
 void mergeinit();
@@ -433,9 +433,9 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 	return 0;
 }
 
-// TODO: verify
+// by default, run lsh on regular sig, not query sig
 int
-lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, int col = 0)
+lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, int col = 0, bool lshonqsig = 0)
 {
 	std::vector<std::vector<chordID> > matrix;
 	std::vector<chordID> minhash;
@@ -443,7 +443,9 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 	std::vector<POLY> querysig;
 	std::vector<POLY> lshquerysig;
 	std::vector<POLY> regularsig;
+	std::vector<POLY> lshregularsig;
 	std::string dtd;
+	lsh *myLSH;
 	chordID ID;
 	DHTStatus status;
 	std::vector<chordID> team;
@@ -458,6 +460,7 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 	querysig.clear();
 	lshquerysig.clear();
 	regularsig.clear();
+	lshregularsig.clear();
 	n = 0;
 	totalinstime = 0;
 	for (sig2idmulti::iterator itr = queryMap.begin(); itr != queryMap.end(); itr++) {
@@ -471,6 +474,7 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 			warnx << "lshquery: no DTD found for qid: " << qid << "\n";
 		}
 
+		// get regularsig to generate the right timeIDs using LSH
 		string2sigs::iterator sitr = dtd2sigs.find(dtd);
 		if (sitr != dtd2sigs.end()) {
 			// TODO: assume 1 sig per DTD
@@ -479,52 +483,70 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 			warnx << "lshquery: no sig found for DTD: " << dtd.c_str() << "\n";
 		}
 
-		sig2str(querysig, sigbuf);
-		warnx << "running LSH on querysig: " << sigbuf << "\n";
-		beginTime = getgtod();    
-		lsh *queryLSH = new lsh(querysig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
-		endTime = getgtod();    
-		printdouble("lshquery: lsh time: ", endTime - beginTime);
-		warnx << "\n";
-		// convert multiset to set
-		if (uflag == 1) {
-			//sig2str(querysig, sigbuf);
-			//warnx << "multiset: " << sigbuf << "\n";
-			lshquerysig = queryLSH->getUniqueSet(querysig);
-			//sig2str(lshsig, sigbuf);
-			//warnx << "set: " << sigbuf << "\n";
-			minhash = queryLSH->getHashCode(lshquerysig);
+
+		// use query sig to generate teamIDs
+		if (lshonqsig == 1) {
+			sig2str(querysig, sigbuf);
+			warnx << "running LSH on querysig: " << sigbuf << "\n";
+			beginTime = getgtod();    
+			myLSH = new lsh(querysig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
+			endTime = getgtod();    
+			printdouble("lshquery: lsh time: ", endTime - beginTime);
+			warnx << "\n";
+
+			// convert multiset to set
+			if (uflag == 1) {
+				//sig2str(querysig, sigbuf);
+				//warnx << "multiset: " << sigbuf << "\n";
+				lshquerysig = myLSH->getUniqueSet(querysig);
+				//sig2str(lshquerysig, sigbuf);
+				//warnx << "set: " << sigbuf << "\n";
+				minhash = myLSH->getHashCode(lshquerysig);
+			} else {
+				minhash = myLSH->getHashCode(querysig);
+			}
+
+			sort(minhash.begin(), minhash.end());
+
+			/*
+			team.clear();
+			for (int i = 0; i < (int)minhash.size(); i++) {
+				teamID = minhash[i];
+				warnx << "teamID: " << teamID << "\n";
+				// TODO: check return status
+				make_team(NULL, teamID, team);
+				range = team.size();
+				// randomness verified
+				//randcol = randomNumGenZ(range-1);
+				randcol = randomNumGenZ(range);
+				ID = team[randcol];
+				warnx << "ID in randcol " << randcol << ": " << ID << "\n";
+			}
+			*/
+		// use regular sig to generate teamIDs
 		} else {
-			minhash = queryLSH->getHashCode(querysig);
+			sig2str(regularsig, sigbuf);
+			warnx << "running LSH on regularsig: " << sigbuf << "\n";
+			beginTime = getgtod();    
+			myLSH = new lsh(regularsig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
+			endTime = getgtod();    
+			printdouble("lshquery: lsh time: ", endTime - beginTime);
+			warnx << "\n";
+
+			// convert multiset to set
+			if (uflag == 1) {
+				//sig2str(regularsig, sigbuf);
+				//warnx << "multiset: " << sigbuf << "\n";
+				lshregularsig = myLSH->getUniqueSet(regularsig);
+				//sig2str(lshregularsig, sigbuf);
+				//warnx << "set: " << sigbuf << "\n";
+				minhash = myLSH->getHashCode(lshregularsig);
+			} else {
+				minhash = myLSH->getHashCode(regularsig);
+			}
+
+			sort(minhash.begin(), minhash.end());
 		}
-
-		sort(minhash.begin(), minhash.end());
-
-		team.clear();
-		for (int i = 0; i < (int)minhash.size(); i++) {
-			teamID = minhash[i];
-			warnx << "teamID: " << teamID << "\n";
-			// TODO: check return status
-			make_team(NULL, teamID, team);
-			range = team.size();
-			// randomness verified
-			//randcol = randomNumGenZ(range-1);
-			randcol = randomNumGenZ(range);
-			ID = team[randcol];
-			warnx << "ID in randcol " << randcol << ": " << ID << "\n";
-		}
-
-		sig2str(regularsig, sigbuf);
-		warnx << "running LSH on regularsig: " << sigbuf << "\n";
-		beginTime = getgtod();    
-		lsh *sigLSH = new lsh(regularsig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
-		endTime = getgtod();    
-		printdouble("lshquery: lsh time: ", endTime - beginTime);
-		warnx << "\n";
-		minhash.clear();
-		minhash = sigLSH->getHashCode(regularsig);
-
-		sort(minhash.begin(), minhash.end());
 
 		//warnx << "minhash.size(): " << minhash.size() << "\n";
 		/*
@@ -591,8 +613,7 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 		}
 		// needed?
 		minhash.clear();
-		delete sigLSH;
-		delete queryLSH;
+		delete myLSH;
 		++n;
 	}
 
@@ -1805,7 +1826,7 @@ main(int argc, char *argv[])
 			}
 		}
 	} else if (Qflag == 1) {
-		initintval = 1;
+		//initintval = 1;
 		warnx << "interval b/w inserts: " << initintval << "\n";
 		warnx << "querying ";
 		beginTime = getgtod();
