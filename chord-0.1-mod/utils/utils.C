@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.44 2011/11/23 20:41:29 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.45 2012/02/03 18:40:04 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -2812,7 +2812,7 @@ compressSignatures(std::vector<std::vector<POLY> >& inputSig,
   // Create an empty bitmap
   std::vector<unsigned char> ZEROVECTOR;
   for (int j = 0; j < ceil(numSigs/8.0); j++) {
-      ZEROVECTOR.push_back(0x0);
+      ZEROVECTOR.push_back((unsigned char)0x0);
   }
 
   // Create the bitmaps
@@ -2829,7 +2829,7 @@ compressSignatures(std::vector<std::vector<POLY> >& inputSig,
     // We are done if we have scanned all the sigs
     if (eov == true) break;
 
-    minPoly = 0xffffffff;
+    minPoly = (POLY) 0xffffffff;
     // First find the min from all the sigs
     for (int i = 0; i < numSigs; i++) {
       if (index[i] < (int) inputSig[i].size()) {
@@ -2854,13 +2854,15 @@ compressSignatures(std::vector<std::vector<POLY> >& inputSig,
 
     for (int i = 0; i < numSigs; i++) {
       // If it matches minPoly
-      if (inputSig[i][index[i]] == minPoly) {
+      //if (inputSig[i][index[i]] == minPoly) {
+      // very hard to find bug! (dr. rao found it)
+      if (index[i] < (int) inputSig[i].size() && inputSig[i][index[i]] == minPoly) {
 	// Adjust the bitmap
 	int bitmapid = i / 8;
 	
-	unsigned char mask = 0x80 >> (i % 8);
+	unsigned char mask = (unsigned char) 0x80 >> (i % 8);
 
-	//printf("Bitmapid: %d mask: %c\n", bitmapid, mask);
+	//warnx << "Bitmapid: " << bitmapid << " mask: " << mask <<  " POLY: " << inputSig[i][index[i]] << "\n";
 	// do a bitwise OR using the mask
 	outputBitmap[outputBitmap.size() - 1][bitmapid] = 
 	  outputBitmap[outputBitmap.size() - 1][bitmapid] | mask;
