@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.108 2012/02/06 19:43:20 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.109 2012/02/17 20:01:18 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.108 2012/02/06 19:43:20 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.109 2012/02/17 20:01:18 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -60,6 +60,8 @@ int discardmsg = 0;
 int compress = 0;
 int peers = 0;
 int teamsize = 5;
+// TODO: make cmd line arg
+int ninstances = 20;
 int freqbyx = 1;
 int totalrxmsglen = 0;
 int totaltxmsglen = 0;
@@ -1255,16 +1257,16 @@ main(int argc, char *argv[])
 	}
 
 	// read signatures in memory
-	if ((rflag == 1 || gflag == 1 || Hflag == 1 || lflag == 1 || Qflag == 1) && sflag == 1) {
+	if ((rflag == 1 || gflag == 1 || Hflag == 1 || lflag == 1 || Qflag == 1 || Mflag == 1) && sflag == 1) {
 		beginreadTime = getgtod();    
 		getdir(sigdir, sigfiles);
 		sigList.clear();
 
 		// insert dummy
 		// the polynomial "1" has a degree 0
-		// don't add dummy when querying and when gossiping using LSH
+		// don't add dummy when querying, gossiping using LSH, or merging results?
 		bool usedummy = 0;
-		if (Hflag == 0 && Qflag == 0) {
+		if (Hflag == 0 && Qflag == 0 && Mflag == 0) {
 			usedummy = 1;
 			sigList.push_back(dummysig);
 		}
@@ -1311,6 +1313,7 @@ main(int argc, char *argv[])
 
 			warnx << "sigList size (bytes): " << sigbytesize << "\n";
 			warnx << "sigList.size() (unique): " << sigList.size() << "\n";
+
 			compressSignatures(sigList, compressedList, outBitmap);
 
 			int compressedsize = compressedList.size() * sizeof(POLY);
@@ -1326,6 +1329,16 @@ main(int argc, char *argv[])
 			warnx << "outBitmap.size(): " << outBitmap.size() << "\n";
 
 			warnx << "total compressed size (list+bitmap): " << compressedsize + bitmapsize << "\n";
+
+			/*
+			for (int i = 0; i < (int) compressedList.size(); i++) {
+				printf("%u\n", compressedList[i]);
+				for (int j = 0; j < ceil(sigList.size() / 8.0); j++) {
+					//warnx << "--> " << outBitmap[i][j] << "\n";
+					printf("--> %x\n", outBitmap[i][j]);
+				}
+			}
+			*/
 
 			ID = make_randomID();
 			strbuf t;
@@ -1367,29 +1380,25 @@ main(int argc, char *argv[])
 			double simi;
 			for (int i = 0; i < (int) newsigList.size(); i++) {
 				simi = signcmp(sigList[i], newsigList[i], multi);
-				printdouble("sim: ", simi);
-				warnx << " ";
-				sig2str(newsigList[i], sigbuf);
-				warnx << "sig[" << i << "]: " << sigbuf << "\n";
-			}
-
-			/*
-			newsigList.clear();
-			freqList.clear();
-			weightList.clear();
-
-			makeKeyValue(&value, valLen, key, teamID, allT[0], txseq.back(), XGOSSIP);
-			ret = getKeyValue(value, newkey, newteamID, newsigList, freqList, weightList, seq, recvlen);
-			*/
-
-			/*
-			for (int i = 0; i < (int)compressedList.size(); i++) {
-				warnx << compressedList[i] << "\n";
-				for (int j = 0; j < ceil(sigList.size() / 8.0); j++) {
-					warnx << "--> " << outBitmap[i][j] << "\n";
+				if (simi != 1) {
+					int ninter = set_inter_noskip(sigList[i], newsigList[i], multi);
+					warnx << "warning: uncompressed sig differs ";
+					printdouble("sim: ", simi);
+					warnx << " common-POLYs: " << ninter;
+					warnx << " sig-org.size: " << sigList[i].size();
+					warnx << " sig-unc.size: " << newsigList[i].size();
+					warnx << "\n";
+					sig2str(sigList[i], sigbuf);
+					warnx << "sig-org[" << i << "]: " << sigbuf << "\n";
+					sig2str(newsigList[i], sigbuf);
+					warnx << "sig-unc[" << i << "]: " << sigbuf << "\n";
+				} else {
+					printdouble("sim: ", simi);
+					warnx << " ";
+					sig2str(newsigList[i], sigbuf);
+					warnx << "sig[" << i << "]: " << sigbuf << "\n";
 				}
 			}
-			*/
 		}
 
 		// create log.init of sigs (why?)
@@ -1456,29 +1465,36 @@ main(int argc, char *argv[])
 	// run xpath queries on sigs locally
 	//if (sflag == 1 && xflag == 1) {
 	if (rflag == 1 && sflag == 1 && xflag == 1) {
-		int ninter;
 		int sigmatches = 0;
 		double totalfreq = 0;
-		bool multi;
+		int tind = 0;
+		//int ninter;
+		//bool multi;
 		// store all sigs in allT[allnum]
-		int allnum = 0;
+		//int allnum = 0;
 		// store results sigs in allT[resultsnum]
 		//int resultsnum = 1;
 		//mapType tmpvecomap;
 		//allT.push_back(tmpvecomap);
+
+		// from now on, work only with totalT
+		totalT.push_back(allT);
+
 		warnx << "running xpath queries locally...\n";
 		for (sig2idmulti::iterator qitr = queryMap.begin(); qitr != queryMap.end(); qitr++) {
+
+			run_query(tind, qitr->first, sigmatches, totalfreq, QUERYX);
+
+			/*
 			// find if the query sig is a subset of any of the sigs
 			for (mapType::iterator sitr = allT[allnum].begin(); sitr != allT[allnum].end(); sitr++) {
 				ninter = set_inter_noskip(qitr->first, sitr->first, multi);
 				//warnx << "ninter: " << ninter << ", querysig.size(): " << queryList[i].size() << "\n";
 				if (ninter == (int)qitr->first.size()) {
-					/*
-					if (Qflag == 1) {
-						allT[resultsnum][qitr->first][0] += sitr->second[0];
-						allT[resultsnum][qitr->first][1] += sitr->second[1];
-					}
-					*/
+					//if (Qflag == 1) {
+						//allT[resultsnum][qitr->first][0] += sitr->second[0];
+						//allT[resultsnum][qitr->first][1] += sitr->second[1];
+					//}
 					++sigmatches;
 					// weight is always 1
 					totalfreq += sitr->second[0];
@@ -1495,6 +1511,8 @@ main(int argc, char *argv[])
 					}
 				}
 			}
+			*/
+
 			sig2str(qitr->first, sigbuf);
 			warnx << "qid: " << qitr->second;
 			warnx << " querysig: " << sigbuf;
@@ -1845,9 +1863,7 @@ main(int argc, char *argv[])
 	} else if (Mflag == 1) {
 		int range;
 		int randcol;
-		int totalmatches = 0;
 		int avgid;
-		double totalavg = 0;
 		warnx << "merging ";
 		getdir(initdir, initfiles);
 		acc = "r";
@@ -1906,21 +1922,32 @@ main(int argc, char *argv[])
 		} else if (mergetype == RESULTS) {
 			warnx << "results files...\n";
 			warnx << "loading files...\n";
-			mapType uniqueSigList;
-			allT.clear();
-			allT.push_back(uniqueSigList);
+			int estsigmatches = 0;
+			int truesigmatches = 0;
+			double estfreq = 0;
+			double truefreq = 0;
+			double relerror;
+			//mapType uniqueSigList;
+			//allT.clear();
+			//allT.push_back(uniqueSigList);
+
 			for (unsigned int i = 0; i < initfiles.size(); i++) {
 				warnx << "file: " << initfiles[i].c_str() << "\n";
 				if ((initfp = fopen(initfiles[i].c_str(), acc.c_str())) == NULL) {
-					warnx << "can't open init file" << initfiles[i].c_str() << "\n";
+					warnx << "can't open results file" << initfiles[i].c_str() << "\n";
 					continue;
 				}
 				if (loadresults(initfp, msgtype) == -1) warnx << "loadresults failed\n";
 				fclose(initfp);
 			}
 			if (msgtype == QUERYX) {
+
+				// from now on, work only with totalT
+				totalT.push_back(allT);
+				int tind = 0;
+
 				warnx << "xpath query results...\n";
-				warnx << "qid,querysig,sigmatches (*teamsize),totalavg (*teamsize),teamIDs\n";
+				warnx << "qid,querysig,sigmatches (*teamsize): est,sigmatches (*instances): true,sigmatches: rel error (%),freq (*teamsize): est,freq (*instances): true,freq: rel error (%),teamIDs\n";
 				for (id2sigs::iterator qitr = qid2querysig.begin(); qitr != qid2querysig.end(); qitr++) {
 					if (qitr->second.size() > 1)
 						warnx << "multiple queries for the same qid\n";
@@ -1947,8 +1974,8 @@ main(int argc, char *argv[])
 								// pick random avg for that sig
 								randcol = randomNumGenZ(range);
 								//warnx << "sig2avg: range: " << range << " randcol: " << randcol << "\n";
-								totalavg += saitr->second[randcol];
-								++totalmatches;
+								estfreq += saitr->second[randcol];
+								++estsigmatches;
 							} else {
 								warnx << "allsig2avg: where is the sig\n";
 								continue;
@@ -1958,13 +1985,52 @@ main(int argc, char *argv[])
 						//warnx << "qid2sigs: can't find sigs for qid: " << qitr->first << "\n";
 					}
 
+					// get true result
+					truesigmatches = 0;
+					truefreq = 0;
+					run_query(tind, qitr->second[0], truesigmatches, truefreq, QUERYX);
+
 					// qid
 					warnx << qitr->first << ",";
+
 					// querysig
 					sig2str(qitr->second[0], sigbuf);
 					warnx << sigbuf << ",";
-					warnx << totalmatches * teamsize << ",";
-					printdouble("", totalavg * teamsize);
+
+					// est sigmatches
+					// don't multiply by teamsize!
+					warnx << estsigmatches << ",";
+
+					// true sigmatches
+					// don't multiply by the number of instances!
+					warnx << truesigmatches << ",";
+
+					// rel error
+					if (truesigmatches != 0) {
+						relerror = (double)(fabs((double)truesigmatches - estsigmatches) / truesigmatches) * 100;
+					} else {
+						relerror = 0;
+					}
+					printdouble("", relerror);
+					warnx << ",";
+
+					// est freq
+					estfreq *= teamsize;
+					printdouble("", estfreq);
+					warnx << ",";
+
+					// true totalfreq
+					truefreq *= ninstances;
+					printdouble("", truefreq);
+					warnx << ",";
+
+					// rel error
+					if (truefreq != 0) {
+						relerror = fabs(truefreq - estfreq) / truefreq * 100;
+					} else {
+						relerror = 0;
+					}
+					printdouble("", relerror);
 					warnx << ",";
 
 					// print teamIDs
@@ -1979,22 +2045,25 @@ main(int argc, char *argv[])
 					}
 
 					warnx << "\n";
-					totalmatches = 0;
-					totalavg = 0;
+					estsigmatches = 0;
+					estfreq = 0;
 				}
+			// TODO:
+			// decide where to put querysigs and sigs: allT[?], totalT[?][?]
+			// call run_query()
 			} else if (msgtype == QUERYS) {
 				listnum = 0;
 				int sid = 1;
 				warnx << "sig query results...\n";
-				warnx << "id,querysig,totalavg,totalavg (*teamsize)\n";
+				warnx << "id,querysig,freq: est,freq (*teamsize): est\n";
 				for (mapType::iterator itr = allT[listnum].begin(); itr != allT[listnum].end(); itr++) {
 					warnx << sid << ",";
 					sig2str(itr->first, sigbuf);
 					warnx << sigbuf << ",";
-					totalavg = itr->second[0]/itr->second[1];
-					printdouble("", totalavg);
+					estfreq = itr->second[0]/itr->second[1];
+					printdouble("", estfreq);
 					warnx << ",";
-					printdouble("", totalavg * teamsize);
+					printdouble("", estfreq * teamsize);
 					warnx << "\n";
 					++sid;
 				}
@@ -2564,14 +2633,16 @@ run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalav
 		if (sigitr != totalT[tind][0].end()) {
 			++sigmatches;
 			totalavg += (sigitr->second[0]/sigitr->second[1]);
-			sig2str(sigitr->first, sigbuf);
-			warnx << "exactsig: " << sigbuf;
-			printdouble(" f: ", sigitr->second[0]);
-			printdouble(" w: ", sigitr->second[1]);
-			printdouble(" avg: ", sigitr->second[0]/sigitr->second[1]);
-			// teamID is set only when running queries for "teamID-NOT-found"
-			if (teamID != 0) warnx << " teamID: " << teamID;
-			warnx << "\n";
+			if (plist == 1) {
+				sig2str(sigitr->first, sigbuf);
+				warnx << "exactsig: " << sigbuf;
+				printdouble(" f: ", sigitr->second[0]);
+				printdouble(" w: ", sigitr->second[1]);
+				printdouble(" avg: ", sigitr->second[0]/sigitr->second[1]);
+				// teamID is set only when running queries for "teamID-NOT-found"
+				if (teamID != 0) warnx << " teamID: " << teamID;
+				warnx << "\n";
+			}
 		}
 	// search for superset
 	} else if (msgtype == QUERYX) {
@@ -2582,15 +2653,17 @@ run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalav
 			if (ninter == (int)querysig.size()) {
 				++sigmatches;
 				totalavg += (itr->second[0]/itr->second[1]);
-				sig2str(itr->first, sigbuf);
-				warnx << "supersetsig: " << sigbuf;
-				printdouble(" f: ", itr->second[0]);
-				printdouble(" w: ", itr->second[1]);
-				printdouble(" avg: ", itr->second[0]/itr->second[1]);
-				// teamID is set only when running queries for "teamID-NOT-found"
-				if (teamID != 0) warnx << " teamID: " << teamID;
-				warnx << "\n";
-				//if (multi == 1) warnx << "superset sig is a multiset\n";
+				if (plist == 1) {
+					sig2str(itr->first, sigbuf);
+					warnx << "supersetsig: " << sigbuf;
+					printdouble(" f: ", itr->second[0]);
+					printdouble(" w: ", itr->second[1]);
+					printdouble(" avg: ", itr->second[0]/itr->second[1]);
+					// teamID is set only when running queries for "teamID-NOT-found"
+					if (teamID != 0) warnx << " teamID: " << teamID;
+					warnx << "\n";
+					//if (multi == 1) warnx << "superset sig is a multiset\n";
+				}
 			}
 		}
 	} else {
@@ -2989,7 +3062,8 @@ getdir(std::string dir, std::vector<std::string> &files)
 	}
 	while ((dirp = readdir(dp)) != NULL) {
 		if (strcmp(dirp->d_name, ".") == 0 || strcmp(dirp->d_name, "..") == 0) continue;
-		files.push_back(dir + std::string(dirp->d_name));
+		// separate by / in case dir arg doesn't have a trailing slash
+		files.push_back(dir + "/" + std::string(dirp->d_name));
 	}
 	closedir(dp);
 	return 0;
