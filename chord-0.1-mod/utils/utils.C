@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.45 2012/02/03 18:40:04 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.46 2012/03/07 17:22:50 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -1227,8 +1227,8 @@ int getKeyValue(const char* buf, str& key, str& teamid, std::vector<POLY>& sig, 
 }
 
 // vsfgd: xgossip query
-// format: <msgtype><msglen><keysize><key><teamidsize><teamid><sigsize><qid>
-int getKeyValue(const char* buf, str& key, str& teamid, std::vector<POLY>& sig, int& qid, int recvlen)
+// format: <msgtype><msglen><keysize><key><teamidsize><teamid><dtdsize><dtd><sigsize><qid>
+int getKeyValue(const char* buf, str& key, str& teamid, str& dtd, std::vector<POLY>& sig, int& qid, int recvlen)
 {
 	// copy msgtype
 	InsertType msgType;
@@ -1272,10 +1272,21 @@ int getKeyValue(const char* buf, str& key, str& teamid, std::vector<POLY>& sig, 
 	teamidPtr = teamidSizePtr + sizeof(teamidSize);
 	teamid = str(teamidPtr, teamidSize);
 
+	// copy dtdsize
+	const char *dtdSizePtr;
+	int dtdSize;
+	dtdSizePtr = teamidPtr + teamidSize;
+	memcpy(&dtdSize, dtdSizePtr, sizeof(dtdSize));
+
+	// copy dtd
+	const char *dtdPtr;
+	dtdPtr = dtdSizePtr + sizeof(dtdSize);
+	dtd = str(dtdPtr, dtdSize);
+
 	// copy siglen
 	const char *sigLenPtr;
 	int sigLen;
-	sigLenPtr = teamidPtr + teamidSize;
+	sigLenPtr = dtdPtr + dtdSize;
 	memcpy(&sigLen, sigLenPtr, sizeof(sigLen));
 
 	sigLenPtr += sizeof(sigLen);
@@ -1880,16 +1891,17 @@ void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::vector<POLY>
 }
 
 // vsfgd: xgossip query
-// format: <msgtype><msglen><keysize><key><teamidsize><teamid><sigsize><sig><queryid>
-void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::vector<POLY>& sig, int& qid, InsertType type)
+// format: <msgtype><msglen><keysize><key><teamidsize><teamid><dtd><sigsize><sig><queryid>
+void makeKeyValue(char **ptr, int& len, str& key, str& teamid, str& dtd, std::vector<POLY>& sig, int& qid, InsertType type)
 {
 	int keyLen = key.len();
 	int teamidLen = teamid.len();
+	int dtdLen = dtd.len();
 	//warnx << "LENGTH: ++++ " << keyLen << "\n";
 	int sigLen = sig.size() * sizeof(POLY);
 	
-	// msgtype + msglen + keysize + key + teamidsize + teamid + sigsize + sig + qid
-	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(int) + teamidLen + sizeof(int) + sigLen + sizeof(int);
+	// msgtype + msglen + keysize + key + teamidsize + teamid + dtdsize + dtd + sigsize + sig + qid
+	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(int) + teamidLen + sizeof(int) + dtdLen + sizeof(int) + sigLen + sizeof(int);
 	
 	// TODO: New vs new?
 	*ptr = New char[len];
@@ -1916,6 +1928,12 @@ void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::vector<POLY>
 	buf += sizeof(teamidLen);
 	memcpy(buf, teamid.cstr(), teamidLen);
 	buf += teamidLen;
+
+	// Copy dtd
+	memcpy(buf, &dtdLen, sizeof(dtdLen));
+	buf += sizeof(dtdLen);
+	memcpy(buf, dtd.cstr(), dtdLen);
+	buf += dtdLen;
 
 	// Copy siglen
 	memcpy(buf, &sigLen, sizeof(sigLen));

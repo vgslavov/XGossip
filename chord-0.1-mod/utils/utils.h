@@ -1,4 +1,4 @@
-/*	$Id: utils.h,v 1.21 2011/02/20 02:03:39 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.h,v 1.22 2011/11/23 20:41:42 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #ifndef _UTILS_H_
@@ -238,8 +238,8 @@ void makeKeyValue(char **, int&, str&, str&, std::vector<POLY>&, std::vector<std
 int getKeyValue(const char*, str&, str&, std::vector<POLY>&, std::vector<std::vector<unsigned char> >&, int&, std::vector<double>&, std::vector<double>&, int&, int);
 
 // vsfgd: xgossip query
-int getKeyValue(const char*, str&, str&, std::vector<POLY>&, int&, int);
-void makeKeyValue(char **, int&, str&, str&, std::vector<POLY>&, int&, InsertType);
+int getKeyValue(const char*, str&, str&, str&, std::vector<POLY>&, int&, int);
+void makeKeyValue(char **, int&, str&, str&, str&, std::vector<POLY>&, int&, InsertType);
 
 // vsfgd: xgossip init
  int getKeyValue(const char*, str&, str&, std::vector<POLY>&, double&, double&, int);
