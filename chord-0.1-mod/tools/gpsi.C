@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.109 2012/02/17 20:01:18 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.110 2012/03/08 17:19:46 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.109 2012/02/17 20:01:18 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.110 2012/03/08 17:19:46 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -51,6 +51,7 @@ static char *logfile;
 std::vector<POLY> irrnums;
 std::vector<int> hasha;
 std::vector<int> hashb;
+std::vector<chordID> lshIDs;
 int lshseed = 0;
 int plist = 0;
 int gflag = 0;
@@ -67,7 +68,7 @@ int totalrxmsglen = 0;
 int totaltxmsglen = 0;
 int roundrxmsglen = 0;
 int roundtxmsglen = 0;
-bool initphase = 0;
+bool initphase = false;
 
 // paper:k, slides:bands
 int mgroups = 10;
@@ -99,13 +100,18 @@ id2strings qid2dtd;
 // strings, sig
 typedef std::map<std::string, std::vector<std::vector<POLY> > > string2sigs;
 string2sigs dtd2sigs;
+string2sigs dtd2proxysigs;
 
 // sig, (<freq,weight> | <avg,avg,...>)
 typedef std::map<std::vector<POLY>, std::vector<double>, CompareSig> mapType;
 
 typedef std::vector<mapType> vecomap;
 // use only for storing the sigs after reading them from files:
-// during init phases and when querying
+// - during init phases
+// - when querying
+// store in:
+// [0]: regular sigs
+// [1]: proxy sigs
 vecomap allT;
 
 // list of sig2avg results
@@ -140,7 +146,7 @@ void add2vecomapx(std::vector<std::vector <POLY> >, std::vector<double>, std::ve
 // VanillaXGossip
 void add2vecomapv(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 int getdir(std::string, std::vector<std::string>&);
-void calcfreq(std::vector<std::vector <POLY> >, bool);
+void calcfreq(std::vector<std::vector <POLY> >, bool, bool);
 void calcfreqM(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>);
 void calcteamids(std::vector <chordID>);
 void delspecial(int);
@@ -158,7 +164,7 @@ void loginitstate(FILE *);
 int loadinitstate(FILE *);
 int loadresults(FILE *, InsertType &);
 int lshsig(vecomap, int, InsertType, int, int);
-int lshquery(sig2idmulti, int, InsertType, int, bool);
+int lshquery(sig2idmulti, int, InsertType, int);
 int make_team(chordID, chordID, std::vector<chordID> &);
 void mergelists(vecomap&);
 void mergeinit();
@@ -173,14 +179,16 @@ void printteamidfreq();
 chordID randomID(void);
 void readgossip(int);
 void readquery(std::string, std::vector<std::vector <POLY> > &, std::vector<std::string> &);
-void readsig(std::string, std::vector<std::vector <POLY> > &);
+void readsig(std::string, std::vector<std::vector <POLY> > &, bool);
 void readValues(FILE *, std::multimap<POLY, std::pair<std::string, enum OPTYPE> > &);
+std::vector<chordID> run_lsh(std::vector<POLY>);
 int run_query(int, std::vector<POLY>, int &, double &, InsertType, chordID = 0);
 bool sig2str(std::vector<POLY>, str &);
 bool string2sig(std::string, std::vector<POLY> &);
 bool sigcmp(std::vector<POLY>, std::vector<POLY>);
 bool samesig(std::vector<POLY>, std::vector<POLY>);
 int set_inter(std::vector<POLY>, std::vector<POLY>, bool &);
+int set_inter(std::vector<chordID>, std::vector<chordID>, bool &);
 int set_inter_noskip(std::vector<POLY>, std::vector<POLY>, bool &);
 int set_uni(std::vector<POLY>, std::vector<POLY>, bool &);
 double signcmp(std::vector<POLY>, std::vector<POLY>, bool &);
@@ -435,9 +443,8 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 	return 0;
 }
 
-// by default, run lsh on regular sig, not query sig
 int
-lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, int col = 0, bool lshonqsig = 0)
+lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, int col = 0)
 {
 	std::vector<std::vector<chordID> > matrix;
 	std::vector<chordID> minhash;
@@ -447,7 +454,7 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 	std::vector<POLY> regularsig;
 	std::vector<POLY> lshregularsig;
 	std::string dtd;
-	lsh *myLSH;
+	lsh *myLSH = NULL;
 	chordID ID;
 	DHTStatus status;
 	std::vector<chordID> team;
@@ -476,18 +483,8 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 			warnx << "lshquery: no DTD found for qid: " << qid << "\n";
 		}
 
-		// get regularsig to generate the right timeIDs using LSH
-		string2sigs::iterator sitr = dtd2sigs.find(dtd);
-		if (sitr != dtd2sigs.end()) {
-			// TODO: assume 1 sig per DTD
-			regularsig = sitr->second.back();
-		} else {
-			warnx << "lshquery: no sig found for DTD: " << dtd.c_str() << "\n";
-		}
-
-
-		// use query sig to generate teamIDs
-		if (lshonqsig == 1) {
+		// use querysig or regularsig to generate teamIDs
+		if (msgtype == QUERYX || msgtype == QUERYS) {
 			sig2str(querysig, sigbuf);
 			warnx << "running LSH on querysig: " << sigbuf << "\n";
 			beginTime = getgtod();    
@@ -525,8 +522,16 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 				warnx << "ID in randcol " << randcol << ": " << ID << "\n";
 			}
 			*/
-		// use regular sig to generate teamIDs
-		} else {
+		// use proxy sig to generate teamIDs
+		} else if (msgtype == QUERYXP) {
+			string2sigs::iterator sitr = dtd2proxysigs.find(dtd);
+			if (sitr != dtd2proxysigs.end()) {
+				// TODO: assume 1 sig per DTD
+				regularsig = sitr->second.back();
+			} else {
+				warnx << "lshquery: no proxy sig found for DTD: " << dtd.c_str() << "\n";
+			}
+
 			sig2str(regularsig, sigbuf);
 			warnx << "running LSH on regularsig: " << sigbuf << "\n";
 			beginTime = getgtod();    
@@ -583,8 +588,9 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 				p << team[0];
 				str key(t);
 				str teamID(p);
+				str dtdstr(dtd.c_str());
 				warnx << "inserting " << msgtype << ":\n";
-				makeKeyValue(&value, valLen, key, teamID, querysig, qid, msgtype);
+				makeKeyValue(&value, valLen, key, teamID, dtdstr, querysig, qid, msgtype);
 				totaltxmsglen += valLen;
 				status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
 				totalinstime += instime;
@@ -875,10 +881,12 @@ lshpoly(vecomap teamvecomap, std::vector<std::vector<POLY> > &matrix, int intval
 int
 main(int argc, char *argv[])
 {
-	int Gflag, Lflag, lflag, rflag, Sflag, sflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag, yflag, Zflag;
+	int Gflag, Lflag, lflag, rflag, Sflag, sflag, Oflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag, yflag, Zflag;
 	int ch, gintval, initintval, waitintval, listenintval, nids, rounds, valLen, logfd;
 	int listnum;
-	double beginTime, beginreadTime, endTime, endreadTime, instime;
+	double beginTime = 0.0;
+	double beginreadTime = 0.0;
+	double endTime, endreadTime, instime;
 	char *value;
 	struct stat statbuf;
 	time_t rawtime;
@@ -890,13 +898,16 @@ main(int argc, char *argv[])
 	MergeType mergetype = OTHER;
 	str sigbuf;
 	std::string initdir;
+	std::string proxysigdir;
 	std::string sigdir;
 	std::string xpathdir;
 	std::string inmergetype;
 	std::vector<std::string> initfiles;
+	std::vector<std::string> proxysigfiles;
 	std::vector<std::string> sigfiles;
 	std::vector<std::string> xpathfiles;
 	std::vector<std::string> dtdList;
+	std::vector<std::vector<POLY> > proxysigList;
 	std::vector<std::vector<POLY> > sigList;
 	std::vector<double> freqList;
 	std::vector<double> weightList;
@@ -906,7 +917,7 @@ main(int argc, char *argv[])
 	std::vector<std::vector<unsigned char> > outBitmap;
 
 
-	Gflag = Lflag = lflag = rflag = Sflag = sflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = xflag = yflag = Zflag = 0;
+	Gflag = Lflag = lflag = rflag = Sflag = sflag = Oflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = xflag = yflag = Zflag = 0;
 	gintval = waitintval = listenintval = nids = 0;
 	initintval = -1;
 	rounds = -1;
@@ -921,7 +932,7 @@ main(int argc, char *argv[])
 	dummysig.push_back(1);
 
 	// parse arguments
-	while ((ch = getopt(argc, argv, "B:CcD:d:EF:G:gHhIj:L:lMmn:o:P:pQq:R:rS:s:T:t:uvW:w:X:x:y:Z:z")) != -1)
+	while ((ch = getopt(argc, argv, "B:CcD:d:EF:G:gHhIj:L:lMmn:O:o:P:pQq:R:rS:s:T:t:uvW:w:X:x:y:Z:z")) != -1)
 		switch(ch) {
 		case 'B':
 			mgroups = strtol(optarg, NULL, 10);
@@ -988,6 +999,10 @@ main(int argc, char *argv[])
 			break;
 		case 'n':
 			nids = strtol(optarg, NULL, 10);
+			break;
+		case 'O':
+			Oflag = 1;
+			proxysigdir = optarg;
 			break;
 		case 'o':
 			rounds = strtol(optarg, NULL, 10);
@@ -1071,6 +1086,8 @@ main(int argc, char *argv[])
 	//warnx << "loseed: " << loseed << "\n";
 	srandom(loseed);
 
+	if (uflag == 1)	fatal << "don't try to convert multiset to set when using LSH!\n";
+
 	// generate random chordIDs and -Z teams for each chordID
 	if (zflag == 1 && nids != 0) {
 		std::vector<chordID> IDs;
@@ -1131,6 +1148,7 @@ main(int argc, char *argv[])
 		usage();
 
 	// sigs/queries are required when listening or reading
+	// TODO: add Oflag
 	if ((lflag == 1 || rflag == 1) && (sflag == 0 && xflag == 0)) usage();
 
 	// set up log file: log.gpsi
@@ -1257,45 +1275,80 @@ main(int argc, char *argv[])
 	}
 
 	// read signatures in memory
-	if ((rflag == 1 || gflag == 1 || Hflag == 1 || lflag == 1 || Qflag == 1 || Mflag == 1) && sflag == 1) {
-		beginreadTime = getgtod();    
-		getdir(sigdir, sigfiles);
-		sigList.clear();
+	if ((rflag == 1 || gflag == 1 || Hflag == 1 || lflag == 1 || Qflag == 1 || Mflag == 1) && (sflag == 1 || Oflag == 1)) {
+		bool usedummy = false;
+		bool useproxy = false;
 
-		// insert dummy
-		// the polynomial "1" has a degree 0
-		// don't add dummy when querying, gossiping using LSH, or merging results?
-		bool usedummy = 0;
-		if (Hflag == 0 && Qflag == 0 && Mflag == 0) {
-			usedummy = 1;
-			sigList.push_back(dummysig);
-		}
+		// read regular sigs
+		if (sflag == 1) {
+			beginreadTime = getgtod();    
+			getdir(sigdir, sigfiles);
+			sigList.clear();
 
-		warnx << "reading signatures from files...\n";
-		for (unsigned int i = 0; i < sigfiles.size(); i++) {
-			readsig(sigfiles[i], sigList);
-		}
-		warnx << "calculating frequencies...\n";
-		beginTime = getgtod();    
-		warnx << "sigList.size() (all): " << sigList.size() << "\n";
-		calcfreq(sigList, usedummy);
-		endTime = getgtod();    
-		printdouble("calcfreq time (+sorting): ", endTime - beginTime);
-		warnx << "\n";
-		if (freqbyx > 1) {
-			// don't multiply weight
-			multiplyfreq(allT, 0, freqbyx, 1);
-		}
-		if (plist == 1) {
-			// both init phases use allT
-			printlist(allT, 0, -1);
-			// print DTD names and how many sigs/DTD
-			for (string2sigs::iterator itr = dtd2sigs.begin(); itr != dtd2sigs.end(); itr++) {
-				warnx << "DTD: " << itr->first.c_str();
-				warnx << " sigs: " << itr->second.size() << "\n";
-				//sig2str(itr->second.back(), sigbuf);
-				//warnx << " sig: " << sigbuf << "\n";
+			// insert dummy
+			// the polynomial "1" has a degree 0
+			// don't add dummy when querying, gossiping using LSH, or merging results?
+			if (Hflag == 0 && Qflag == 0 && Mflag == 0) {
+				usedummy = true;
+				sigList.push_back(dummysig);
 			}
+
+			warnx << "reading signatures from files...\n";
+			for (unsigned int i = 0; i < sigfiles.size(); i++) {
+				readsig(sigfiles[i], sigList, useproxy);
+			}
+			warnx << "calculating frequencies...\n";
+			beginTime = getgtod();    
+			warnx << "sigList.size() (all): " << sigList.size() << "\n";
+			calcfreq(sigList, usedummy, useproxy);
+			endTime = getgtod();    
+			printdouble("calcfreq time (+sorting): ", endTime - beginTime);
+			warnx << "\n";
+			if (freqbyx > 1) {
+				// don't multiply weight
+				multiplyfreq(allT, 0, freqbyx, 1);
+			}
+
+			if (plist == 1) {
+				// both init phases use allT
+				printlist(allT, 0, -1);
+				// print DTD names and how many sigs/DTD
+				for (string2sigs::iterator itr = dtd2sigs.begin(); itr != dtd2sigs.end(); itr++) {
+					warnx << "DTD: " << itr->first.c_str();
+					warnx << " sigs: " << itr->second.size() << "\n";
+					//sig2str(itr->second.back(), sigbuf);
+					//warnx << " sig: " << sigbuf << "\n";
+				}
+			}
+		}
+
+		// read proxy sigs
+		if (Oflag == 1) {
+			getdir(proxysigdir, proxysigfiles);
+			proxysigList.clear();
+			usedummy = false;
+			useproxy = true;
+
+			warnx << "reading proxy signatures from files...\n";
+			for (unsigned int i = 0; i < proxysigfiles.size(); i++) {
+				readsig(proxysigfiles[i], proxysigList, useproxy);
+			}
+			warnx << "calculating frequencies...\n";
+			warnx << "proxysigList.size() (all): " << proxysigList.size() << "\n";
+			calcfreq(proxysigList, usedummy, useproxy);
+
+			if (plist == 1) {
+				// both init phases use allT
+				printlist(allT, 1, -1);
+				// print DTD names and how many sigs/DTD
+				for (string2sigs::iterator itr = dtd2proxysigs.begin(); itr != dtd2proxysigs.end(); itr++) {
+					warnx << "DTD: " << itr->first.c_str();
+					warnx << " proxy sigs: " << itr->second.size() << "\n";
+					//sig2str(itr->second.back(), sigbuf);
+					//warnx << " sig: " << sigbuf << "\n";
+				}
+			}
+
 		}
 
 		if (compress == 1) {
@@ -1482,7 +1535,7 @@ main(int argc, char *argv[])
 
 		warnx << "running xpath queries locally...\n";
 		for (sig2idmulti::iterator qitr = queryMap.begin(); qitr != queryMap.end(); qitr++) {
-
+			// doesn't matter if it's QUERYX or QUERYXP
 			run_query(tind, qitr->first, sigmatches, totalfreq, QUERYX);
 
 			/*
@@ -1544,7 +1597,7 @@ main(int argc, char *argv[])
 		warnx << "listen ctime: " << ctime(&rawtime);
 		warnx << "listen sincepoch: " << time(&rawtime) << "\n";
 		// enter init phase
-		if (Iflag == 1) initphase = 1;
+		if (Iflag == 1) initphase = true;
 
 		warnx << "listening for gossip...\n";
 		listengossip();		
@@ -1597,7 +1650,7 @@ main(int argc, char *argv[])
 		}
 
 		// exit init phase
-		initphase = 0;
+		initphase = false;
 	}
 
 	// VanillaXGossip exec phase
@@ -1848,11 +1901,17 @@ main(int argc, char *argv[])
 		warnx << "interval b/w inserts: " << initintval << "\n";
 		warnx << "querying ";
 		beginTime = getgtod();
-		if (xflag == 1) {
-			warnx << "using xpath...\n";
+		// xpath: LSH(proxysig)
+		if (xflag == 1 && Oflag == 1) {
+			warnx << "using xpath, LSH(proxysig)...\n";
+			lshquery(queryMap, initintval, QUERYXP);
+		// xpath: LSH(querysig)
+		} else if (xflag == 1 && Oflag == 0) {
+			warnx << "using xpath, LSH(querysig)...\n";
 			lshquery(queryMap, initintval, QUERYX);
+		// sig: LSH(regularsig)
 		} else {
-			warnx << "using sig...\n";
+			warnx << "using sig, LSH(sig)...\n";
 			lshsig(allT, initintval, QUERYS);
 		}
 		endTime = getgtod();    
@@ -1922,11 +1981,27 @@ main(int argc, char *argv[])
 		} else if (mergetype == RESULTS) {
 			warnx << "results files...\n";
 			warnx << "loading files...\n";
+			bool multi = false;
 			int estsigmatches = 0;
 			int truesigmatches = 0;
+			int ninter = 0;
+			int proxylshmisses = 0;
+			int querylshmisses = 0;
+			int qid;
 			double estfreq = 0;
 			double truefreq = 0;
 			double relerror;
+			std::string dtd;
+			std::vector<chordID> proxylshIDs;
+			std::vector<chordID> querylshIDs;
+			std::vector<chordID> resultlshIDs;
+			std::vector<POLY> proxysig;
+			std::vector<POLY> querysig;
+			proxysig.clear();
+			querysig.clear();
+			proxylshIDs.clear();
+			querylshIDs.clear();
+			resultlshIDs.clear();
 			//mapType uniqueSigList;
 			//allT.clear();
 			//allT.push_back(uniqueSigList);
@@ -1940,29 +2015,62 @@ main(int argc, char *argv[])
 				if (loadresults(initfp, msgtype) == -1) warnx << "loadresults failed\n";
 				fclose(initfp);
 			}
-			if (msgtype == QUERYX) {
-
+			if (msgtype == QUERYX || msgtype == QUERYXP) {
 				// from now on, work only with totalT
 				totalT.push_back(allT);
 				int tind = 0;
+				// TODO: make cmd line arg?
+				bool lshmisses = true;
 
 				warnx << "xpath query results...\n";
-				warnx << "qid,querysig,sigmatches (*teamsize): est,sigmatches (*instances): true,sigmatches: rel error (%),freq (*teamsize): est,freq (*instances): true,freq: rel error (%),teamIDs\n";
+				warnx << "qid,querysig,sigmatches (*teamsize): est,sigmatches (*instances): true,sigmatches: rel error (%),freq (*teamsize): est,freq (*instances): true,freq: rel error (%),proxy lsh misses,query lsh misses,teamIDs\n";
 				for (id2sigs::iterator qitr = qid2querysig.begin(); qitr != qid2querysig.end(); qitr++) {
 					if (qitr->second.size() > 1)
 						warnx << "multiple queries for the same qid\n";
 
+					qid = qitr->first;
+					querysig = qitr->second[0];
+
+					// find DTD
+					id2strings::iterator ditr = qid2dtd.find(qid);
+					if (ditr != qid2dtd.end()) {
+						// TODO: assume 1 dtd per qid?
+						dtd = ditr->second.back();
+					} else {
+						// TODO: what to do?
+						warnx << "no DTD found for qid: " << qid << "\n";
+						dtd.clear();
+					}
+
+					if (msgtype == QUERYXP) {
+						// find proxy sig
+						string2sigs::iterator pitr = dtd2proxysigs.find(dtd);
+						if (pitr != dtd2proxysigs.end()) {
+							// TODO: assume 1 sig per DTD?
+							proxysig = pitr->second.back();
+						} else {
+							// TODO: what to do?
+							warnx << "no proxy sig found for DTD: " << dtd.c_str() << "\n";
+							proxysig.clear();
+						}
+						proxylshIDs.clear();
+						proxylshIDs = run_lsh(proxysig);
+					} else if (msgtype == QUERYX) {
+						querylshIDs.clear();
+						querylshIDs = run_lsh(querysig);
+					}
+
 					// find sigs which match this qid
-					id2sigs::iterator sitr = qid2sigs.find(qitr->first);
+					id2sigs::iterator sitr = qid2sigs.find(qid);
 					if (sitr != qid2sigs.end()) {
 						// add up avg of different sigs and pick a random avg for same one
 						for (int i = 0; i < (int)sitr->second.size(); i++ ) {
 							// find id corresponding to this qid in allsig2avg
-							id2id::iterator iditr = qid2id.find(qitr->first);
+							id2id::iterator iditr = qid2id.find(qid);
 							if (iditr != qid2id.end()) {
 								avgid = iditr->second;
 							} else {
-								warnx << "qid2id: can't find qid: " << qitr->first << "\n";
+								warnx << "qid2id: can't find qid: " << qid << "\n";
 								continue;
 							}
 
@@ -1980,22 +2088,44 @@ main(int argc, char *argv[])
 								warnx << "allsig2avg: where is the sig\n";
 								continue;
 							}
+
+							// run lsh on sig result
+							if (lshmisses == true) {
+								resultlshIDs.clear();
+								resultlshIDs = run_lsh(sitr->second[i]);
+
+								if (msgtype == QUERYXP) {
+									// TODO: use set_inter_noskip() instead?
+									ninter = set_inter(proxylshIDs, resultlshIDs, multi);
+									if (ninter == 0) {
+										warnx << "lsh proxy sig miss\n";
+										++proxylshmisses;
+									}
+								} else if (msgtype == QUERYX) {
+									ninter = set_inter(querylshIDs, resultlshIDs, multi);
+									if (ninter == 0) {
+										warnx << "lsh query sig miss\n";
+										++querylshmisses;
+									}
+								}
+							}
 						}
 					} else {
-						//warnx << "qid2sigs: can't find sigs for qid: " << qitr->first << "\n";
+						//warnx << "qid2sigs: can't find sigs for qid: " << qid << "\n";
 					}
+
+					// qid
+					warnx << qid << ",";
+
+					// querysig
+					sig2str(querysig, sigbuf);
+					warnx << sigbuf << ",";
 
 					// get true result
 					truesigmatches = 0;
 					truefreq = 0;
-					run_query(tind, qitr->second[0], truesigmatches, truefreq, QUERYX);
-
-					// qid
-					warnx << qitr->first << ",";
-
-					// querysig
-					sig2str(qitr->second[0], sigbuf);
-					warnx << sigbuf << ",";
+					// don't run lsh on input data sigs
+					run_query(tind, querysig, truesigmatches, truefreq, QUERYX);
 
 					// est sigmatches
 					// don't multiply by teamsize!
@@ -2005,7 +2135,7 @@ main(int argc, char *argv[])
 					// don't multiply by the number of instances!
 					warnx << truesigmatches << ",";
 
-					// rel error
+					// sigmatches rel error
 					if (truesigmatches != 0) {
 						relerror = (double)(fabs((double)truesigmatches - estsigmatches) / truesigmatches) * 100;
 					} else {
@@ -2024,7 +2154,7 @@ main(int argc, char *argv[])
 					printdouble("", truefreq);
 					warnx << ",";
 
-					// rel error
+					// freq rel error
 					if (truefreq != 0) {
 						relerror = fabs(truefreq - estfreq) / truefreq * 100;
 					} else {
@@ -2033,20 +2163,28 @@ main(int argc, char *argv[])
 					printdouble("", relerror);
 					warnx << ",";
 
+					// proxy lsh misses
+					warnx << proxylshmisses << ",";
+
+					// query lsh misses
+					warnx << querylshmisses << ",";
+
 					// print teamIDs
-					id2chordIDs::iterator titr = qid2teamIDs.find(qitr->first);
+					id2chordIDs::iterator titr = qid2teamIDs.find(qid);
 					if (titr != qid2teamIDs.end()) {
-						//warnx << "qid2teamIDs: qid: " << qitr->first << " teamIDs: " << titr->second.size() << "\n";
+						//warnx << "qid2teamIDs: qid: " << qid << " teamIDs: " << titr->second.size() << "\n";
 						for (int i = 0; i < (int)titr->second.size(); i++ ) {
 							warnx << titr->second[i] << ",";
 						}
 					} else {
-						warnx << "qid2teamIDs: can't find teamIDs for qid: " << qitr->first << "\n";
+						warnx << "qid2teamIDs: can't find teamIDs for qid: " << qid << "\n";
 					}
 
 					warnx << "\n";
 					estsigmatches = 0;
 					estfreq = 0;
+					proxylshmisses = 0;
+					querylshmisses = 0;
 				}
 			// TODO:
 			// decide where to put querysigs and sigs: allT[?], totalT[?][?]
@@ -2329,6 +2467,7 @@ readgossip(int fd)
 	strbuf totalbuf;
 	str key;
 	str keyteamid;
+	str dtdstr;
 	str sigbuf;
 	chordID ID;
 	chordID teamID;
@@ -2409,7 +2548,7 @@ readgossip(int fd)
 	warnx << " type: ";
 	if (msgtype == VXGOSSIP || msgtype == XGOSSIP || msgtype == XGOSSIPC) {
 		// discard msg if in init phase
-		if (initphase == 1) {
+		if (initphase == true) {
 			warnx << "warning: phase=init, msgtype=" << msgtype << "\n";
 			warnx << "warning: msg discarded\n";
 			return;
@@ -2417,7 +2556,7 @@ readgossip(int fd)
 			warnx << "VXGOSSIP";
 			ret = getKeyValue(gmsg.cstr(), key, keyteamid, sigList, freqList, weightList, seq, recvlen);
 		} else if (msgtype == XGOSSIP) {
-		warnx << "XGOSSIP";
+			warnx << "XGOSSIP";
 			ret = getKeyValue(gmsg.cstr(), key, keyteamid, sigList, freqList, weightList, seq, recvlen);
 		} else {
 			warnx << "XGOSSIPC";
@@ -2492,7 +2631,7 @@ readgossip(int fd)
 		}
 	} else if (msgtype == INITGOSSIP || msgtype == INFORMTEAM) {
 		// discard msg if not in init phase
-		if (initphase == 0) {
+		if (initphase == false) {
 			warnx << "warning: phase=exec, msgtype=" << msgtype << "\n";
 			warnx << "warning: msg discarded\n";
 			return;
@@ -2522,15 +2661,19 @@ readgossip(int fd)
 		str2chordID(key, ID);
 		str2chordID(keyteamid, teamID);
 		initgossiprecv(ID, teamID, sig, freq, weight);
-	} else if (msgtype == QUERYS || msgtype == QUERYX) {
+	} else if (msgtype == QUERYS || msgtype == QUERYX || msgtype == QUERYXP) {
 		querysig.clear();
 		if (msgtype == QUERYS) {
 			warnx << "QUERYS";
 			// TODO: do we need the freq/weight of the query sig?
+			// TODO: add dtd
 			ret = getKeyValue(gmsg.cstr(), key, keyteamid, querysig, freq, weight, recvlen);
-		} else {
+		} else if (msgtype == QUERYX) {
 			warnx << "QUERYX";
-			ret = getKeyValue(gmsg.cstr(), key, keyteamid, querysig, qid, recvlen);
+			ret = getKeyValue(gmsg.cstr(), key, keyteamid, dtdstr, querysig, qid, recvlen);
+		} else {
+			warnx << "QUERYXP";
+			ret = getKeyValue(gmsg.cstr(), key, keyteamid, dtdstr, querysig, qid, recvlen);
 		}
 
 		if (ret == -1) {
@@ -2554,6 +2697,7 @@ readgossip(int fd)
 			warnx << " teamID-found"; 
 			//warnx << "teamID found at teamindex[" << tind << "]";
 			warnx << " qid: " << qid << " querysig: " << sigbuf;
+			warnx << " DTD: " << dtdstr;
 			warnx << " teamID: " << teamID << "\n";
 			sigmatches = 0;
 			totalavg = 0;
@@ -2577,6 +2721,7 @@ readgossip(int fd)
 			warnx << "queryresult: ";
 			warnx << "teamID-NOT-found";
 			warnx << " qid: " << qid << " querysig: " << sigbuf;
+			warnx << " DTD: " << dtdstr;
 			warnx << " teamID: " << teamID << "\n";
 			sigmatches = 0;
 			totalavg = 0;
@@ -2645,7 +2790,7 @@ run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalav
 			}
 		}
 	// search for superset
-	} else if (msgtype == QUERYX) {
+	} else if (msgtype == QUERYX || msgtype == QUERYXP) {
 		// find if the query sig is a subset of any of the sigs
 		for (mapType::iterator itr = totalT[tind][0].begin(); itr != totalT[tind][0].end(); itr++) {
 			ninter = set_inter_noskip(querysig, itr->first, multi);
@@ -2653,6 +2798,7 @@ run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalav
 			if (ninter == (int)querysig.size()) {
 				++sigmatches;
 				totalavg += (itr->second[0]/itr->second[1]);
+
 				if (plist == 1) {
 					sig2str(itr->first, sigbuf);
 					warnx << "supersetsig: " << sigbuf;
@@ -2672,6 +2818,71 @@ run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalav
 	}
 
 	return 0;
+}
+
+std::vector<chordID>
+run_lsh(std::vector<POLY> sig)
+{
+	int col = 0;
+	//int range, randcol;
+	double beginTime, endTime;
+	std::vector<POLY> lshsig;
+	std::vector<chordID> minhash;
+
+	beginTime = getgtod();    
+	lsh *myLSH = new lsh(sig.size(), lfuncs, mgroups, lshseed, col, irrnums, hasha, hashb);
+	endTime = getgtod();    
+	//printdouble("run_lsh: lsh time: ", endTime - beginTime);
+	//warnx << "\n";
+	// convert multiset to set
+	if (uflag == 1) {
+		//sig2str(sig, sigbuf);
+		//warnx << "multiset: " << sigbuf << "\n";
+		lshsig = myLSH->getUniqueSet(sig);
+		//sig2str(lshsig, sigbuf);
+		//warnx << "set: " << sigbuf << "\n";
+		minhash = myLSH->getHashCode(lshsig);
+	} else {
+		minhash = myLSH->getHashCode(sig);
+	}
+
+	sort(minhash.begin(), minhash.end());
+
+	//warnx << "minhash.size(): " << minhash.size() << "\n";
+	/*
+	if (plist == 1) {
+		warnx << "sig" << n << ": ";
+		warnx << "minhash IDs: " << "\n";
+		for (int i = 0; i < (int)minhash.size(); i++) {
+			warnx << minhash[i] << "\n";
+		}
+	}
+	*/
+
+	//calcteamids(minhash);
+
+	/*
+	std::vector<chordID> team;
+	chordID teamID, ID;
+	team.clear();
+	for (int i = 0; i < (int)minhash.size(); i++) {
+		teamID = minhash[i];
+		lshIDs.push_back(teamID);
+		//warnx << "teamID: " << teamID << "\n";
+		// TODO: check return status
+		make_team(NULL, teamID, team);
+		range = team.size();
+		// randomness verified
+		//randcol = randomNumGenZ(range-1);
+		randcol = randomNumGenZ(range);
+		ID = team[randcol];
+		//warnx << "ID in randcol " << randcol << ": " << ID << "\n";
+		lshIDs.push_back(ID);
+	}
+	*/
+
+	delete myLSH;
+	return minhash;
 }
 
 void
@@ -2721,6 +2932,7 @@ loadresults(FILE *initfp, InsertType &msgtype)
 	std::vector<std::string> tokens;
 	mapType sig2avg;
 	std::string linestr;
+	std::string dtd;
 	str sigbuf;
 	bool sigfound = 0;
 	int listnum = 0;
@@ -2748,11 +2960,13 @@ loadresults(FILE *initfp, InsertType &msgtype)
 		int toksize = tokens.size();
 		if (strcmp(tokens[0].c_str(), "rxmsglen") == 0) {
 			// TODO: record other fields?
-			if (strcmp(tokens[3].c_str(), "QUERYS") == 0)
+			if (strcmp(tokens[3].c_str(), "QUERYS") == 0) {
 				msgtype = QUERYS;
-			else if (strcmp(tokens[3].c_str(), "QUERYX") == 0)
+			} else if (strcmp(tokens[3].c_str(), "QUERYX") == 0) {
 				msgtype = QUERYX;
-			else {
+			} else if (strcmp(tokens[3].c_str(), "QUERYXP") == 0) {
+				msgtype = QUERYXP;
+			} else {
 				warnx << "loadresults: error parsing\n";
 				return -1;
 			}
@@ -2760,16 +2974,24 @@ loadresults(FILE *initfp, InsertType &msgtype)
 			qid = strtol(tokens[3].c_str(), NULL, 10);
 			querysig.clear();
 			string2sig(tokens[5], querysig);
+			dtd = tokens[7];
 			// strip "\n" from teamID
 			std::string t = tokens[toksize-1].substr(0,tokens[toksize-1].size()-1);
 			str z(t.c_str());
 			str2chordID(z, teamID);
 			sig2str(querysig, sigbuf);
-			//warnx << "qid: " << qid << " querysig: " << sigbuf << " teamID: " << teamID << "\n";
-			if (msgtype == QUERYX) {
+			warnx << "qid: " << qid << " querysig: " << sigbuf << " DTD: " << dtd.c_str() << " teamID: " << teamID << "\n";
+			if (msgtype == QUERYX || msgtype == QUERYXP) {
 				addqid(qid, querysig);
 				// TODO: check return
 				addteamID(qid, teamID);
+				// add DTD
+				id2strings::iterator itr = qid2dtd.find(qid);
+				if (itr != qid2dtd.end()) {
+					warnx << "loadresults: qid already exists\n";
+				} else {
+					qid2dtd[qid].push_back(dtd);
+				}
 			} else if (msgtype == QUERYS) {
 				// TODO: associate querysig with an id
 			}
@@ -3192,9 +3414,9 @@ readquery(std::string queryfile, std::vector<std::vector <POLY> > &queryList, st
 	finishTime = getgtod();
 }
 
-// TODO: work w/ 0-sized sigs and path w/o trailing slash
+// TODO: work w/ 0-sized sigs
 void
-readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
+readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList, bool useproxy)
 {
 	std::vector<std::string> tokens;
 	double startTime, finishTime;
@@ -3254,11 +3476,20 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList)
 	warnx << buf << "\n";
 	sigList.push_back(sig);
 	// map dtd to sig
-	string2sigs::iterator itr = dtd2sigs.find(dtd);
-	if (itr != dtd2sigs.end()) {
-		itr->second.push_back(sig);
+	if (useproxy == false) {
+		string2sigs::iterator itr = dtd2sigs.find(dtd);
+		if (itr != dtd2sigs.end()) {
+			itr->second.push_back(sig);
+		} else {
+			dtd2sigs[dtd].push_back(sig);
+		}
 	} else {
-		dtd2sigs[dtd].push_back(sig);
+		string2sigs::iterator itr = dtd2proxysigs.find(dtd);
+		if (itr != dtd2proxysigs.end()) {
+			itr->second.push_back(sig);
+		} else {
+			dtd2proxysigs[dtd].push_back(sig);
+		}
 	}
 
 	warnx << "readsig: Size of sig list: " << sigList.size() << "\n";
@@ -3576,7 +3807,7 @@ add2querymap(std::vector<std::vector<POLY> > queryList, std::vector<std::string>
 // verified
 // use allT only in init phases
 void
-calcfreq(std::vector<std::vector<POLY> > sigList, bool usedummy)
+calcfreq(std::vector<std::vector<POLY> > sigList, bool usedummy, bool proxysigs)
 {
 	mapType uniqueSigList;
 	int i = 0;
@@ -3602,8 +3833,18 @@ calcfreq(std::vector<std::vector<POLY> > sigList, bool usedummy)
 			uniqueSigList[sigList[i]].push_back(1);
 		}
 	}
-	allT.push_back(uniqueSigList);
-	warnx << "calcfreq: setsize: " << allT[0].size() << "\n";
+	if (proxysigs == false) {
+		allT.push_back(uniqueSigList);
+		warnx << "calcfreq: setsize: " << allT[0].size() << "\n";
+	} else {
+		// XXX: ugly!
+		if (allT.size() == 0) {
+			mapType tmpSigList;
+			allT.push_back(tmpSigList);
+		}
+		allT.push_back(uniqueSigList);
+		warnx << "calcfreq: setsize: " << allT[1].size() << "\n";
+	}
 }
 
 // deprecated: use mergelists() instead
@@ -3788,6 +4029,63 @@ set_inter(std::vector<POLY> s1, std::vector<POLY> s2, bool &multi)
 	std::vector<POLY>::iterator s1itr = s1.begin();
 	std::vector<POLY>::iterator s2itr = s2.begin();
 	POLY s1prev, s2prev;
+	int n, s1skip, s2skip;
+
+	//warnx << "\n";
+	s1prev = s2prev = n = s1skip = s2skip = 0;
+	while (s1itr != s1.end() && s2itr != s2.end()) {
+		// don't count duplicates
+		if (s1prev == *s1itr) {
+			//warnx << "skipping duplicate\n";
+			++s1skip;
+			s1prev = *s1itr;
+			++s1itr;
+		} else if (s2prev == *s2itr) {
+			//warnx << "skipping duplicate\n";
+			++s2skip;
+			s2prev = *s2itr;
+			++s2itr;
+		} else if (*s1itr < *s2itr) {
+			s1prev = *s1itr;
+			++s1itr;
+		} else if (*s2itr < *s1itr) {
+			s2prev = *s2itr;
+			++s2itr;
+		} else {
+			//warnx << "both: " << *s1itr << "\n";
+			s1prev = *s1itr;
+			s2prev = *s2itr;
+			++s1itr;
+			++s2itr;
+			// count only same elements
+			++n;
+		}
+	}
+	//warnx << "s1skip(inter): " << s1skip << "\n";
+	//warnx << "s2skip(inter): " << s2skip << "\n";
+	// TODO: if s1 is multi (s1 is prevsig, s2 is cursig)
+	if (s2skip != 0)
+		multi = 1;
+	else
+		multi = 0;
+
+	return n;
+}
+
+// TODO: implement using templates (to handle both vectors of POLYs and vectors of chordIDs)
+// return number of elements in the intersection of s1 and s2
+// s1 and s2 are assumed to be sorted
+// logic copied from set_intersection() in <algorithm>
+// works with multisets (skips duplicates)
+// complexity:
+// at most, performs 2*(count1+count2)-1 comparisons or applications of comp
+// (where countX is the distance between firstX and lastX)
+int
+set_inter(std::vector<chordID> s1, std::vector<chordID> s2, bool &multi)
+{
+	std::vector<chordID>::iterator s1itr = s1.begin();
+	std::vector<chordID>::iterator s2itr = s2.begin();
+	chordID s1prev, s2prev;
 	int n, s1skip, s2skip;
 
 	//warnx << "\n";
@@ -4630,7 +4928,8 @@ usage(void)
 					"\t\t\t(don't use)\n\n"
 
              << "\tDIRECTORIES:\n"
-	     << "	-D		<dir with init files>\n"
+	     << "	-D		<dir with files to be merged>\n"
+	     << "	-O		<dir with proxy sig>\n"
 	     << "	-s		<dir with sigs>\n"
 	     << "	-x		<dir with xpath files>\n\n"
 
