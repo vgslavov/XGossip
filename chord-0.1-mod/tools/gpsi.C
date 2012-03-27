@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.110 2012/03/08 17:19:46 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.111 2012/03/15 16:51:23 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.110 2012/03/08 17:19:46 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.111 2012/03/15 16:51:23 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -51,7 +51,9 @@ static char *logfile;
 std::vector<POLY> irrnums;
 std::vector<int> hasha;
 std::vector<int> hashb;
-std::vector<chordID> lshIDs;
+std::vector<POLY> gproxysig;
+double proxyminsim = 0;
+double proxyavgsim = 0;
 int lshseed = 0;
 int plist = 0;
 int gflag = 0;
@@ -63,6 +65,7 @@ int peers = 0;
 int teamsize = 5;
 // TODO: make cmd line arg
 int ninstances = 20;
+double errorlimit = 100;
 int freqbyx = 1;
 int totalrxmsglen = 0;
 int totaltxmsglen = 0;
@@ -182,7 +185,7 @@ void readquery(std::string, std::vector<std::vector <POLY> > &, std::vector<std:
 void readsig(std::string, std::vector<std::vector <POLY> > &, bool);
 void readValues(FILE *, std::multimap<POLY, std::pair<std::string, enum OPTYPE> > &);
 std::vector<chordID> run_lsh(std::vector<POLY>);
-int run_query(int, std::vector<POLY>, int &, double &, InsertType, chordID = 0);
+int run_query(int, std::vector<POLY>, int &, double &, double &, double &, InsertType, chordID = 0, bool = false);
 bool sig2str(std::vector<POLY>, str &);
 bool string2sig(std::string, std::vector<POLY> &);
 bool sigcmp(std::vector<POLY>, std::vector<POLY>);
@@ -881,9 +884,12 @@ lshpoly(vecomap teamvecomap, std::vector<std::vector<POLY> > &matrix, int intval
 int
 main(int argc, char *argv[])
 {
+	bool usedummy = false;
+	bool useproxy = false;
 	int Gflag, Lflag, lflag, rflag, Sflag, sflag, Oflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag, yflag, Zflag;
 	int ch, gintval, initintval, waitintval, listenintval, nids, rounds, valLen, logfd;
 	int listnum;
+	int qid;
 	double beginTime = 0.0;
 	double beginreadTime = 0.0;
 	double endTime, endreadTime, instime;
@@ -897,6 +903,7 @@ main(int argc, char *argv[])
 	InsertType msgtype = NONE;
 	MergeType mergetype = OTHER;
 	str sigbuf;
+	std::string dtd;
 	std::string initdir;
 	std::string proxysigdir;
 	std::string sigdir;
@@ -913,6 +920,8 @@ main(int argc, char *argv[])
 	std::vector<double> weightList;
 	std::vector<std::vector<POLY> > queryList;
 	std::vector<POLY> sig;
+	std::vector<POLY> proxysig;
+	std::vector<POLY> querysig;
 	std::vector<POLY> compressedList;
 	std::vector<std::vector<unsigned char> > outBitmap;
 
@@ -932,7 +941,7 @@ main(int argc, char *argv[])
 	dummysig.push_back(1);
 
 	// parse arguments
-	while ((ch = getopt(argc, argv, "B:CcD:d:EF:G:gHhIj:L:lMmn:O:o:P:pQq:R:rS:s:T:t:uvW:w:X:x:y:Z:z")) != -1)
+	while ((ch = getopt(argc, argv, "B:CcD:d:EF:G:gHhIj:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:uvW:w:X:x:y:Z:z")) != -1)
 		switch(ch) {
 		case 'B':
 			mgroups = strtol(optarg, NULL, 10);
@@ -996,6 +1005,9 @@ main(int argc, char *argv[])
 			break;
 		case 'm':
 			mflag = 1;
+			break;
+		case 'N':
+			ninstances = strtol(optarg, NULL, 10);
 			break;
 		case 'n':
 			nids = strtol(optarg, NULL, 10);
@@ -1276,8 +1288,8 @@ main(int argc, char *argv[])
 
 	// read signatures in memory
 	if ((rflag == 1 || gflag == 1 || Hflag == 1 || lflag == 1 || Qflag == 1 || Mflag == 1) && (sflag == 1 || Oflag == 1)) {
-		bool usedummy = false;
-		bool useproxy = false;
+		usedummy = false;
+		useproxy = false;
 
 		// read regular sigs
 		if (sflag == 1) {
@@ -1490,10 +1502,11 @@ main(int argc, char *argv[])
 			// both init phases use allT
 			//printlist(allT, 0, -1);
 			warnx << "queries:\n";
-			int qid;
-			std::string dtd;
-			for (sig2idmulti::iterator itr = queryMap.begin(); itr != queryMap.end(); itr++) {
-				qid = itr->second;
+			for (sig2idmulti::iterator qitr = queryMap.begin(); qitr != queryMap.end(); qitr++) {
+				querysig = qitr->first;
+				qid = qitr->second;
+
+				dtd = "";
 				id2strings::iterator ditr = qid2dtd.find(qid);
 				if (ditr != qid2dtd.end()) {
 					if (ditr->second.size() != 1) {
@@ -1503,7 +1516,7 @@ main(int argc, char *argv[])
 				} else {
 					warnx << "DTD missing\n";
 				}
-				sig2str(itr->first, sigbuf);
+				sig2str(querysig, sigbuf);
 				warnx << "QID: " << qid << " DTD: " << dtd.c_str() << " QUERYSIG: " << sigbuf << "\n";
 			}
 			/*
@@ -1521,6 +1534,8 @@ main(int argc, char *argv[])
 		int sigmatches = 0;
 		double totalfreq = 0;
 		int tind = 0;
+		double minsim = 0;
+		double avgsim = 0;
 		//int ninter;
 		//bool multi;
 		// store all sigs in allT[allnum]
@@ -1534,9 +1549,13 @@ main(int argc, char *argv[])
 		totalT.push_back(allT);
 
 		warnx << "running xpath queries locally...\n";
+		warnx << "qid,dtd,querysig,sigmatches,totalfreq,minsim,avgsim\n";
 		for (sig2idmulti::iterator qitr = queryMap.begin(); qitr != queryMap.end(); qitr++) {
+			querysig = qitr->first;
+			qid = qitr->second;
+
 			// doesn't matter if it's QUERYX or QUERYXP
-			run_query(tind, qitr->first, sigmatches, totalfreq, QUERYX);
+			run_query(tind, querysig, sigmatches, totalfreq, minsim, avgsim, QUERYX);
 
 			/*
 			// find if the query sig is a subset of any of the sigs
@@ -1566,12 +1585,38 @@ main(int argc, char *argv[])
 			}
 			*/
 
-			sig2str(qitr->first, sigbuf);
+			dtd = "";
+			id2strings::iterator ditr = qid2dtd.find(qid);
+			if (ditr != qid2dtd.end()) {
+				if (ditr->second.size() != 1) {
+					warnx << "more than 1 DTD per QID\n";
+				}
+				dtd = ditr->second.back();
+			} else {
+				warnx << "DTD missing\n";
+			}
+
+			warnx << qid << ",";
+			warnx << dtd.c_str() << ",";
+			sig2str(querysig, sigbuf);
+			warnx << sigbuf << ",";
+			warnx << sigmatches << ",";
+			printdouble("", totalfreq);
+			warnx << ",";
+			printdouble("", minsim);
+			warnx << ",";
+			printdouble("", avgsim);
+			warnx << ",\n";
+
+			/*
 			warnx << "qid: " << qitr->second;
 			warnx << " querysig: " << sigbuf;
 			warnx << " sigmatches: " << sigmatches;
 			printdouble(" totalfreq: ", totalfreq);
+			printdouble(" minsim: ", minsim);
+			printdouble(" avgsim: ", avgsim);
 			warnx << "\n";
+			*/
 			sigmatches = 0;
 			totalfreq = 0;
 		}
@@ -1581,6 +1626,9 @@ main(int argc, char *argv[])
 	warnx << "host: " << host << "\n";
 	warnx << "pid: " << getpid() << "\n";
 	warnx << "peers: " << peers << "\n";
+	warnx << "ninstances: " << ninstances << "\n";
+	printdouble("peers/instance: ", peers / ninstances);
+	warnx << "\n";
 	warnx << "loseed: " << loseed << "\n";
 	warnx << "mgroups: " << mgroups << "\n";
 	warnx << "lfuncs: " << lfuncs << "\n";
@@ -1828,12 +1876,14 @@ main(int argc, char *argv[])
 							vecomap2vec(totalT[i], 0, sigList, freqList, weightList);
 
 							int sigbytesize = 0;
+							/*
 							warnx << "sigs before compression:\n";
 							for (int i = 0; i < (int)sigList.size(); i++) {
 								sigbytesize += (sigList[i].size() * sizeof(POLY));
 								sig2str(sigList[i], sigbuf);
 								warnx << "sig[" << i << "]: " << sigbuf << "\n";
 							}
+							*/
 
 							warnx << "sigList size (bytes): " << sigbytesize << "\n";
 							warnx << "sigList.size() (unique): " << sigList.size() << "\n";
@@ -1988,15 +2038,18 @@ main(int argc, char *argv[])
 			int proxylshmisses = 0;
 			int querylshmisses = 0;
 			int qid;
+			double totalninter = 0;
 			double estfreq = 0;
 			double truefreq = 0;
-			double relerror;
+			double relerror = 0;
+			//double estcursim;
+			//double estminsim = 1;
+			double trueminsim = 0;
+			double trueavgsim = 0;
 			std::string dtd;
 			std::vector<chordID> proxylshIDs;
 			std::vector<chordID> querylshIDs;
 			std::vector<chordID> resultlshIDs;
-			std::vector<POLY> proxysig;
-			std::vector<POLY> querysig;
 			proxysig.clear();
 			querysig.clear();
 			proxylshIDs.clear();
@@ -2023,7 +2076,7 @@ main(int argc, char *argv[])
 				bool lshmisses = true;
 
 				warnx << "xpath query results...\n";
-				warnx << "qid,querysig,sigmatches (*teamsize): est,sigmatches (*instances): true,sigmatches: rel error (%),freq (*teamsize): est,freq (*instances): true,freq: rel error (%),proxy lsh misses,query lsh misses,teamIDs\n";
+				warnx << "qid,querysig,sigmatches: est,sigmatches: true,sigmatches: rel error (%),freq (*teamsize): est,freq (*instances): true,freq: rel error (%),proxy lsh misses,query lsh misses,avg inter,query minsim,query avgsim,proxy minsim,proxy avgsim,query minsim > proxy minsim,teamIDs\n";
 				for (id2sigs::iterator qitr = qid2querysig.begin(); qitr != qid2querysig.end(); qitr++) {
 					if (qitr->second.size() > 1)
 						warnx << "multiple queries for the same qid\n";
@@ -2036,6 +2089,7 @@ main(int argc, char *argv[])
 					if (ditr != qid2dtd.end()) {
 						// TODO: assume 1 dtd per qid?
 						dtd = ditr->second.back();
+						//warnx << "found DTD\n";
 					} else {
 						// TODO: what to do?
 						warnx << "no DTD found for qid: " << qid << "\n";
@@ -2048,6 +2102,7 @@ main(int argc, char *argv[])
 						if (pitr != dtd2proxysigs.end()) {
 							// TODO: assume 1 sig per DTD?
 							proxysig = pitr->second.back();
+							//warnx << "found proxysig\n";
 						} else {
 							// TODO: what to do?
 							warnx << "no proxy sig found for DTD: " << dtd.c_str() << "\n";
@@ -2055,6 +2110,7 @@ main(int argc, char *argv[])
 						}
 						proxylshIDs.clear();
 						proxylshIDs = run_lsh(proxysig);
+						//warnx << "run_lsh ran succuessfully\n";
 					} else if (msgtype == QUERYX) {
 						querylshIDs.clear();
 						querylshIDs = run_lsh(querysig);
@@ -2063,12 +2119,14 @@ main(int argc, char *argv[])
 					// find sigs which match this qid
 					id2sigs::iterator sitr = qid2sigs.find(qid);
 					if (sitr != qid2sigs.end()) {
+						//warnx << "found sigs for qid: " << qid << "\n";
 						// add up avg of different sigs and pick a random avg for same one
 						for (int i = 0; i < (int)sitr->second.size(); i++ ) {
 							// find id corresponding to this qid in allsig2avg
 							id2id::iterator iditr = qid2id.find(qid);
 							if (iditr != qid2id.end()) {
 								avgid = iditr->second;
+								//warnx << "found id for qid: " << qid << "\n";
 							} else {
 								warnx << "qid2id: can't find qid: " << qid << "\n";
 								continue;
@@ -2077,6 +2135,7 @@ main(int argc, char *argv[])
 							// find vector<avg> of the sig in the sig2avg map for this qid
 							mapType::iterator saitr = allsig2avg[avgid].find(sitr->second[i]);
 							if (saitr != allsig2avg[avgid].end()) {
+								//warnx << "found avg\n";
 								range = saitr->second.size();
 								// TODO: verify range
 								// pick random avg for that sig
@@ -2089,6 +2148,13 @@ main(int argc, char *argv[])
 								continue;
 							}
 
+							// find minimum similarity b/w query and results
+							/*
+							estcursim = signcmp(querysig, sitr->second[i], multi);
+							if (estminsim > estcursim)
+								estminsim = estcursim;
+							*/
+
 							// run lsh on sig result
 							if (lshmisses == true) {
 								resultlshIDs.clear();
@@ -2097,14 +2163,17 @@ main(int argc, char *argv[])
 								if (msgtype == QUERYXP) {
 									// TODO: use set_inter_noskip() instead?
 									ninter = set_inter(proxylshIDs, resultlshIDs, multi);
+									totalninter += ninter;
+									//warnx << "ninter: " << ninter << " multi: " << multi << "\n";
 									if (ninter == 0) {
-										warnx << "lsh proxy sig miss\n";
+										//warnx << "lsh proxy sig miss\n";
 										++proxylshmisses;
 									}
 								} else if (msgtype == QUERYX) {
 									ninter = set_inter(querylshIDs, resultlshIDs, multi);
+									totalninter += ninter;
 									if (ninter == 0) {
-										warnx << "lsh query sig miss\n";
+										//warnx << "lsh query sig miss\n";
 										++querylshmisses;
 									}
 								}
@@ -2124,8 +2193,16 @@ main(int argc, char *argv[])
 					// get true result
 					truesigmatches = 0;
 					truefreq = 0;
-					// don't run lsh on input data sigs
-					run_query(tind, querysig, truesigmatches, truefreq, QUERYX);
+					trueminsim = 0;
+					trueavgsim = 0;
+
+					if (msgtype == QUERYXP) {
+						useproxy = true;
+						gproxysig = proxysig;
+					}
+
+					// be careful with default arguments! (specify teamID)
+					run_query(tind, querysig, truesigmatches, truefreq, trueminsim, trueavgsim, msgtype, 0, useproxy);
 
 					// est sigmatches
 					// don't multiply by teamsize!
@@ -2169,6 +2246,36 @@ main(int argc, char *argv[])
 					// query lsh misses
 					warnx << querylshmisses << ",";
 
+					// avg inter
+					printdouble("", totalninter / mgroups);
+					warnx << ",";
+
+					// est minsim 
+					//printdouble("", estminsim);
+					//warnx << ",";
+
+					// query minsim 
+					printdouble("", trueminsim);
+					warnx << ",";
+
+					// query avgsim 
+					printdouble("", trueavgsim);
+					warnx << ",";
+
+					// proxy minsim 
+					printdouble("", proxyminsim);
+					warnx << ",";
+
+					// proxy avgsim 
+					printdouble("", proxyavgsim);
+					warnx << ",";
+
+					// query minsim > proxy minsim
+					if (trueminsim > proxyminsim)
+						warnx << "y,";
+					else
+						warnx << "n,";
+
 					// print teamIDs
 					id2chordIDs::iterator titr = qid2teamIDs.find(qid);
 					if (titr != qid2teamIDs.end()) {
@@ -2181,10 +2288,39 @@ main(int argc, char *argv[])
 					}
 
 					warnx << "\n";
+
+					// print LSH() output when error is high
+					if (relerror > errorlimit) {
+						if (msgtype == QUERYXP) {
+							warnx << proxylshIDs.size() << ",";
+							for (int i = 0; i < (int)proxylshIDs.size(); i++) {
+								warnx << proxylshIDs[i] << ",";
+							}
+						} else if (msgtype == QUERYX) {
+							warnx << querylshIDs.size() << ",";
+							for (int i = 0; i < (int)querylshIDs.size(); i++) {
+								warnx << querylshIDs[i] << ",";
+							}
+						}
+						warnx << "\n";
+
+						warnx << resultlshIDs.size() << ",";
+						for (int i = 0; i < (int)resultlshIDs.size(); i++) {
+							warnx << resultlshIDs[i] << ",";
+						}
+						warnx << "\n";
+					}
+
+					//estminsim = 0;
 					estsigmatches = 0;
 					estfreq = 0;
 					proxylshmisses = 0;
 					querylshmisses = 0;
+					totalninter = 0;
+					// very important!
+					proxylshIDs.clear();
+					querylshIDs.clear();
+					resultlshIDs.clear();
 				}
 			// TODO:
 			// decide where to put querysigs and sigs: allT[?], totalT[?][?]
@@ -2479,13 +2615,14 @@ readgossip(int fd)
 	std::vector<POLY> querysig;
 	std::vector<POLY> compressedList;
 	std::vector<std::vector<unsigned char> > outBitmap;
-	double freq, weight, totalavg;
+	double freq, weight, totalavg, minsim, avgsim;
 	int n, msglen, recvlen, nothing, tind, ninter, qid, sigmatches;
 	int ret, seq;
 	int numSigs;
 	bool multi;
 
 	ninter = msglen = recvlen = nothing = 0;
+	minsim = avgsim = 0;
 	multi = 0;
 	qid = -1;
 	warnx << "reading from socket:\n";
@@ -2701,7 +2838,7 @@ readgossip(int fd)
 			warnx << " teamID: " << teamID << "\n";
 			sigmatches = 0;
 			totalavg = 0;
-			run_query(tind, querysig, sigmatches, totalavg, msgtype);
+			run_query(tind, querysig, sigmatches, totalavg, minsim, avgsim, msgtype);
 			warnx << "queryresultend:";
 			warnx << " rxqseq: " << rxqseq.back();
 			warnx << " sigmatches: " << sigmatches;
@@ -2727,7 +2864,7 @@ readgossip(int fd)
 			totalavg = 0;
 			for (int i = 0; i < (int)totalT.size(); i++) {
 				teamID = findteamid(i);
-				run_query(i, querysig, sigmatches, totalavg, msgtype, teamID);
+				run_query(i, querysig, sigmatches, totalavg, minsim, avgsim, msgtype, teamID);
 			}
 
 			warnx << "queryresultend:";
@@ -2764,12 +2901,21 @@ readgossip(int fd)
 	++closefd;
 }
 
+// don't init sigmatches and totalavg!
 int
-run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalavg, InsertType msgtype, chordID teamID)
+run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalavg, double &minsim, double &avgsim, InsertType msgtype, chordID teamID, bool useproxy)
 {
-	int ninter;
 	bool multi;
+	int ninter;
+	double cursim;
 	str sigbuf;
+
+	// init to max value possible!
+	minsim = 1;
+	proxyminsim = 1;
+
+	avgsim = 0;
+	proxyavgsim = 0;
 
 	// search for exact sig match
 	if (msgtype == QUERYS) {
@@ -2799,6 +2945,20 @@ run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalav
 				++sigmatches;
 				totalavg += (itr->second[0]/itr->second[1]);
 
+				// find minimum similarity b/w query and results
+				cursim = signcmp(querysig, itr->first, multi);
+				avgsim += cursim;
+				if (minsim > cursim)
+					minsim = cursim;
+
+				// find minimum similarity b/w proxy sig and results
+				if (useproxy == true) {
+					cursim = signcmp(gproxysig, itr->first, multi);
+					proxyavgsim += cursim;
+					if (proxyminsim > cursim)
+						proxyminsim = cursim;
+				}
+
 				if (plist == 1) {
 					sig2str(itr->first, sigbuf);
 					warnx << "supersetsig: " << sigbuf;
@@ -2816,6 +2976,10 @@ run_query(int tind, std::vector<POLY> querysig, int &sigmatches, double &totalav
 		warnx << "invalid msgtype: " << msgtype << "\n";
 		return -1;
 	}
+
+
+	avgsim /= sigmatches;
+	proxyavgsim /= sigmatches;
 
 	return 0;
 }
@@ -2980,7 +3144,7 @@ loadresults(FILE *initfp, InsertType &msgtype)
 			str z(t.c_str());
 			str2chordID(z, teamID);
 			sig2str(querysig, sigbuf);
-			warnx << "qid: " << qid << " querysig: " << sigbuf << " DTD: " << dtd.c_str() << " teamID: " << teamID << "\n";
+			//warnx << "qid: " << qid << " querysig: " << sigbuf << " DTD: " << dtd.c_str() << " teamID: " << teamID << "\n";
 			if (msgtype == QUERYX || msgtype == QUERYXP) {
 				addqid(qid, querysig);
 				// TODO: check return
@@ -3424,7 +3588,7 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList, bool use
 
 	startTime = getgtod();
 	// open signatures
-	warnx << "sigfile: " << sigfile.c_str() << "\n";
+	//warnx << "sigfile: " << sigfile.c_str() << "\n";
 	sigfp = fopen(sigfile.c_str(), "r");
 	// change to if?
 	assert(sigfp);
@@ -3447,9 +3611,9 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList, bool use
 	// Read numSigs <it should be 1> for data signatures...
 	int numSigs;
 	if (fread(&numSigs, sizeof(int), 1, sigfp) != 1) {
-		warnx << "numSigs: " << numSigs << "\n";
+		//warnx << "numSigs: " << numSigs << "\n";
 	}
-	warnx << "NUM sigs: " << numSigs;
+	//warnx << "NUM sigs: " << numSigs;
 	assert(numSigs == 1);
 
 	int size;
@@ -3458,12 +3622,12 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList, bool use
 		assert(0);
 		warnx << "\ninvalid signature\n";
 	}
-	warnx << ", Signature size: " << size * sizeof(POLY) << " bytes\n";
+	//warnx << ", Signature size: " << size * sizeof(POLY) << " bytes\n";
 
 	std::vector<POLY> sig;
 	sig.clear();
 	POLY e;
-	warnx << "Document signature (sorted): ";
+	//warnx << "Document signature (sorted): ";
 	for (int i = 0; i < size; i++) {
 		if (fread(&e, sizeof(POLY), 1, sigfp) != 1) {
 			assert(0);
@@ -3473,7 +3637,7 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList, bool use
 	sort(sig.begin(), sig.end());
 	str buf;
 	sig2str(sig, buf);
-	warnx << buf << "\n";
+	//warnx << buf << "\n";
 	sigList.push_back(sig);
 	// map dtd to sig
 	if (useproxy == false) {
@@ -3492,7 +3656,7 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList, bool use
 		}
 	}
 
-	warnx << "readsig: Size of sig list: " << sigList.size() << "\n";
+	//warnx << "readsig: Size of sig list: " << sigList.size() << "\n";
 	finishTime = getgtod();
 	fclose(sigfp);
 }
@@ -3671,28 +3835,28 @@ make_team(chordID myID, chordID teamID, std::vector<chordID> &team)
 	chordID curID;
 
 	if (myID == teamID) {
-		warnx << "myID == teamID, index = 0\n";
+		//warnx << "myID == teamID, index = 0\n";
 		idindex = 0;
 	}
 
 	// size of ring
 	bigint rngmax = (bigint (1) << 160)  - 1;
 	bigint arclen = rngmax / teamsize;
-	warnx << "arclen: " << arclen << "\n";
+	//warnx << "arclen: " << arclen << "\n";
 	chordID b = 1;
 	b <<= NBIT;
 	team.clear();
 	team.push_back(teamID);
 	curID = teamID;
-	warnx << "ID_0: " << teamID << "\n";
+	//warnx << "ID_0: " << teamID << "\n";
 	// start at 1 because of team id
 	for (int j = 1; j < teamsize; j++) {
 		curID += arclen;
 		// wraparound
 		if (curID >= b) curID -= b;
-		warnx << "ID_" << j << ": " << curID << "\n";
+		//warnx << "ID_" << j << ": " << curID << "\n";
 		if (myID == curID) {
-			warnx << "myID == curID, index = " << j << "\n";
+			//warnx << "myID == curID, index = " << j << "\n";
 			idindex = j;
 		}
 		team.push_back(curID);
@@ -4944,6 +5108,7 @@ usage(void)
 	     << "	-B		<bands for LSH>\n"
 					"\t\t\t(a.k.a. m groups)\n"
 	     << "	-d		<random prime number for LSH seed>\n"
+	     << "      	-N		<how many instances/nodes>\n"
 	     << "      	-n		<how many chordIDs>\n"
 	     << "      	-o		<how many rounds>\n"
 	     << "      	-q		<estimate of # of peers in DHT>\n"
@@ -4980,7 +5145,7 @@ usage(void)
 	     << "	-l		listen for gossip (requires -S, -G, -s)\n"
 	     << "	-M		merge {results | init states} (requires -D, -y, -Z)\n"
 	     << "	-Q		send query (requires -S, -d, -j, -s or -x)\n"
-	     << "	-r		read signatures (requires -s or -x)\n"
+	     << "	-r		read signatures (requires -s and/or -x)\n"
 	     << "	-v		print version\n"
 	     << "	-z		generate random chordID (requires -n)\n";
 	exit(0);
