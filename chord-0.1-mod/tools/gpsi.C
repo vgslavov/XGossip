@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.111 2012/03/15 16:51:23 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.112 2012/03/27 15:54:10 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.111 2012/03/15 16:51:23 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.112 2012/03/27 15:54:10 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -72,6 +72,7 @@ int totaltxmsglen = 0;
 int roundrxmsglen = 0;
 int roundtxmsglen = 0;
 bool initphase = false;
+bool vanilla = false;
 
 // paper:k, slides:bands
 int mgroups = 10;
@@ -168,6 +169,7 @@ int loadinitstate(FILE *);
 int loadresults(FILE *, InsertType &);
 int lshsig(vecomap, int, InsertType, int, int);
 int lshquery(sig2idmulti, int, InsertType, int);
+int vanillaquery(sig2idmulti, int, InsertType, int);
 int make_team(chordID, chordID, std::vector<chordID> &);
 void mergelists(vecomap&);
 void mergeinit();
@@ -590,10 +592,10 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 				t << ID;
 				p << team[0];
 				str key(t);
-				str teamID(p);
+				str strteamID(p);
 				str dtdstr(dtd.c_str());
 				warnx << "inserting " << msgtype << ":\n";
-				makeKeyValue(&value, valLen, key, teamID, dtdstr, querysig, qid, msgtype);
+				makeKeyValue(&value, valLen, key, strteamID, dtdstr, querysig, qid, msgtype);
 				totaltxmsglen += valLen;
 				status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
 				totalinstime += instime;
@@ -611,10 +613,10 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 			// don't forget to clear team list!
 			team.clear();
 			endTime = getgtod();
-			printdouble("lshquerysig: insert time (only): ", totalinstime);
+			printdouble("lshquery: insert time (only): ", totalinstime);
 			totalinstime = 0;
 			warnx << "\n";
-			printdouble("lshquerysig: insert time (+others): ", endTime - beginTime);
+			printdouble("lshquery: insert time (+others): ", endTime - beginTime);
 			warnx << "\n";
 
 			warnx << "sleeping (lshquery)...\n";
@@ -627,7 +629,73 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 		delete myLSH;
 		++n;
 	}
+	return 0;
+}
 
+int
+vanillaquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, int col = 0)
+{
+	std::vector<POLY> querysig;
+	std::string dtd;
+	chordID ID;
+	DHTStatus status;
+	char *value;
+	int valLen, n, qid;
+	double beginTime, endTime, instime, totalinstime;
+	str sigbuf;
+
+	querysig.clear();
+	n = 0;
+	totalinstime = 0;
+	for (sig2idmulti::iterator itr = queryMap.begin(); itr != queryMap.end(); itr++) {
+		querysig = itr->first;
+		qid = itr->second;
+		id2strings::iterator ditr = qid2dtd.find(qid);
+		if (ditr != qid2dtd.end()) {
+			// TODO: assume 1 dtd per qid
+			dtd = ditr->second.back();
+		} else {
+			warnx << "vanillaquery: no DTD found for qid: " << qid << "\n";
+		}
+
+		if ((Qflag == 1 || gflag == 1) && msgtype != INVALID) {
+			beginTime = getgtod();    
+			// send to random peer
+			ID = make_randomID();
+			strbuf z;
+			z << ID;
+			str key(z);
+			str dtdstr(dtd.c_str());
+			warnx << "inserting " << msgtype << ":\n";
+			// teamID doesn't matter in Vanilla
+			makeKeyValue(&value, valLen, key, key, dtdstr, querysig, qid, msgtype);
+			totaltxmsglen += valLen;
+			status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
+			totalinstime += instime;
+			cleanup(value);
+
+			// do not exit if insert FAILs!
+			if (status != SUCC) {
+				// TODO: do I care?
+				warnx << "error: insert FAILed\n";
+			} else {
+				warnx << "insert SUCCeeded\n";
+			}
+
+			endTime = getgtod();
+			printdouble("vanillaquery: insert time (only): ", totalinstime);
+			totalinstime = 0;
+			warnx << "\n";
+			printdouble("vanillaquery: insert time (+others): ", endTime - beginTime);
+			warnx << "\n";
+
+			warnx << "sleeping (vanillaquery)...\n";
+			initsleep = 0;
+			delaycb(intval, 0, wrap(initsleepnow));
+			while (initsleep == 0) acheck();
+		}
+		++n;
+	}
 	return 0;
 }
 
@@ -941,7 +1009,7 @@ main(int argc, char *argv[])
 	dummysig.push_back(1);
 
 	// parse arguments
-	while ((ch = getopt(argc, argv, "B:CcD:d:EF:G:gHhIj:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:uvW:w:X:x:y:Z:z")) != -1)
+	while ((ch = getopt(argc, argv, "B:CcD:d:EF:G:gHhIj:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:uVvW:w:X:x:y:Z:z")) != -1)
 		switch(ch) {
 		case 'B':
 			mgroups = strtol(optarg, NULL, 10);
@@ -1070,6 +1138,9 @@ main(int argc, char *argv[])
 		case 'z':
 			zflag = 1;
 			break;
+		case 'V':
+			vanilla = true;
+			break;
 		case 'v':
 			vflag = 1;
 			break;
@@ -1151,7 +1222,7 @@ main(int argc, char *argv[])
 	}
 
 	// action H (for testing)
-	if ((Hflag == 1 || Qflag == 1) && (dflag == 0 || jflag == 0 || Fflag == 0)) usage();
+	if ((Hflag == 1) && (dflag == 0 || jflag == 0 || Fflag == 0)) usage();
 
 	// option H (for gossiping)
 	// TODO: handle sflag & Pflag & Fflag
@@ -1639,6 +1710,15 @@ main(int argc, char *argv[])
 
 	std::vector<std::vector<POLY> > pmatrix;
 
+	// VanillaXGossip init phase ends?
+	// VanillaXGossip exec phase starts?
+	// start using totalT BEFORE listening
+	if (gflag == 1 && Hflag == 0) {
+		vanilla = true;
+		// from now on, work only with totalT
+		totalT.push_back(allT);
+	}
+
 	// listen
 	if (gflag == 1 || lflag == 1) {
 		time(&rawtime);
@@ -1705,13 +1785,14 @@ main(int argc, char *argv[])
 	if (gflag == 1 && Hflag == 0) {
 		warnx << "vanillaxgossip exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
+		warnx << "interval b/w inserts: " << initintval << "\n";
 		time(&rawtime);
 		warnx << "start exec ctime: " << ctime(&rawtime);
 		warnx << "start exec sincepoch: " << time(&rawtime) << "\n";
 
-		// from now on, work only with totalT
-		totalT.push_back(allT);
+		double begingossipTime = getgtod();    
 
+		// needed?
 		srandom(loseed);
 
 		while (1) {
@@ -1720,6 +1801,13 @@ main(int argc, char *argv[])
 				warnx << "txseq = " << rounds << "\n";
 				warnx << "totaltxmsglen: " << totaltxmsglen << "\n";
 				warnx << "done gossiping\n";
+				time(&rawtime);
+				warnx << "stop exec ctime: " << ctime(&rawtime);
+				warnx << "stop exec sincepoch: " << time(&rawtime) << "\n";
+				double endgossipTime = getgtod();    
+				printdouble("vanillaxgossip exec phase time: ", endgossipTime - begingossipTime);
+				warnx << "\n";
+
 				// stop gossiping, only listen
 				break;
 				// don't exit since each peer will reach a particular round at a different time
@@ -1951,18 +2039,33 @@ main(int argc, char *argv[])
 		warnx << "interval b/w inserts: " << initintval << "\n";
 		warnx << "querying ";
 		beginTime = getgtod();
-		// xpath: LSH(proxysig)
-		if (xflag == 1 && Oflag == 1) {
-			warnx << "using xpath, LSH(proxysig)...\n";
-			lshquery(queryMap, initintval, QUERYXP);
-		// xpath: LSH(querysig)
-		} else if (xflag == 1 && Oflag == 0) {
-			warnx << "using xpath, LSH(querysig)...\n";
-			lshquery(queryMap, initintval, QUERYX);
-		// sig: LSH(regularsig)
+		// VanillaXGossip
+		if (vanilla == true) {
+			// xpath: querysig
+			if (xflag == 1 && Oflag == 0) {
+				warnx << "using xpath...\n";
+				vanillaquery(queryMap, initintval, QUERYX);
+			// sig: regularsig
+			} else {
+				warnx << "using sig...\n";
+				warnx << "not implemented\n";
+				//sig(allT, initintval, QUERYS);
+			}
+		// XGossip
 		} else {
-			warnx << "using sig, LSH(sig)...\n";
-			lshsig(allT, initintval, QUERYS);
+			// xpath: LSH(proxysig)
+			if (xflag == 1 && Oflag == 1) {
+				warnx << "using xpath, LSH(proxysig)...\n";
+				lshquery(queryMap, initintval, QUERYXP);
+			// xpath: LSH(querysig)
+			} else if (xflag == 1 && Oflag == 0) {
+				warnx << "using xpath, LSH(querysig)...\n";
+				lshquery(queryMap, initintval, QUERYX);
+			// sig: LSH(regularsig)
+			} else {
+				warnx << "using sig, LSH(sig)...\n";
+				lshsig(allT, initintval, QUERYS);
+			}
 		}
 		endTime = getgtod();    
 		printdouble("query time: ", endTime - beginTime - initintval);
@@ -2825,19 +2928,17 @@ readgossip(int fd)
 		warnx << " teamID: " << keyteamid << "\n";
 		sig2str(querysig, sigbuf);
 
-		// find if list for team exists
-		str2chordID(keyteamid, teamID);
-		teamid2totalT::iterator teamitr = teamindex.find(teamID);
-		if (teamitr != teamindex.end()) {
-			tind = teamitr->second[0];
+		// VanillaXGgossip
+		if (vanilla == true) {
 			warnx << "queryresult:";
-			warnx << " teamID-found"; 
-			//warnx << "teamID found at teamindex[" << tind << "]";
+			warnx << " vanilla"; 
 			warnx << " qid: " << qid << " querysig: " << sigbuf;
 			warnx << " DTD: " << dtdstr;
 			warnx << " teamID: " << teamID << "\n";
 			sigmatches = 0;
 			totalavg = 0;
+			// Vanilla uses index 0
+			tind = 0;
 			run_query(tind, querysig, sigmatches, totalavg, minsim, avgsim, msgtype);
 			warnx << "queryresultend:";
 			warnx << " rxqseq: " << rxqseq.back();
@@ -2845,51 +2946,74 @@ readgossip(int fd)
 			printdouble(" totalavg: ", totalavg);
 			warnx << "\n";
 			rxqseq.push_back(rxqseq.back() + 1);
+		// XGossip
 		} else {
- 			// don't run query if this peer is not a part of the team
-			/*
-			warnx << "queryresult:";
-			warnx << " teamID NOT found";
-			warnx << " qid: " << qid << " querysig: " << sigbuf;
-			warnx << " teamID: " << teamID << "\n";
-			*/
+			// find if list for team exists
+			str2chordID(keyteamid, teamID);
+			teamid2totalT::iterator teamitr = teamindex.find(teamID);
+			if (teamitr != teamindex.end()) {
+				tind = teamitr->second[0];
+				warnx << "queryresult:";
+				warnx << " teamID-found"; 
+				//warnx << "teamID found at teamindex[" << tind << "]";
+				warnx << " qid: " << qid << " querysig: " << sigbuf;
+				warnx << " DTD: " << dtdstr;
+				warnx << " teamID: " << teamID << "\n";
+				sigmatches = 0;
+				totalavg = 0;
+				run_query(tind, querysig, sigmatches, totalavg, minsim, avgsim, msgtype);
+				warnx << "queryresultend:";
+				warnx << " rxqseq: " << rxqseq.back();
+				warnx << " sigmatches: " << sigmatches;
+				printdouble(" totalavg: ", totalavg);
+				warnx << "\n";
+				rxqseq.push_back(rxqseq.back() + 1);
+			} else {
+				// don't run query if this peer is not a part of the team
+				/*
+				warnx << "queryresult:";
+				warnx << " teamID NOT found";
+				warnx << " qid: " << qid << " querysig: " << sigbuf;
+				warnx << " teamID: " << teamID << "\n";
+				*/
 
-			// run query even if this peer is not a part of the team
-			warnx << "queryresult: ";
-			warnx << "teamID-NOT-found";
-			warnx << " qid: " << qid << " querysig: " << sigbuf;
-			warnx << " DTD: " << dtdstr;
-			warnx << " teamID: " << teamID << "\n";
-			sigmatches = 0;
-			totalavg = 0;
-			for (int i = 0; i < (int)totalT.size(); i++) {
-				teamID = findteamid(i);
-				run_query(i, querysig, sigmatches, totalavg, minsim, avgsim, msgtype, teamID);
+				// run query even if this peer is not a part of the team
+				warnx << "queryresult: ";
+				warnx << "teamID-NOT-found";
+				warnx << " qid: " << qid << " querysig: " << sigbuf;
+				warnx << " DTD: " << dtdstr;
+				warnx << " teamID: " << teamID << "\n";
+				sigmatches = 0;
+				totalavg = 0;
+				for (int i = 0; i < (int)totalT.size(); i++) {
+					teamID = findteamid(i);
+					run_query(i, querysig, sigmatches, totalavg, minsim, avgsim, msgtype, teamID);
+				}
+
+				warnx << "queryresultend:";
+				warnx << " rxqseq: " << rxqseq.back();
+				warnx << " sigmatches: " << sigmatches;
+				printdouble(" totalavg: ", totalavg);
+				warnx << "\n";
+				rxqseq.push_back(rxqseq.back() + 1);
 			}
 
-			warnx << "queryresultend:";
-			warnx << " rxqseq: " << rxqseq.back();
-			warnx << " sigmatches: " << sigmatches;
-			printdouble(" totalavg: ", totalavg);
-			warnx << "\n";
-			rxqseq.push_back(rxqseq.back() + 1);
+			// TODO: search other lists (not yet merged) for other sigs?
+			/*
+			mapType::iterator itr = allT[0].find(sig);
+			if (itr != allT[0].end()) {
+				freq = itr->second[0];
+				weight = itr->second[1];
+				warnx << " found\n";
+				printdouble("f: ", freq);
+				printdouble(", w: ", weight);
+				printdouble(", avg: ", freq/weight);
+				warnx << "\n";
+			} else {
+				warnx << " NOT found\n";
+			}
+			*/
 		}
-
-		// TODO: search other lists (not yet merged) for other sigs?
-		/*
-		mapType::iterator itr = allT[0].find(sig);
-		if (itr != allT[0].end()) {
-			freq = itr->second[0];
-			weight = itr->second[1];
-			warnx << " found\n";
-			printdouble("f: ", freq);
-			printdouble(", w: ", weight);
-			printdouble(", avg: ", freq/weight);
-			warnx << "\n";
-		} else {
-			warnx << " NOT found\n";
-		}
-		*/
 	} else {
 		warnx << "error: invalid msgtype\n";
 	}
@@ -5146,6 +5270,7 @@ usage(void)
 	     << "	-M		merge {results | init states} (requires -D, -y, -Z)\n"
 	     << "	-Q		send query (requires -S, -d, -j, -s or -x)\n"
 	     << "	-r		read signatures (requires -s and/or -x)\n"
+	     << "	-V		Vanilla (when querying)\n"
 	     << "	-v		print version\n"
 	     << "	-z		generate random chordID (requires -n)\n";
 	exit(0);
