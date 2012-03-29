@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.112 2012/03/27 15:54:10 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.113 2012/03/29 16:26:16 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.112 2012/03/27 15:54:10 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.113 2012/03/29 16:26:16 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -960,7 +960,7 @@ main(int argc, char *argv[])
 	int qid;
 	double beginTime = 0.0;
 	double beginreadTime = 0.0;
-	double endTime, endreadTime, instime;
+	double begingossipTime, endgossipTime, endTime, endreadTime, instime;
 	char *value;
 	struct stat statbuf;
 	time_t rawtime;
@@ -1001,7 +1001,7 @@ main(int argc, char *argv[])
 	rxqseq.clear();
 	rxseq.clear();
 	txseq.clear();
-	// init txseq: txseq.back() segfaults!
+	// init txseq/rxqseq: txseq/rxqseq.back() segfaults!
 	txseq.push_back(0);
 	rxqseq.push_back(0);
 	// init dummysig: segfault!
@@ -1434,6 +1434,8 @@ main(int argc, char *argv[])
 
 		}
 
+		/*
+		// verify compress/uncompress/makeKeyValue/getKeyValue work
 		if (compress == 1) {
 			compressedList.clear();
 			outBitmap.clear();
@@ -1466,15 +1468,13 @@ main(int argc, char *argv[])
 
 			warnx << "total compressed size (list+bitmap): " << compressedsize + bitmapsize << "\n";
 
-			/*
-			for (int i = 0; i < (int) compressedList.size(); i++) {
-				printf("%u\n", compressedList[i]);
-				for (int j = 0; j < ceil(sigList.size() / 8.0); j++) {
-					//warnx << "--> " << outBitmap[i][j] << "\n";
-					printf("--> %x\n", outBitmap[i][j]);
-				}
-			}
-			*/
+			//for (int i = 0; i < (int) compressedList.size(); i++) {
+			//	printf("%u\n", compressedList[i]);
+			//	for (int j = 0; j < ceil(sigList.size() / 8.0); j++) {
+			//		//warnx << "--> " << outBitmap[i][j] << "\n";
+			//		printf("--> %x\n", outBitmap[i][j]);
+			//	}
+			//}
 
 			ID = make_randomID();
 			strbuf t;
@@ -1488,6 +1488,10 @@ main(int argc, char *argv[])
 			warnx << "numSigs: " << freqList.size() << "\n";
 			warnx << "compressedList.size(): " << compressedList.size() << "\n";
 			makeKeyValue(&value, valLen, key, teamID, compressedList, outBitmap, freqList, weightList, txseq.back(), XGOSSIPC);
+
+			// clear and init global txseq list!
+			txseq.clear();
+			txseq.push_back(0);
 
 			int seq, numSigs;
 			str newkey;
@@ -1536,6 +1540,7 @@ main(int argc, char *argv[])
 				}
 			}
 		}
+		*/
 
 		// create log.init of sigs (why?)
 		/*
@@ -1790,7 +1795,7 @@ main(int argc, char *argv[])
 		warnx << "start exec ctime: " << ctime(&rawtime);
 		warnx << "start exec sincepoch: " << time(&rawtime) << "\n";
 
-		double begingossipTime = getgtod();    
+		begingossipTime = getgtod();    
 
 		// needed?
 		srandom(loseed);
@@ -1804,7 +1809,7 @@ main(int argc, char *argv[])
 				time(&rawtime);
 				warnx << "stop exec ctime: " << ctime(&rawtime);
 				warnx << "stop exec sincepoch: " << time(&rawtime) << "\n";
-				double endgossipTime = getgtod();    
+				endgossipTime = getgtod();    
 				printdouble("vanillaxgossip exec phase time: ", endgossipTime - begingossipTime);
 				warnx << "\n";
 
@@ -1824,14 +1829,58 @@ main(int argc, char *argv[])
 			endTime = getgtod();    
 			printdouble("merge lists time: ", endTime - beginTime);
 			warnx << "\n";
-			warnx << "inserting VXGOSSIP:\n"
-			      << "txseq: " << txseq.back()
-			      << " txID: " << ID << "\n";
+
 			if (plist == 1) {
 				printlist(totalT[0], 0, txseq.back());
 			}
-			// after merging, everything is stored in totalT[0][0]
-			makeKeyValue(&value, valLen, key, key, totalT[0][0], txseq.back(), VXGOSSIP);
+
+			warnx << "inserting ";
+			if (compress == 1) warnx << "VXGOSSIPC:\n";
+			else warnx << "VXGOSSIP:\n";
+
+			warnx << "txseq: " << txseq.back() << "\n";
+			warnx << "txID: " << ID << "\n";
+
+			if (compress == 1) {
+				compressedList.clear();
+				outBitmap.clear();
+				sigList.clear();
+				freqList.clear();
+				weightList.clear();
+				vecomap2vec(totalT[0], 0, sigList, freqList, weightList);
+
+				int sigbytesize = 0;
+				warnx << "sigs before compression:\n";
+				for (int i = 0; i < (int)sigList.size(); i++) {
+					sigbytesize += (sigList[i].size() * sizeof(POLY));
+					//sig2str(sigList[i], sigbuf);
+					//warnx << "sig[" << i << "]: " << sigbuf << "\n";
+				}
+
+				warnx << "sigList size (bytes): " << sigbytesize << "\n";
+				warnx << "sigList.size() (unique): " << sigList.size() << "\n";
+				compressSignatures(sigList, compressedList, outBitmap);
+
+				int compressedsize = compressedList.size() * sizeof(POLY);
+				warnx << "compressedList size (bytes): " << compressedsize << "\n";
+				warnx << "compressedList.size(): " << compressedList.size() << "\n";
+
+				int bitmapsize = 0;
+				for (int i = 0; i < (int)outBitmap.size(); i++) {
+					bitmapsize += (outBitmap[i].size() * sizeof(unsigned char));
+				}
+
+				warnx << "outBitmap size (bytes): " << bitmapsize << "\n";
+				warnx << "outBitmap.size(): " << outBitmap.size() << "\n";
+
+				warnx << "total compressed size (list+bitmap): " << compressedsize + bitmapsize << "\n";
+
+				// after merging, everything is stored in totalT[0][0]
+				makeKeyValue(&value, valLen, key, key, compressedList, outBitmap, freqList, weightList, txseq.back(), VXGOSSIPC);
+			} else {
+				makeKeyValue(&value, valLen, key, key, totalT[0][0], txseq.back(), VXGOSSIP);
+			}
+
 			totaltxmsglen += valLen;
 			roundtxmsglen += valLen;
 			status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
@@ -1850,7 +1899,7 @@ main(int argc, char *argv[])
 			warnx << "roundtxmsglen: " << roundtxmsglen;
 			warnx << " txseq: " << txseq.back() << "\n";
 			roundtxmsglen = 0;
-			warnx << "sleeping (gossip)...\n";
+			warnx << "sleeping (vanillaxgossip)...\n";
 			//sleep(gintval);
 			gossipsleep = 0;
 			delaycb(gintval, 0, wrap(gossipsleepnow));
@@ -1880,7 +1929,7 @@ main(int argc, char *argv[])
 		warnx << "start exec ctime: " << ctime(&rawtime);
 		warnx << "start exec sincepoch: " << time(&rawtime) << "\n";
 
-		double begingossipTime = getgtod();    
+		begingossipTime = getgtod();    
 
 		// needed?
 		//srandom(loseed);
@@ -1894,7 +1943,7 @@ main(int argc, char *argv[])
 				time(&rawtime);
 				warnx << "stop exec ctime: " << ctime(&rawtime);
 				warnx << "stop exec sincepoch: " << time(&rawtime) << "\n";
-				double endgossipTime = getgtod();    
+				endgossipTime = getgtod();    
 				printdouble("xgossip exec phase time: ", endgossipTime - begingossipTime);
 				warnx << "\n";
 
@@ -1964,14 +2013,12 @@ main(int argc, char *argv[])
 							vecomap2vec(totalT[i], 0, sigList, freqList, weightList);
 
 							int sigbytesize = 0;
-							/*
 							warnx << "sigs before compression:\n";
 							for (int i = 0; i < (int)sigList.size(); i++) {
 								sigbytesize += (sigList[i].size() * sizeof(POLY));
-								sig2str(sigList[i], sigbuf);
-								warnx << "sig[" << i << "]: " << sigbuf << "\n";
+								//sig2str(sigList[i], sigbuf);
+								//warnx << "sig[" << i << "]: " << sigbuf << "\n";
 							}
-							*/
 
 							warnx << "sigList size (bytes): " << sigbytesize << "\n";
 							warnx << "sigList.size() (unique): " << sigList.size() << "\n";
@@ -2786,7 +2833,7 @@ readgossip(int fd)
 
 	msgtype = getKeyValueType(gmsg.cstr());
 	warnx << " type: ";
-	if (msgtype == VXGOSSIP || msgtype == XGOSSIP || msgtype == XGOSSIPC) {
+	if (msgtype == VXGOSSIP || msgtype == VXGOSSIPC || msgtype == XGOSSIP || msgtype == XGOSSIPC) {
 		// discard msg if in init phase
 		if (initphase == true) {
 			warnx << "warning: phase=init, msgtype=" << msgtype << "\n";
@@ -2795,6 +2842,10 @@ readgossip(int fd)
 		} else if (msgtype == VXGOSSIP) {
 			warnx << "VXGOSSIP";
 			ret = getKeyValue(gmsg.cstr(), key, keyteamid, sigList, freqList, weightList, seq, recvlen);
+		} else if (msgtype == VXGOSSIPC) {
+			warnx << "VXGOSSIPC";
+			ret = getKeyValue(gmsg.cstr(), key, keyteamid, compressedList, outBitmap, numSigs, freqList, weightList, seq, recvlen);
+			uncompressSignatures(sigList, compressedList, outBitmap, numSigs);
 		} else if (msgtype == XGOSSIP) {
 			warnx << "XGOSSIP";
 			ret = getKeyValue(gmsg.cstr(), key, keyteamid, sigList, freqList, weightList, seq, recvlen);
@@ -2864,7 +2915,7 @@ readgossip(int fd)
 
 		rxseq.push_back(seq);
 		str2chordID(keyteamid, teamID);
-		if (msgtype == VXGOSSIP) {
+		if (msgtype == VXGOSSIP || msgtype == VXGOSSIPC) {
 			add2vecomapv(sigList, freqList, weightList);
 		} else {
 			add2vecomapx(sigList, freqList, weightList, teamID);
