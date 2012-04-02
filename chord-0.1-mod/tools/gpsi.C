@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.113 2012/03/29 16:26:16 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.114 2012/03/29 23:16:11 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.113 2012/03/29 16:26:16 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.114 2012/03/29 23:16:11 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1434,7 +1434,6 @@ main(int argc, char *argv[])
 
 		}
 
-		/*
 		// verify compress/uncompress/makeKeyValue/getKeyValue work
 		if (compress == 1) {
 			compressedList.clear();
@@ -1540,7 +1539,6 @@ main(int argc, char *argv[])
 				}
 			}
 		}
-		*/
 
 		// create log.init of sigs (why?)
 		/*
@@ -1910,6 +1908,7 @@ main(int argc, char *argv[])
 		// load sigs and teams from log.init into memory
 		if (Pflag == 1) {
 			warnx << "state: loading from init file...\n";
+			// TODO: what if some peer starts gossiping before this?
 			loadinitstate(initfp);
 			if (plist == 1) {
 				printlistall();
@@ -4646,7 +4645,7 @@ mergeinit()
 	}
 }
 
-// TODO: verify
+// fixed: distinguishes b/w Vanilla and XGossip!
 void
 mergelists(vecomap &teamvecomap)
 {
@@ -4657,6 +4656,9 @@ mergelists(vecomap &teamvecomap)
 	minsig.clear();
 
 	warnx << "merging:\n";
+	
+	if (vanilla == true) warnx << "vanilla: 1 dummy\n";
+	else warnx << "xgossip: 2 dummies\n";
 
 	int n = teamvecomap.size();
 	warnx << "initial teamvecomap.size(): " << n << "\n";
@@ -4674,17 +4676,16 @@ mergelists(vecomap &teamvecomap)
 	std::vector<mapType::iterator> citr;
 	for (int i = 0; i < n; i++) {
 		citr.push_back(teamvecomap[i].begin());
-		// skip dummy
 		//tmpsig = citr[i]->first;
 		//sig2str(tmpsig, sigbuf);
 		//warnx << "1st dummy: " << sigbuf << "\n";
+		// SKIP 1ST DUMMY (both vanilla and xgossip)
 		++citr[i];
-		// skip 2nd dummy only for xgossip(+)
-		// TODO: distinguisth b/w xgossip and vanilla gossip
 		//tmpsig = citr[i]->first;
 		//sig2str(tmpsig, sigbuf);
 		//warnx << "2nd dummy: " << sigbuf << "\n";
-		++citr[i];
+		// SKIP 2ND DUMMY (only xgossip)
+		if (vanilla == false) ++citr[i];
 	}
 
 	while (1) {
