@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.114 2012/03/29 23:16:11 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.115 2012/04/02 05:39:11 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.114 2012/03/29 23:16:11 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.115 2012/04/02 05:39:11 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -73,6 +73,7 @@ int roundrxmsglen = 0;
 int roundtxmsglen = 0;
 bool initphase = false;
 bool vanilla = false;
+bool gossipdone = false;
 
 // paper:k, slides:bands
 int mgroups = 10;
@@ -1190,6 +1191,23 @@ main(int argc, char *argv[])
 			warnx << "team_" << i << ":\n";
 			make_team(NULL, IDs[i], team);
 		}
+
+		double dtype = 0.0556211;
+		long double ldtype = 0.0556211;
+
+		printdouble("dtype: %f\n", dtype);
+		printdouble("ldtype: %f\n", ldtype);
+		for (int i = 0; i < 10; i++) {
+			dtype /= 2;
+			ldtype /= 2;
+			std::cout << "dtype: " << dtype << "\n";
+			printdouble("pdtype: ", dtype);
+			std::cout << "\n";
+			std::cout << "ldtype: " << ldtype << "\n";
+			printdouble("pldtype: ", ldtype);
+			std::cout << "\n";
+		}
+
 		return 0;
 	}
 
@@ -1934,24 +1952,6 @@ main(int argc, char *argv[])
 		//srandom(loseed);
 
 		while (1) {
-			// by default, gossip indefinitely
-			if (txseq.back() == rounds) {
-				warnx << "txseq = " << rounds << "\n";
-				warnx << "totaltxmsglen: " << totaltxmsglen << "\n";
-				warnx << "done gossiping\n";
-				time(&rawtime);
-				warnx << "stop exec ctime: " << ctime(&rawtime);
-				warnx << "stop exec sincepoch: " << time(&rawtime) << "\n";
-				endgossipTime = getgtod();    
-				printdouble("xgossip exec phase time: ", endgossipTime - begingossipTime);
-				warnx << "\n";
-
-				// stop gossiping, only listen
-				break;
-				// don't exit since each peer will reach a particular round at a different time
-				//return 0;
-			}
-
 			beginTime = getgtod();    
 			warnx << "totalT.size(): " << totalT.size() << "\n";
 			for (int i = 0; i < (int)totalT.size(); i++) {
@@ -1966,108 +1966,130 @@ main(int argc, char *argv[])
 				printlistall(txseq.back());
 			}
 
+			// by default, gossip indefinitely
+			if (txseq.back() == rounds) {
+				warnx << "txseq = " << rounds << "\n";
+				warnx << "totaltxmsglen: " << totaltxmsglen << "\n";
+				warnx << "done gossiping\n";
+				gossipdone = true;
+				time(&rawtime);
+				warnx << "stop exec ctime: " << ctime(&rawtime);
+				warnx << "stop exec sincepoch: " << time(&rawtime) << "\n";
+				endgossipTime = getgtod();    
+
+				printdouble("xgossip exec phase time: ", endgossipTime - begingossipTime);
+				warnx << "\n";
+
+				// don't break because you have to keep merging the received lists!
+				//break;
+				// don't exit since each peer will reach a particular round at a different time!
+				//return 0;
+			}
+
 			if (mflag == 1) {
 				fatal << "not implemented\n";
 			// use compute_hash()
 			} else {
-				for (int i = 0; i < (int)totalT.size(); i++) {
-					// TODO: needed?
-					if (gflag == 1) {
-						warnx << "inserting ";
-						if (compress == 1) warnx << "XGOSSIPC:\n";
-						else warnx << "XGOSSIP:\n";
+				if (gossipdone == false) {
+					for (int i = 0; i < (int)totalT.size(); i++) {
+						// TODO: needed?
+						if (gflag == 1) {
+							warnx << "inserting ";
+							if (compress == 1) warnx << "XGOSSIPC:\n";
+							else warnx << "XGOSSIP:\n";
 
-						warnx << "txseq: " << txseq.back() << "\n";
+							warnx << "txseq: " << txseq.back() << "\n";
 
-						teamID = findteamid(i);
-						if (teamID == NULL) {
-							warnx << "xgossip: teamID is NULL\n";
-							continue;
-						}
-						warnx << "teamID(" << i << "): " << teamID << "\n";
+							teamID = findteamid(i);
+							if (teamID == NULL) {
+								warnx << "xgossip: teamID is NULL\n";
+								continue;
+							}
+							warnx << "teamID(" << i << "): " << teamID << "\n";
 
-						// TODO: check return status
-						make_team(NULL, teamID, team);
-						int range = team.size();
-						// randomness verified
-						int randcol = randomNumGenZ(range);
-						ID = team[randcol];
-						// TODO: check if p is succ(ID)
-						//ID = (matrix.back())[randcol];
-						warnx << "ID in randcol " << randcol << ": " << ID << "\n";
-						strbuf t;
-						strbuf p;
-						t << ID;
-						p << team[0];
-						str key(t);
-						str teamID(p);
-						warnx << "txID: " << ID << "\n";
+							// TODO: check return status
+							make_team(NULL, teamID, team);
+							int range = team.size();
+							// randomness verified
+							int randcol = randomNumGenZ(range);
+							ID = team[randcol];
+							// TODO: check if p is succ(ID)
+							//ID = (matrix.back())[randcol];
+							warnx << "ID in randcol " << randcol << ": " << ID << "\n";
+							strbuf t;
+							strbuf p;
+							t << ID;
+							p << team[0];
+							str key(t);
+							str teamID(p);
+							warnx << "txID: " << ID << "\n";
 
-						if (compress == 1) {
-							compressedList.clear();
-							outBitmap.clear();
-							sigList.clear();
-							freqList.clear();
-							weightList.clear();
-							vecomap2vec(totalT[i], 0, sigList, freqList, weightList);
+							if (compress == 1) {
+								compressedList.clear();
+								outBitmap.clear();
+								sigList.clear();
+								freqList.clear();
+								weightList.clear();
+								vecomap2vec(totalT[i], 0, sigList, freqList, weightList);
 
-							int sigbytesize = 0;
-							warnx << "sigs before compression:\n";
-							for (int i = 0; i < (int)sigList.size(); i++) {
-								sigbytesize += (sigList[i].size() * sizeof(POLY));
-								//sig2str(sigList[i], sigbuf);
-								//warnx << "sig[" << i << "]: " << sigbuf << "\n";
+								int sigbytesize = 0;
+								warnx << "sigs before compression:\n";
+								for (int i = 0; i < (int)sigList.size(); i++) {
+									sigbytesize += (sigList[i].size() * sizeof(POLY));
+									//sig2str(sigList[i], sigbuf);
+									//warnx << "sig[" << i << "]: " << sigbuf << "\n";
+								}
+
+								warnx << "sigList size (bytes): " << sigbytesize << "\n";
+								warnx << "sigList.size() (unique): " << sigList.size() << "\n";
+								compressSignatures(sigList, compressedList, outBitmap);
+
+								int compressedsize = compressedList.size() * sizeof(POLY);
+								warnx << "compressedList size (bytes): " << compressedsize << "\n";
+								warnx << "compressedList.size(): " << compressedList.size() << "\n";
+
+								int bitmapsize = 0;
+								for (int i = 0; i < (int)outBitmap.size(); i++) {
+									bitmapsize += (outBitmap[i].size() * sizeof(unsigned char));
+								}
+
+								warnx << "outBitmap size (bytes): " << bitmapsize << "\n";
+								warnx << "outBitmap.size(): " << outBitmap.size() << "\n";
+
+								warnx << "total compressed size (list+bitmap): " << compressedsize + bitmapsize << "\n";
+
+								makeKeyValue(&value, valLen, key, teamID, compressedList, outBitmap, freqList, weightList, txseq.back(), XGOSSIPC);
+							} else {
+								makeKeyValue(&value, valLen, key, teamID, totalT[i][0], txseq.back(), XGOSSIP);
 							}
 
-							warnx << "sigList size (bytes): " << sigbytesize << "\n";
-							warnx << "sigList.size() (unique): " << sigList.size() << "\n";
-							compressSignatures(sigList, compressedList, outBitmap);
+							totaltxmsglen += valLen;
+							roundtxmsglen += valLen;
 
-							int compressedsize = compressedList.size() * sizeof(POLY);
-							warnx << "compressedList size (bytes): " << compressedsize << "\n";
-							warnx << "compressedList.size(): " << compressedList.size() << "\n";
+							status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
+							cleanup(value);
+							// don't forget to clear team list!
+							team.clear();
 
-							int bitmapsize = 0;
-							for (int i = 0; i < (int)outBitmap.size(); i++) {
-								bitmapsize += (outBitmap[i].size() * sizeof(unsigned char));
+							// do not exit if insert FAILs!
+							if (status != SUCC) {
+								warnx << "error: insert FAILed\n";
+								// to preserve mass conservation:
+								// "send" msg to yourself
+								// (double freq)
+								multiplyfreq(totalT[i], 0, 2, 2);
+							} else {
+								warnx << "insert SUCCeeded\n";
 							}
 
-							warnx << "outBitmap size (bytes): " << bitmapsize << "\n";
-							warnx << "outBitmap.size(): " << outBitmap.size() << "\n";
-
-							warnx << "total compressed size (list+bitmap): " << compressedsize + bitmapsize << "\n";
-
-							makeKeyValue(&value, valLen, key, teamID, compressedList, outBitmap, freqList, weightList, txseq.back(), XGOSSIPC);
+							warnx << "sleeping (groups)...\n";
+							//sleep(initintval);
+							groupsleep = 0;
+							delaycb(initintval, 0, wrap(groupsleepnow));
+							while (groupsleep == 0) acheck();
 						} else {
-							makeKeyValue(&value, valLen, key, teamID, totalT[i][0], txseq.back(), XGOSSIP);
+							return 0;
 						}
-
-						totaltxmsglen += valLen;
-						roundtxmsglen += valLen;
-
-						status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
-						cleanup(value);
-						// don't forget to clear team list!
-						team.clear();
-
-						// do not exit if insert FAILs!
-						if (status != SUCC) {
-							warnx << "error: insert FAILed\n";
-							// to preserve mass conservation:
-							// "send" msg to yourself
-							// (double freq)
-							multiplyfreq(totalT[i], 0, 2, 2);
-						} else {
-							warnx << "insert SUCCeeded\n";
-						}
-
-						warnx << "sleeping (groups)...\n";
-						//sleep(initintval);
-						groupsleep = 0;
-						delaycb(initintval, 0, wrap(groupsleepnow));
-						while (groupsleep == 0) acheck();
-					} else {
-						return 0;
 					}
 				}
 				warnx << "roundtxmsglen: " << roundtxmsglen;
@@ -2132,7 +2154,7 @@ main(int argc, char *argv[])
 			int totallists = 0;
 			warnx << "loading files...\n";
 			for (unsigned int i = 0; i < initfiles.size(); i++) {
-				warnx << "file: " << initfiles[i].c_str() << "\n";
+				//warnx << "file: " << initfiles[i].c_str() << "\n";
 				if ((initfp = fopen(initfiles[i].c_str(), acc.c_str())) == NULL) {
 					warnx << "can't open init file" << initfiles[i].c_str() << "\n";
 					continue;
@@ -2209,7 +2231,7 @@ main(int argc, char *argv[])
 			//allT.push_back(uniqueSigList);
 
 			for (unsigned int i = 0; i < initfiles.size(); i++) {
-				warnx << "file: " << initfiles[i].c_str() << "\n";
+				//warnx << "file: " << initfiles[i].c_str() << "\n";
 				if ((initfp = fopen(initfiles[i].c_str(), acc.c_str())) == NULL) {
 					warnx << "can't open results file" << initfiles[i].c_str() << "\n";
 					continue;
@@ -3326,7 +3348,7 @@ loadresults(FILE *initfp, InsertType &msgtype)
 				// add DTD
 				id2strings::iterator itr = qid2dtd.find(qid);
 				if (itr != qid2dtd.end()) {
-					warnx << "loadresults: qid already exists\n";
+					//warnx << "loadresults: qid already exists\n";
 				} else {
 					qid2dtd[qid].push_back(dtd);
 				}
@@ -3369,7 +3391,7 @@ loadresults(FILE *initfp, InsertType &msgtype)
 			if (sitr != qid2sigs.end()) {
 				for (int i = 0; i < (int)sitr->second.size(); i++) {
 					if (samesig(sig, sitr->second[i]) == 1) {
-						warnx << "loadresults: sig already present\n";
+						//warnx << "loadresults: sig already present\n";
 						sigfound = 1;
 						break;
 					}
