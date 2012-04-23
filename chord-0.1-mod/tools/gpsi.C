@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.115 2012/04/02 05:39:11 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.116 2012/04/20 16:49:58 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.115 2012/04/02 05:39:11 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.116 2012/04/20 16:49:58 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1962,12 +1962,14 @@ main(int argc, char *argv[])
 			printdouble("merge lists time: ", endTime - beginTime);
 			warnx << "\n";
 			//delspecial(0);
-			if (plist == 1) {
+			// don't print lists after gossip is done
+			if (plist == 1 && gossipdone == false) {
 				printlistall(txseq.back());
 			}
 
 			// by default, gossip indefinitely
-			if (txseq.back() == rounds) {
+			// print this only once
+			if (txseq.back() == rounds && gossipdone == false) {
 				warnx << "txseq = " << rounds << "\n";
 				warnx << "totaltxmsglen: " << totaltxmsglen << "\n";
 				warnx << "done gossiping\n";
