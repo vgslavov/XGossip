@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.116 2012/04/20 16:49:58 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.117 2012/04/23 16:24:08 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +29,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.116 2012/04/20 16:49:58 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.117 2012/04/23 16:24:08 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -172,7 +172,8 @@ int lshsig(vecomap, int, InsertType, int, int);
 int lshquery(sig2idmulti, int, InsertType, int);
 int vanillaquery(sig2idmulti, int, InsertType, int);
 int make_team(chordID, chordID, std::vector<chordID> &);
-void mergelists(vecomap&);
+void mergelists(vecomap &);
+void mergelists_nogossip(vecomap &);
 void mergeinit();
 void multiplyfreq(vecomap&, int, int, int);
 char *netstring_decode(FILE *);
@@ -1952,22 +1953,7 @@ main(int argc, char *argv[])
 		//srandom(loseed);
 
 		while (1) {
-			beginTime = getgtod();    
-			warnx << "totalT.size(): " << totalT.size() << "\n";
-			for (int i = 0; i < (int)totalT.size(); i++) {
-				warnx << "merging totalT[" << i << "]\n";
-				mergelists(totalT[i]);
-			}
-			endTime = getgtod();    
-			printdouble("merge lists time: ", endTime - beginTime);
-			warnx << "\n";
-			//delspecial(0);
-			// don't print lists after gossip is done
-			if (plist == 1 && gossipdone == false) {
-				printlistall(txseq.back());
-			}
-
-			// by default, gossip indefinitely
+			// by default, gossip indefinitely (unless "rounds" is set)
 			// print this only once
 			if (txseq.back() == rounds && gossipdone == false) {
 				warnx << "txseq = " << rounds << "\n";
@@ -1988,6 +1974,27 @@ main(int argc, char *argv[])
 				//return 0;
 			}
 
+			beginTime = getgtod();    
+			warnx << "totalT.size(): " << totalT.size() << "\n";
+			for (int i = 0; i < (int)totalT.size(); i++) {
+				warnx << "merging totalT[" << i << "]\n";
+				if (gossipdone == false) {
+					mergelists(totalT[i]);
+				} else {
+					// don't divide freq and weight by 2
+					mergelists_nogossip(totalT[i]);
+				}
+			}
+			endTime = getgtod();    
+			printdouble("merge lists time: ", endTime - beginTime);
+			warnx << "\n";
+			//delspecial(0);
+			// don't print lists after gossip is done
+			// (but print lists right after gossiping is done at "rounds")
+			if (plist == 1 && (gossipdone == false || txseq.back() == rounds)) {
+				printlistall(txseq.back());
+			}
+		
 			if (mflag == 1) {
 				fatal << "not implemented\n";
 			// use compute_hash()
@@ -4729,7 +4736,7 @@ mergelists(vecomap &teamvecomap)
 			}
 			//printdouble("new local dummy sumw/2: ", sumw/2);
 			//warnx << "\n";
-			teamvecomap[0][dummysig][1] = sumw / 2;
+			teamvecomap[0][dummysig][1] = sumw/2;
 			//warnx << "mergelists: breaking from loop\n";
 			break;
 		}
@@ -4828,6 +4835,176 @@ mergelists(vecomap &teamvecomap)
 	warnx << "totalT.size() after pop: " << totalT.size() << "\n";
 }
 
+// use only after gossiping is done!
+void
+mergelists_nogossip(vecomap &teamvecomap)
+{
+	double sumf, sumw;
+	str sigbuf;
+	std::vector<POLY> minsig;
+	std::vector<POLY> tmpsig;
+	minsig.clear();
+
+	warnx << "merging (no gossip):\n";
+	
+	if (vanilla == true) warnx << "vanilla: 1 dummy\n";
+	else warnx << "xgossip: 2 dummies\n";
+
+	int n = teamvecomap.size();
+	warnx << "initial teamvecomap.size(): " << n << "\n";
+	if (n == 1) {
+		// don't divide!
+		//dividefreq(teamvecomap, 0, 2, 2);
+		return;
+	} else {
+#ifdef _DEBUG_
+		for (int i = 0; i < n; i++)
+			printlist(teamvecomap, i, -1);
+#endif
+	}
+
+	// init pointers to beginning of lists
+	std::vector<mapType::iterator> citr;
+	for (int i = 0; i < n; i++) {
+		citr.push_back(teamvecomap[i].begin());
+		//tmpsig = citr[i]->first;
+		//sig2str(tmpsig, sigbuf);
+		//warnx << "1st dummy: " << sigbuf << "\n";
+		// SKIP 1ST DUMMY (both vanilla and xgossip)
+		++citr[i];
+		//tmpsig = citr[i]->first;
+		//sig2str(tmpsig, sigbuf);
+		//warnx << "2nd dummy: " << sigbuf << "\n";
+		// SKIP 2ND DUMMY (only xgossip)
+		if (vanilla == false) ++citr[i];
+	}
+
+	while (1) {
+		int j = n;
+		// check if at end of lists
+		for (int i = 0; i < n; i++) {
+			if (citr[i] == teamvecomap[i].end()) {
+				//warnx << "end of T_" << i << "\n";
+				--j;
+			}
+		}
+		// done with all lists
+		if (j == 0) {
+			sumw = 0;
+			for (int i = 0; i < n; i++) {
+				sumw += teamvecomap[i][dummysig][1];
+			}
+			//printdouble("new local dummy sumw/2: ", sumw/2);
+			//warnx << "\n";
+
+			// don't divide!
+			//teamvecomap[0][dummysig][1] = sumw/2;
+
+			//warnx << "mergelists: breaking from loop\n";
+			break;
+		}
+
+		// find min sig
+		int z = 0;
+		for (int i = 0; i < n; i++) {
+			// skip lists which are done
+			if (citr[i] == teamvecomap[i].end()) {
+				continue;
+			} else if (z == 0){
+				minsig = citr[i]->first;
+#ifdef _DEBUG_
+				sig2str(minsig, sigbuf);
+				warnx << "initial minsig: "
+				      << sigbuf << "\n";
+#endif
+				z = 1;
+
+			}
+			if (sigcmp(citr[i]->first, minsig) == 1)
+				minsig = citr[i]->first;
+		}
+
+#ifdef _DEBUG_
+		sig2str(minsig, sigbuf);
+		warnx << "actual minsig: " << sigbuf << "\n";
+#endif
+
+		sumf = sumw = 0;
+		// add all f's and w's for a particular sig
+		for (int i = 0; i < n; i++) {
+			// check for end of map first and then compare to minsig!
+			if ((citr[i] != teamvecomap[i].end()) && (citr[i]->first == minsig)) {
+				//warnx << "minsig found in T_" << i << "\n";
+				sumf += citr[i]->second[0];
+				sumw += citr[i]->second[1];
+				// XXX: itr of T_0 will be incremented later
+				if (i != 0) ++citr[i];
+			} else {
+#ifdef _DEBUG_
+				warnx << "no minsig in T_" << i;
+				if (citr[i] == teamvecomap[i].end()) {
+					warnx << " (list ended)";
+				}
+				warnx << "\n";
+#endif
+				sumf += teamvecomap[i][dummysig][0];
+				sumw += teamvecomap[i][dummysig][1];
+			}
+		}
+
+#ifdef _DEBUG_
+		printdouble("sumf: ", sumf);
+		printdouble(", sumw: ", sumw);
+		warnx << "\n";
+#endif
+
+		// update teamvecomap[0]
+		// check for end of map first and then compare to minsig!
+		if ((citr[0] != teamvecomap[0].end()) && (citr[0]->first == minsig)) {
+			// update sums of existing sig
+			//warnx << "T_0: updating sums of minsig\n";
+
+			// don't divide!
+			//teamvecomap[0][minsig][0] = sumf/2;
+			//teamvecomap[0][minsig][1] = sumw/2;
+
+			// XXX: see above XXX
+			++citr[0];
+		} else {
+			/*
+			warnx << "T_0: no minsig in T_0";
+			if (citr[0] == teamvecomap[0].end()) {
+				warnx << " (list ended)";
+			}
+			warnx << "\n";
+			*/
+			// insert new sig
+			//warnx << "T_0: inserting minsig...\n";
+
+			// don't divide!
+			//teamvecomap[0][minsig].push_back(sumf/2);
+			//teamvecomap[0][minsig].push_back(sumw/2);
+
+			// not needed:
+			// if the minsig was missing in T_i,
+			// itr already points to the next sig
+			//citr[0] = teamvecomap[0].find(minsig);
+			//++citr[0];
+
+		}
+	}
+
+	// delete all except first (doesn't free memory but it's O(1))
+	while (teamvecomap.size() > 1) {
+		//warnx << "teamvecomap.size(): " << teamvecomap.size() << "\n";
+		teamvecomap.pop_back();
+	}
+	warnx << "teamvecomap.size() after pop: " << teamvecomap.size() << "\n";
+	warnx << "totalT.size() after pop: " << totalT.size() << "\n";
+}
+
+
+
 // obsolete
 void
 mergelistspold()
@@ -4878,7 +5055,7 @@ mergelistspold()
 			}
 			printdouble("new local dummy sumw/2: ", sumw/2);
 			warnx << "\n";
-			allT[0][dummysig][1] = sumw / 2;
+			allT[0][dummysig][1] = sumw/2;
 			*/
 			// TODO: split weight of all special multisets or is that done already?
 			warnx << "done with all lists\n";
