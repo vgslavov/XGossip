@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.119 2012/05/09 22:55:43 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.120 2012/05/10 00:11:39 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -31,7 +31,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.119 2012/05/09 22:55:43 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.120 2012/05/10 00:11:39 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1948,7 +1948,7 @@ main(int argc, char *argv[])
 					warnx << "total compressed size (list+bitmap): " << compressedsize + bitmapsize << "\n";
 
 					// after merging, everything is stored in totalT[0][0]
-					makeKeyValue(&value, valLen, key, key, compressedList, outBitmap, lfreqList, lweightList, txseq.back(), VXGOSSIPC);
+					makeKeyValue(&value, valLen, key, key, compressedList, outBitmap, freqList, weightList, txseq.back(), VXGOSSIPC);
 				} else {
 					makeKeyValue(&value, valLen, key, key, totalT[0][0], txseq.back(), VXGOSSIP);
 				}
