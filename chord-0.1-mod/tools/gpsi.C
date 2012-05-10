@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.118 2012/04/30 21:45:45 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.119 2012/05/09 22:55:43 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -31,7 +31,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.118 2012/04/30 21:45:45 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.119 2012/05/09 22:55:43 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1490,6 +1490,7 @@ main(int argc, char *argv[])
 		}
 
 		// verify compress/uncompress/makeKeyValue/getKeyValue work
+		/*
 		if (compress == 1) {
 			compressedList.clear();
 			outBitmap.clear();
@@ -1594,6 +1595,7 @@ main(int argc, char *argv[])
 				}
 			}
 		}
+		*/
 
 		// create log.init of sigs (why?)
 		/*
