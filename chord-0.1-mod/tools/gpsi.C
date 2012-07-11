@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.120 2012/05/10 00:11:39 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.121 2012/05/10 03:03:14 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -31,7 +31,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.120 2012/05/10 00:11:39 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.121 2012/05/10 03:03:14 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -133,6 +133,7 @@ typedef std::map<int, int> id2id;
 id2id qid2id;
 
 // vector of vector of maps for each team
+// init phase uses 1st vecomap only
 typedef std::vector<vecomap> totalvecomap;
 totalvecomap totalT;
 
@@ -183,6 +184,7 @@ int make_team(chordID, chordID, std::vector<chordID> &);
 void mergelists(vecomap &);
 void mergelists_nogossip(vecomap &);
 void mergeinit();
+void mergebyteamid();
 void multiplyfreq(vecomap&, int, int, int);
 char *netstring_decode(FILE *);
 void netstring_encode(const char *, FILE *);
@@ -2244,6 +2246,17 @@ main(int argc, char *argv[])
 				printlistall();
 			}
 
+			// put everything in allT[0]
+			warnx << "merging by teamID into allT[0]...\n";
+			mergebyteamid();
+
+			if (plist == 1) {
+				warnx << "teamids (after merging by teamID)\n";
+				printteamids();
+				warnx << "lists (after merging by teamID)\n";
+				printlistall();
+			}
+			allT.clear();
 			// put everything in allT[0]
 			warnx << "merging everything into allT[0]...\n";
 			mergeinit();
@@ -4779,7 +4792,51 @@ signcmp_bad(std::vector<POLY> s1, std::vector<POLY> s2)
 	return (double)same/total;
 }
 
-// put everything in allT
+void
+mergebyteamid()
+{
+	std::vector<POLY> sig;
+	int tix, tixsize, mergeix;
+	int listnum = 0;
+
+	sig.clear();
+	mergeix = 0;
+	for (teamid2totalT::iterator itr = teamindex.begin(); itr != teamindex.end(); itr++) {
+		warnx << "teamID: " << itr->first;
+		tixsize = itr->second.size();
+		warnx << " tixsize: " << tixsize;
+		for (int i = 0; i < tixsize; i++) {
+			tix = itr->second[i];
+			if (mergeix == 0) {
+				mergeix = tix;
+				warnx << " mergeix: " << mergeix;
+			} else {
+				for (mapType::iterator titr = totalT[tix][listnum].begin(); titr != totalT[tix][listnum].end(); titr++) {
+					sig = titr->first;
+					mapType::iterator mitr = totalT[mergeix][listnum].find(sig);
+					if (mitr != totalT[mergeix][listnum].end()) {
+						// update freq only!
+						mitr->second[0] += titr->second[0];
+						// don't touch weight (it's 1 already)
+						//mitr->second[1] += titr->second[1];
+					} else {
+						totalT[mergeix][listnum][sig].push_back(titr->second[0]);
+						// set weight to 1 because there is no gossiping
+						totalT[mergeix][listnum][sig].push_back(1);
+					}
+
+				}
+			}
+		}
+		itr->second.clear();
+		itr->second.push_back(mergeix);
+		mergeix = 0;
+		warnx << "\n";
+	}
+	warnx << "teamindex.size(): " << teamindex.size() << "\n";
+}
+
+// put everything in allT[0]
 void
 mergeinit()
 {
@@ -5482,9 +5539,10 @@ printteamidfreq()
 void
 printteamids()
 {
-	double avglists;
-	int nlists, high, low, tixsize;
+	double avglists, avgsigspteamid;
+	int nlists, high, low, tixsize, sigspteamid, totalsigspteamid;
 
+	totalsigspteamid = 0;
 	nlists = 0;
 	// set to extreme values
 	high = 0;
@@ -5500,16 +5558,26 @@ printteamids()
 		if (high < tixsize) high = tixsize;
 		warnx << " tixsize: " << tixsize;
 		warnx << " tix: ";
-		if (tixsize > 1) {
-			for (int i = 0; i < tixsize; i++) {
-				warnx << itr->second[i] << ", ";
-			}
-		} else {
-			warnx << itr->second[0];
+		sigspteamid = 0;
+		for (int i = 0; i < tixsize; i++) {
+			sigspteamid += totalT[itr->second[i]][0].size();
+			warnx << itr->second[i] << ", ";
 		}
+		while (tixsize < teamsize) {
+			warnx << "na, ";
+			++tixsize;	
+		}
+		warnx << "\n";
+		totalsigspteamid += sigspteamid;
+		warnx << "sigspteamid: " << sigspteamid;
+		warnx << " teamID: " << itr->first;
 		warnx << "\n";
 	}
 	warnx << "teamindex.size(): " << teamindex.size() << "\n";
+	warnx << "total sigs/teamID: " << totalsigspteamid << "\n";
+	avgsigspteamid = (double)totalsigspteamid / (double)teamindex.size();
+	printdouble("avg sigs/teamID: ", avgsigspteamid);
+	warnx << "\n";
 	avglists = (double)nlists / (double)teamindex.size();
 	printdouble("avg lists/teamID: ", avglists);
 	warnx << "\n";
