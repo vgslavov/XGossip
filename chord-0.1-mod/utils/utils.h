@@ -1,4 +1,4 @@
-/*	$Id: utils.h,v 1.22 2011/11/23 20:41:42 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.h,v 1.23 2012/03/15 16:53:14 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #ifndef _UTILS_H_
@@ -236,6 +236,9 @@ struct Interval {
 // with compression
 void makeKeyValue(char **, int&, str&, str&, std::vector<POLY>&, std::vector<std::vector<unsigned char> >&, std::vector<double>&, std::vector<double>&, int&, InsertType);
 int getKeyValue(const char*, str&, str&, std::vector<POLY>&, std::vector<std::vector<unsigned char> >&, int&, std::vector<double>&, std::vector<double>&, int&, int);
+// with compression, long double
+void makeKeyValue(char **, int&, str&, str&, std::vector<POLY>&, std::vector<std::vector<unsigned char> >&, std::vector<long double>&, std::vector<long double>&, int&, InsertType);
+int getKeyValue(const char*, str&, str&, std::vector<POLY>&, std::vector<std::vector<unsigned char> >&, int&, std::vector<long double>&, std::vector<long double>&, int&, int);
 
 // vsfgd: xgossip query
 int getKeyValue(const char*, str&, str&, str&, std::vector<POLY>&, int&, int);

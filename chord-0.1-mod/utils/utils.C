@@ -1,4 +1,4 @@
-/*	$Id: utils.C,v 1.46 2012/03/07 17:22:50 vsfgd Exp vsfgd $	*/
+/*	$Id: utils.C,v 1.47 2012/03/15 16:52:55 vsfgd Exp vsfgd $	*/
 
 // Author: Praveen Rao
 #include <iostream>
@@ -1050,6 +1050,113 @@ int getKeyValue(const char* buf, str& key, str& teamid, std::vector<POLY>& compr
 	return 0;
 }
 
+// vsfgd: vxgossip/xgossip exec (compression, long double)
+// format:
+// <msgtype><msglen><keysize><key><teamidsize><teamid><seq>
+// <numSigs><compressedsiglistlen><POLY><unsigned char>...
+// <freq><weight>...
+int getKeyValue(const char* buf, str& key, str& teamid, std::vector<POLY>& compressedList, std::vector<std::vector<unsigned char> >& outBitmap, int& numSigs, std::vector<long double>& freqList, std::vector<long double>& weightList, int& seq, int recvlen)
+{
+	// copy msgtype
+	InsertType msgType;
+	memcpy(&msgType, buf, sizeof(msgType));
+
+	// copy len
+	const char *lenPtr;
+	int len;
+	lenPtr = buf + sizeof(msgType);
+	memcpy(&len, lenPtr, sizeof(len));
+	//warnx << "getKeyValue: msglen: " << len << "\n";
+
+	// XXX: InsertType
+	//if ((recvlen + (int)sizeof(int)) != len) {
+	if (recvlen != len) {
+		//warnx << "getKeyValue: recvlen: " << recvlen
+		//	<< " len: "<< len << "\n";
+		warnx << "getKeyValue: len doesn't match\n";
+		return -1;
+	}
+
+	// copy keysize
+	const char *keySizePtr;
+	int keySize;
+	keySizePtr = lenPtr + sizeof(len);
+	memcpy(&keySize, keySizePtr, sizeof(keySize));
+
+	// copy key
+	const char *keyPtr;
+	keyPtr = keySizePtr + sizeof(keySize);
+	key = str(keyPtr, keySize);
+	//assert(key);
+
+	// copy teamidsize
+	const char *teamidSizePtr;
+	int teamidSize;
+	teamidSizePtr = keyPtr + keySize;
+	memcpy(&teamidSize, teamidSizePtr, sizeof(teamidSize));
+
+	// copy teamid
+	const char *teamidPtr;
+	teamidPtr = teamidSizePtr + sizeof(teamidSize);
+	teamid = str(teamidPtr, teamidSize);
+
+	// copy seq
+	const char *seqPtr;
+	seqPtr = teamidPtr + teamidSize;
+	memcpy(&seq, seqPtr, sizeof(seq));
+
+	// copy numSigs
+	const char *numSigsPtr;
+	numSigsPtr = seqPtr + sizeof(seq);
+	memcpy(&numSigs, numSigsPtr, sizeof(numSigs));
+
+	// copy compressedListLen
+	const char *compressedListPtr;
+	int compressedListLen;
+	compressedListPtr = numSigsPtr + sizeof(numSigs);
+	memcpy(&compressedListLen, compressedListPtr, sizeof(compressedListLen));
+
+	// FUCKING pointers!
+	compressedListPtr += sizeof(compressedListLen);
+
+	for (int i = 0; i < compressedListLen; i++) {
+		compressedList.push_back(*((POLY *) compressedListPtr));
+		compressedListPtr += sizeof(POLY);
+
+		std::vector<unsigned char> e;
+		e.clear();
+
+		for (int j = 0; j < (int) ceil(numSigs/8.0); j++) {
+			e.push_back(*((unsigned char *) compressedListPtr));
+			compressedListPtr += sizeof(unsigned char);
+		}
+
+		outBitmap.push_back(e);
+	}
+
+	std::vector<POLY> sig;
+	sig.clear();
+	long double freq;
+	long double weight;
+	const char *freqPtr = NULL;
+	const char *weightPtr = NULL;
+
+	freqPtr = compressedListPtr;
+	for (int i = 0; i < numSigs; i++) {
+		// copy freq
+		memcpy(&freq, freqPtr, sizeof(freq));
+		freqList.push_back(freq);
+
+		// copy weight
+		weightPtr = freqPtr + sizeof(freq);
+		memcpy(&weight, weightPtr, sizeof(weight));
+		weightList.push_back(weight);
+
+		freqPtr = weightPtr + sizeof(weight);
+	}
+	return 0;
+}
+
 // vsfgd: vxgossip/xgossip exec
 // format: <msgtype><totallen><keysize><key><teamidsize><teamid><seq><siglistlen><sigsize><sig><freq><weight>...
 int getKeyValue(const char* buf, str& key, str& teamid, std::vector<std::vector<POLY> >& sigList, std::vector<double>& freqList, std::vector<double>& weightList, int& seq, int recvlen)
@@ -1567,6 +1674,98 @@ void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::vector<POLY>
 		buf += sizeof(double);
 		memcpy(buf, &weightList[i], sizeof(double));
 		buf += sizeof(double);
+	}
+
+	return;
+}
+
+// vsfgd: vxgossip/xgossip exec (compression, long double)
+// format:
+// <msgtype><msglen><keysize><key><teamidsize><teamid><seq>
+// <siglistlen><compressedsiglistlen><POLY><unsigned char>...
+// <freq><weight>...
+void makeKeyValue(char **ptr, int& len, str& key, str& teamid, std::vector<POLY>& compressedList, std::vector<std::vector<unsigned char> >& outBitmap, std::vector<long double>& freqList, std::vector<long double>& weightList, int& seq, InsertType type)
+{
+	int keyLen = key.len();
+	int teamidLen = teamid.len();
+	int compressedListLen = compressedList.size();
+	int sigListLen = freqList.size();
+
+	assert(freqList.size() == weightList.size());
+	
+	// msgtype + msglen + keysize + key + teamidsize + teamid + seq
+	len = sizeof(int) + sizeof(int) + sizeof(int) + keyLen + sizeof(int) + teamidLen + sizeof(int);
+
+	// sigListLen + compressedListLen + compressedListLen * (POLY + sigListLen)
+	len += sizeof(int) + sizeof(int) + (int) compressedListLen * (sizeof(POLY) + (int) ceil(sigListLen/8.0));
+	//len += sizeof(int) + sizeof(int) + (int) compressedListLen * (sizeof(POLY) + sizeof(unsigned char));
+
+	// freqList + weightList: (2 * sigListLen * weight|freq)
+	len += (2 * sigListLen * sizeof(long double));
+
+	// XXX: includes 4 bytes for type
+	warnx << "makeKeyValue:\ntxmsglen: " << len
+	      << " txlistlen: " << sigListLen
+	      << " txclistlen: " << compressedListLen << "\n";
+	// TODO: New vs new?
+	*ptr = New char[len];
+	//*ptr = new char[len];
+	assert(ptr);
+	char *buf = *ptr;
+
+	// copy type
+	memcpy(buf, &type, sizeof(type));
+	buf += sizeof(type);
+
+	// copy len
+	// XXX: is sizeof(type) always equal to sizeof(int)?
+	//len = len - sizeof(int);
+	//warnx << "makeKeyValue: len (msg): " << len << "\n";
+	memcpy(buf, &len, sizeof(len));
+	buf += sizeof(len);
+
+	// copy key
+	memcpy(buf, &keyLen, sizeof(keyLen));
+	buf += sizeof(keyLen);
+	memcpy(buf, key.cstr(), keyLen);
+	buf += keyLen;
+
+	// copy teamid
+	memcpy(buf, &teamidLen, sizeof(teamidLen));
+	buf += sizeof(teamidLen);
+	memcpy(buf, teamid.cstr(), teamidLen);
+	buf += teamidLen;
+
+	// copy seq
+	memcpy(buf, &seq, sizeof(seq));
+	buf += sizeof(seq);
+
+	// copy sigListLen
+	memcpy(buf, &sigListLen, sizeof(sigListLen));
+	buf += sizeof(sigListLen);
+
+	// copy compressedListLen
+	memcpy(buf, &compressedListLen, sizeof(compressedListLen));
+	buf += sizeof(compressedListLen);
+
+	// copy compressedList
+	for (int i = 0; i < compressedListLen; i++) {
+		memcpy(buf, &compressedList[i], sizeof(POLY));
+		buf += sizeof(POLY);
+
+		// copy outBitmap
+		for (int j = 0; j < (int) outBitmap[i].size(); j++) {
+			memcpy(buf, &outBitmap[i][j], sizeof(unsigned char));
+			buf += sizeof(unsigned char);
+		}
+	}
+
+	// copy freqList and weightList
+	for (int i = 0; i < sigListLen; i++) {
+		memcpy(buf, &freqList[i], sizeof(long double));
+		buf += sizeof(long double);
+		memcpy(buf, &weightList[i], sizeof(long double));
+		buf += sizeof(long double);
 	}
 
 	return;
