@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.122 2012/07/11 13:53:13 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.123 2012/10/25 17:18:04 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -31,7 +31,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.122 2012/07/11 13:53:13 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.123 2012/10/25 17:18:04 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1976,9 +1976,6 @@ main(int argc, char *argv[])
 			// do not exit if insert FAILs!
 			if (status != SUCC) {
 				warnx << "error: insert FAILed\n";
-				// to preserve mass conservation:
-				// "send" msg to yourself (double freq)
-				multiplyfreq(totalT[0], 0, 2, 2);
 			} else {
 				warnx << "insert SUCCeeded\n";
 			}
@@ -1998,6 +1995,7 @@ main(int argc, char *argv[])
 			warnx << "totalT[i].size(): " << totalT[i].size() << "\n";
 		}
 		printteamids();
+		warnx << "done broadcasting\n";
 	// VanillaXGossip exec phase
 	} else if (gflag == 1 && Hflag == 0) {
 		warnx << "vanillaxgossip exec...\n";
