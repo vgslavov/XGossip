@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.121 2012/05/10 03:03:14 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.122 2012/07/11 13:53:13 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -31,7 +31,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.121 2012/05/10 03:03:14 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.122 2012/07/11 13:53:13 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -44,12 +44,15 @@ int openfd = 0;
 int closefd = 0;
 
 chordID maxID;
+chordID thisID;
 static const char *dsock;
 static const char *gsock;
 static char *hashfile;
+static char *idsfile;
 static char *irrpolyfile;
 static char *initfile;
 static char *logfile;
+std::vector<chordID> allIDs;
 std::vector<POLY> irrnums;
 std::vector<int> hasha;
 std::vector<int> hashb;
@@ -74,6 +77,7 @@ int totaltxmsglen = 0;
 int roundrxmsglen = 0;
 int roundtxmsglen = 0;
 bool initphase = false;
+bool bcast = false;
 bool vanilla = false;
 bool gossipdone = false;
 
@@ -970,7 +974,7 @@ main(int argc, char *argv[])
 {
 	bool usedummy = false;
 	bool useproxy = false;
-	int Gflag, Lflag, lflag, rflag, Sflag, sflag, Oflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag, yflag, Zflag;
+	int Gflag, Lflag, lflag, rflag, Sflag, sflag, Oflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag, yflag, Zflag, Uflag, iflag;
 	int ch, gintval, initintval, waitintval, listenintval, nids, rounds, valLen, logfd;
 	int listnum;
 	int qid;
@@ -1012,7 +1016,7 @@ main(int argc, char *argv[])
 	std::vector<std::vector<unsigned char> > outBitmap;
 
 
-	Gflag = Lflag = lflag = rflag = Sflag = sflag = Oflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = xflag = yflag = Zflag = 0;
+	Gflag = Lflag = lflag = rflag = Sflag = sflag = Oflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = xflag = yflag = Zflag = Uflag = iflag = 0;
 	gintval = waitintval = listenintval = nids = 0;
 	initintval = -1;
 	rounds = -1;
@@ -1027,10 +1031,13 @@ main(int argc, char *argv[])
 	dummysig.push_back(1);
 
 	// parse arguments
-	while ((ch = getopt(argc, argv, "B:CcD:d:EF:G:gHhIj:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:uVvW:w:X:x:y:Z:z")) != -1)
+	while ((ch = getopt(argc, argv, "bB:CcD:d:EF:G:gHhIi:j:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:U:uVvW:w:X:x:y:Z:z")) != -1)
 		switch(ch) {
 		case 'B':
 			mgroups = strtol(optarg, NULL, 10);
+			break;
+		case 'b':
+			bcast = true;
 			break;
 		case 'R':
 			lfuncs = strtol(optarg, NULL, 10);
@@ -1058,6 +1065,10 @@ main(int argc, char *argv[])
 			break;
 		case 'I':
 			Iflag = 1;
+			break;
+		case 'i':
+			iflag = 1;
+			idsfile = optarg;
 			break;
 		case 'G':
 			Gflag = 1;
@@ -1128,6 +1139,11 @@ main(int argc, char *argv[])
 		case 's':
 			sflag = 1;
 			sigdir = optarg;
+			break;
+		case 'U':
+			Uflag = 1;
+			// TODO: check if valid chordID
+			str2chordID(optarg, thisID);
 			break;
 		case 'u':
 			uflag = 1;
@@ -1388,7 +1404,7 @@ main(int argc, char *argv[])
 		}
 	}
 
-	// load irrpoly.dat polys in memory
+	// load irreducible polys in memory
 	if (jflag == 1) {
 		if (stat(irrpolyfile, &statbuf) != 0)
 			fatal << "'" << irrpolyfile << "' does not exist" << "\n";
@@ -1401,6 +1417,40 @@ main(int argc, char *argv[])
                         irrnums.push_back(num);
                 }
                 polystream.close();
+	}
+
+	// load chordIDs in memory
+	if (iflag == 1) {
+		if (stat(idsfile, &statbuf) != 0)
+			fatal << "'" << idsfile << "' does not exist" << "\n";
+
+		allIDs.clear();
+		std::ifstream idstream;
+                idstream.open(idsfile);
+                std::string a;
+		chordID b;
+                while (idstream >> a) {
+			str z(a.c_str());
+			str2chordID(z, b);
+			allIDs.push_back(b);
+                }
+                idstream.close();
+
+		warnx << "chordIDs loaded: " << allIDs.size() << "\n";
+		/*
+		warnx << "before shuffle:\n";
+		for (int i = 0; i < (int)allIDs.size(); i++)
+			warnx << allIDs[i] << "\n";
+		*/
+
+		// shuffle all the IDs
+		random_shuffle(allIDs.begin(), allIDs.end());
+
+		/*
+		warnx << "after shuffle:\n";
+		for (int i = 0; i < (int)allIDs.size(); i++)
+			warnx << allIDs[i] << "\n";
+		*/
 	}
 
 	// connect to Chord socket when: listening, gossiping, querying
@@ -1766,6 +1816,7 @@ main(int argc, char *argv[])
 	warnx << "mgroups: " << mgroups << "\n";
 	warnx << "lfuncs: " << lfuncs << "\n";
 	warnx << "teamsize: " << teamsize << "\n";
+	if (Uflag == 1) warnx << "myID: " << thisID << "\n";
 	warnx << "compression: ";
 	if (compress == 1) warnx << "yes\n";
 	else warnx << "no\n";
@@ -1843,8 +1894,112 @@ main(int argc, char *argv[])
 		initphase = false;
 	}
 
+	// Broadcast exec phase
+	if (bcast == true) {
+		warnx << "broadcast exec...\n";
+		warnx << "broadcast interval: " << gintval << "\n";
+		warnx << "interval b/w inserts: " << initintval << "\n";
+		time(&rawtime);
+		warnx << "start exec ctime: " << ctime(&rawtime);
+		warnx << "start exec sincepoch: " << time(&rawtime) << "\n";
+
+		begingossipTime = getgtod();    
+
+		// needed?
+		srandom(loseed);
+
+		for (int i = 0; i < (int)allIDs.size(); i++) {
+			// skip myID
+			if (allIDs[i] == thisID) {
+				warnx << "skipping myID: " << thisID << "\n";
+				continue;
+			}
+			warnx << "inserting ";
+			if (compress == 1) warnx << "BCASTC:\n";
+			else warnx << "BCAST:\n";
+
+			ID = allIDs[i];
+			strbuf z;
+			z << ID;
+			str key(z);
+			warnx << "ID" << i << ": " << ID;
+			warnx << " txseq: " << txseq.back() << "\n";
+
+			if (compress == 1) {
+				compressedList.clear();
+				outBitmap.clear();
+				sigList.clear();
+				freqList.clear();
+				weightList.clear();
+				lfreqList.clear();
+				lweightList.clear();
+				vecomap2vec(totalT[0], 0, sigList, freqList, weightList);
+				//vecomap2vec(totalT[0], 0, sigList, lfreqList, lweightList);
+
+				int sigbytesize = 0;
+				warnx << "sigs before compression:\n";
+				for (int i = 0; i < (int)sigList.size(); i++) {
+					sigbytesize += (sigList[i].size() * sizeof(POLY));
+					//sig2str(sigList[i], sigbuf);
+					//warnx << "sig[" << i << "]: " << sigbuf << "\n";
+				}
+
+				warnx << "sigList size (bytes): " << sigbytesize << "\n";
+				warnx << "sigList.size() (unique): " << sigList.size() << "\n";
+				compressSignatures(sigList, compressedList, outBitmap);
+
+				int compressedsize = compressedList.size() * sizeof(POLY);
+				warnx << "compressedList size (bytes): " << compressedsize << "\n";
+				warnx << "compressedList.size(): " << compressedList.size() << "\n";
+
+				int bitmapsize = 0;
+				for (int i = 0; i < (int)outBitmap.size(); i++) {
+					bitmapsize += (outBitmap[i].size() * sizeof(unsigned char));
+				}
+
+				warnx << "outBitmap size (bytes): " << bitmapsize << "\n";
+				warnx << "outBitmap.size(): " << outBitmap.size() << "\n";
+
+				warnx << "total compressed size (list+bitmap): " << compressedsize + bitmapsize << "\n";
+
+				// after merging, everything is stored in totalT[0][0]
+				makeKeyValue(&value, valLen, key, key, compressedList, outBitmap, freqList, weightList, txseq.back(), BCASTC);
+			} else {
+				makeKeyValue(&value, valLen, key, key, totalT[0][0], txseq.back(), BCAST);
+			}
+
+			totaltxmsglen += valLen;
+			roundtxmsglen += valLen;
+			status = insertDHT(ID, value, valLen, instime, MAXRETRIES);
+			cleanup(value);
+
+			// do not exit if insert FAILs!
+			if (status != SUCC) {
+				warnx << "error: insert FAILed\n";
+				// to preserve mass conservation:
+				// "send" msg to yourself (double freq)
+				multiplyfreq(totalT[0], 0, 2, 2);
+			} else {
+				warnx << "insert SUCCeeded\n";
+			}
+
+			warnx << "roundtxmsglen: " << roundtxmsglen;
+			warnx << " txseq: " << txseq.back() << "\n";
+			roundtxmsglen = 0;
+			txseq.push_back(txseq.back() + 1);
+			warnx << "sleeping (broadcast)...\n";
+			gossipsleep = 0;
+			delaycb(gintval, 0, wrap(gossipsleepnow));
+			while (gossipsleep == 0) acheck();
+		}
+		// TODO: merge all lists
+		warnx << "totalT.size(): " << totalT.size() << "\n";
+		for (int i = 0; i < (int)totalT.size(); i++) {
+			warnx << "totalT[i].size(): " << totalT[i].size() << "\n";
+		}
+		printteamids();
 	// VanillaXGossip exec phase
-	if (gflag == 1 && Hflag == 0) {
+	} else if (gflag == 1 && Hflag == 0) {
 		warnx << "vanillaxgossip exec...\n";
 		warnx << "gossip interval: " << gintval << "\n";
 		warnx << "interval b/w inserts: " << initintval << "\n";
@@ -2246,6 +2401,8 @@ main(int argc, char *argv[])
 				printlistall();
 			}
 
+			/*
+ 			// do not do it! why?
 			// put everything in allT[0]
 			warnx << "merging by teamID into allT[0]...\n";
 			mergebyteamid();
@@ -2256,6 +2413,8 @@ main(int argc, char *argv[])
 				warnx << "lists (after merging by teamID)\n";
 				printlistall();
 			}
+			*/
+
 			allT.clear();
 			// put everything in allT[0]
 			warnx << "merging everything into allT[0]...\n";
@@ -2941,12 +3100,19 @@ readgossip(int fd)
 
 	msgtype = getKeyValueType(gmsg.cstr());
 	warnx << " type: ";
-	if (msgtype == VXGOSSIP || msgtype == VXGOSSIPC || msgtype == XGOSSIP || msgtype == XGOSSIPC) {
+	if (msgtype == VXGOSSIP || msgtype == VXGOSSIPC || msgtype == XGOSSIP || msgtype == XGOSSIPC || msgtype == BCAST || msgtype == BCASTC) {
 		// discard msg if in init phase
 		if (initphase == true) {
 			warnx << "warning: phase=init, msgtype=" << msgtype << "\n";
 			warnx << "warning: msg discarded\n";
 			return;
+		} else if (msgtype == BCAST) {
+			warnx << "BCAST";
+			ret = getKeyValue(gmsg.cstr(), key, keyteamid, sigList, freqList, weightList, seq, recvlen);
+		} else if (msgtype == BCASTC) {
+			warnx << "BCASTC";
+			ret = getKeyValue(gmsg.cstr(), key, keyteamid, compressedList, outBitmap, numSigs, freqList, weightList, seq, recvlen);
+			uncompressSignatures(sigList, compressedList, outBitmap, numSigs);
 		} else if (msgtype == VXGOSSIP) {
 			warnx << "VXGOSSIP";
 			ret = getKeyValue(gmsg.cstr(), key, keyteamid, sigList, freqList, weightList, seq, recvlen);
@@ -2976,7 +3142,7 @@ readgossip(int fd)
 		      << " txseq-cur: " << txseq.back()
 		      << " rxID: " << key;
 
-		if (msgtype == XGOSSIP || msgtype == XGOSSIPC) warnx << " teamID: " << keyteamid;
+		if (msgtype == BCAST || msgtype == BCASTC || msgtype == XGOSSIP || msgtype == XGOSSIPC) warnx << " teamID: " << keyteamid;
 
 		warnx  << "\n";
 
@@ -3025,6 +3191,7 @@ readgossip(int fd)
 		str2chordID(keyteamid, teamID);
 		if (msgtype == VXGOSSIP || msgtype == VXGOSSIPC) {
 			add2vecomapv(sigList, freqList, weightList);
+		// both XGossip and Broadcast use teamID
 		} else {
 			add2vecomapx(sigList, freqList, weightList, teamID);
 		}
@@ -4383,14 +4550,15 @@ add2vecomapx(std::vector<std::vector<POLY> > sigList, std::vector<double> freqLi
 	} else {
 		warnx << "warning: teamID NOT found: " << teamID << "\n";
 
-		/*
-		warnx << "teamID NOT found: adding new vecomap\n";
-		warnx << "totalT.size() [before]: " << totalT.size() << "\n";
-		tmpvecomap.push_back(uniqueSigList);
-		totalT.push_back(tmpvecomap);
-		tind = totalT.size() - 1;
-		teamindex[teamID].push_back(tind);
-		*/
+		// Broadcast only
+		if (bcast == true) {
+			warnx << "teamID NOT found: adding new vecomap\n";
+			warnx << "totalT.size() [before]: " << totalT.size() << "\n";
+			tmpvecomap.push_back(uniqueSigList);
+			totalT.push_back(tmpvecomap);
+			tind = totalT.size() - 1;
+			teamindex[teamID].push_back(tind);
+		}
 	}
 
 	warnx << "tind: " << tind << "\n";
@@ -5831,6 +5999,7 @@ usage(void)
 
              << "\tFILES:\n"
 	     << "      	-F		<hash funcs file>\n"
+	     << "      	-i		<chordIDs file>\n"
 	     << "      	-j		<irrpoly file>\n"
 	     << "	-L		<log file>\n"
 	     << "      	-P		<init phase file>\n"
@@ -5846,6 +6015,7 @@ usage(void)
 	     << "      	-q		<estimate of # of peers in DHT>\n"
 	     << "	-R		<rows for LSH>\n"
 					"\t\t\t(a.k.a. l hash functions)\n"
+	     << "	-U		<my chordID>\n"
 	     << "	-X		<how many times>\n"
 					"\t\t\t(multiply freq of sigs by)\n"
 	     << "	-Z		<team size>\n\n"
@@ -5871,6 +6041,8 @@ usage(void)
 					"\t\t\t(wait interval after XGossip init phase is done)\n\n"
 
 	     << "ACTIONS:\n"
+	     << "	-b		broadcast: no gossip\n"
+					"\t\t\t(use baseline broadcast protocol instead)\n"
 	     << "	-g		gossip (requires -S, -G, -s, -t)\n"
 	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j, -F)\n"
 					"\t\t\t(XGossip)\n"
