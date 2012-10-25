@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.123 2012/10/25 17:18:04 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.124 2012/10/25 20:24:11 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -31,7 +31,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.123 2012/10/25 17:18:04 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.124 2012/10/25 20:24:11 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1446,11 +1446,9 @@ main(int argc, char *argv[])
 		// shuffle all the IDs
 		random_shuffle(allIDs.begin(), allIDs.end());
 
-		/*
-		warnx << "after shuffle:\n";
+		warnx << "IDs after shuffle:\n";
 		for (int i = 0; i < (int)allIDs.size(); i++)
 			warnx << allIDs[i] << "\n";
-		*/
 	}
 
 	// connect to Chord socket when: listening, gossiping, querying
@@ -1936,6 +1934,7 @@ main(int argc, char *argv[])
 				vecomap2vec(totalT[0], 0, sigList, freqList, weightList);
 				//vecomap2vec(totalT[0], 0, sigList, lfreqList, lweightList);
 
+				/*
 				int sigbytesize = 0;
 				warnx << "sigs before compression:\n";
 				for (int i = 0; i < (int)sigList.size(); i++) {
@@ -1946,8 +1945,10 @@ main(int argc, char *argv[])
 
 				warnx << "sigList size (bytes): " << sigbytesize << "\n";
 				warnx << "sigList.size() (unique): " << sigList.size() << "\n";
+				*/
 				compressSignatures(sigList, compressedList, outBitmap);
 
+				/*
 				int compressedsize = compressedList.size() * sizeof(POLY);
 				warnx << "compressedList size (bytes): " << compressedsize << "\n";
 				warnx << "compressedList.size(): " << compressedList.size() << "\n";
@@ -1961,6 +1962,7 @@ main(int argc, char *argv[])
 				warnx << "outBitmap.size(): " << outBitmap.size() << "\n";
 
 				warnx << "total compressed size (list+bitmap): " << compressedsize + bitmapsize << "\n";
+				*/
 
 				// after merging, everything is stored in totalT[0][0]
 				makeKeyValue(&value, valLen, key, key, compressedList, outBitmap, freqList, weightList, txseq.back(), BCASTC);
@@ -1996,6 +1998,12 @@ main(int argc, char *argv[])
 		}
 		printteamids();
 		warnx << "done broadcasting\n";
+		warnx << "stop exec ctime: " << ctime(&rawtime);
+		warnx << "stop exec sincepoch: " << time(&rawtime) << "\n";
+		endgossipTime = getgtod();    
+
+		printdouble("broadcast exec phase time: ", endgossipTime - begingossipTime);
+		warnx << "\n";
 	// VanillaXGossip exec phase
 	} else if (gflag == 1 && Hflag == 0) {
 		warnx << "vanillaxgossip exec...\n";
@@ -3189,6 +3197,8 @@ readgossip(int fd)
 		str2chordID(keyteamid, teamID);
 		if (msgtype == VXGOSSIP || msgtype == VXGOSSIPC) {
 			add2vecomapv(sigList, freqList, weightList);
+		} else if (msgtype == BCAST || msgtype == BCASTC) {
+			warnx << "TODO: addvecomapx() and merge\n";
 		// both XGossip and Broadcast use teamID
 		} else {
 			add2vecomapx(sigList, freqList, weightList, teamID);
