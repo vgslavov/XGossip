@@ -1,4 +1,4 @@
-/*	$Id: dhblock_noauth_srv.C,v 1.11 2012/03/15 16:53:30 vsfgd Exp vsfgd $	*/
+/*	$Id: dhblock_noauth_srv.C,v 1.12 2012/03/29 23:16:39 vsfgd Exp vsfgd $	*/
 
 #include <iostream>
 
@@ -178,6 +178,7 @@ dhblock_noauth_srv::adjust_data (chordID key, str new_data, str prev_data,
 
 	if ((msgtype == VXGOSSIP) || (msgtype == VXGOSSIPC) ||
 	    (msgtype == XGOSSIP) || (msgtype == XGOSSIPC) ||
+	    (msgtype == BCAST) || (msgtype == BCASTC) ||
 	    (msgtype == INITGOSSIP) || (msgtype == INFORMTEAM) ||
 	    (msgtype == QUERYS) || (msgtype == QUERYX) || (msgtype == QUERYXP)) {
 		extern str gsock;
