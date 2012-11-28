@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.124 2012/10/25 20:24:11 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.125 2012/10/25 22:11:57 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -31,7 +31,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.124 2012/10/25 20:24:11 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.125 2012/10/25 22:11:57 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -64,12 +64,13 @@ int plist = 0;
 int gflag = 0;
 int Qflag = 0;
 int uflag = 0;
+// by default, don't discard out of round msgs
 int discardmsg = 0;
 int compress = 0;
 int peers = 0;
 int teamsize = 5;
 // TODO: make cmd line arg
-int ninstances = 20;
+int ninstances = 0;
 double errorlimit = 100;
 int freqbyx = 1;
 int totalrxmsglen = 0;
@@ -80,6 +81,7 @@ bool initphase = false;
 bool bcast = false;
 bool vanilla = false;
 bool gossipdone = false;
+bool churn = false;
 
 // paper:k, slides:bands
 int mgroups = 10;
@@ -174,6 +176,7 @@ bool fixnan(double, double);
 void informteam(chordID, chordID, std::vector<POLY>);
 void initgossiprecv(chordID, chordID, std::vector<POLY>, double, double);
 DHTStatus insertDHT(chordID, char *, int, double &, int = MAXRETRIES, chordID = 0);
+std::string itostring(int);
 void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
 std::vector<POLY> inverse(std::vector<POLY>);
 void listengossip(void);
@@ -978,6 +981,9 @@ main(int argc, char *argv[])
 	int ch, gintval, initintval, waitintval, listenintval, nids, rounds, valLen, logfd;
 	int listnum;
 	int qid;
+	int bstrapport = 0;
+	int sessionlen = 0;
+	int sessionrounds = 0;
 	double beginTime = 0.0;
 	double beginreadTime = 0.0;
 	double begingossipTime, endgossipTime, endTime, endreadTime, instime;
@@ -1031,8 +1037,11 @@ main(int argc, char *argv[])
 	dummysig.push_back(1);
 
 	// parse arguments
-	while ((ch = getopt(argc, argv, "bB:CcD:d:EF:G:gHhIi:j:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:U:uVvW:w:X:x:y:Z:z")) != -1)
+	while ((ch = getopt(argc, argv, "A:bB:CcD:d:EF:G:gHhIi:j:k:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:U:uVvW:w:X:x:y:Z:z")) != -1)
 		switch(ch) {
+		case 'A':
+			bstrapport = strtol(optarg, NULL, 10);
+			break;
 		case 'B':
 			mgroups = strtol(optarg, NULL, 10);
 			break;
@@ -1046,7 +1055,7 @@ main(int argc, char *argv[])
 			compress = 1;
 			break;
 		case 'c':
-			discardmsg = 1;
+			churn = true;
 			break;
 		case 'D':
 			Dflag = 1;
@@ -1089,6 +1098,9 @@ main(int argc, char *argv[])
 		case 'j':
 			jflag = 1;
 			irrpolyfile = optarg;
+			break;
+		case 'k':
+			sessionrounds = strtol(optarg, NULL, 10);
 			break;
 		case 'L':
 			Lflag = 1;
@@ -1264,13 +1276,15 @@ main(int argc, char *argv[])
 
 	// TODO: make sure only one flag is set at a time
 	// at least one action: read, gossip, LSH, query or listen
-	if (rflag == 0 && gflag == 0 && lflag == 0 && Hflag == 0 && Mflag == 0 && Qflag == 0) usage();
+	if (rflag == 0 && gflag == 0 && lflag == 0 && Hflag == 0 && Mflag == 0 && Qflag == 0 && churn == false) usage();
 
 	// sockets are required when listening or gossiping
 	if ((gflag == 1 || lflag == 1) && (Gflag == 0 || Sflag == 0)) usage();
 
 	// dhash socket is required when querying
 	if (Qflag == 1 && Sflag == 0) usage();
+
+	if (churn == true && (gintval == 0 || peers == 0 || ninstances == 0 || bstrapport == 0 || rounds == -1 || sessionrounds == 0 || listenintval == 0)) usage();
 
 	// sig or xpath are required when querying
 	if (Qflag == 1 && (sflag == 0 && xflag == 0)) usage();
@@ -1814,10 +1828,84 @@ main(int argc, char *argv[])
 	warnx << "mgroups: " << mgroups << "\n";
 	warnx << "lfuncs: " << lfuncs << "\n";
 	warnx << "teamsize: " << teamsize << "\n";
+	warnx << "total rounds: " << rounds << "\n";
+	warnx << "round length: " << gintval << "\n";
 	if (Uflag == 1) warnx << "myID: " << thisID << "\n";
 	warnx << "compression: ";
 	if (compress == 1) warnx << "yes\n";
 	else warnx << "no\n";
+	warnx << "churn: ";
+	if (churn == true) {
+		warnx << "yes\n";
+		warnx << "session rounds: " << sessionrounds << "\n";
+		sessionlen = gintval * sessionrounds;
+		warnx << "session length: " << sessionlen << "\n";
+		warnx << "bootstrap port: " << bstrapport << "\n";
+	} else
+		warnx << "no\n";
+
+	if (churn == true) {
+		//std::string myuser = getlogin();
+		std::string myuser = "vsfgd";
+		std::string myhome = "/home/" + myuser;
+		std::string scripts = myhome + "/bin";
+		std::string churnlsdroot = myhome + "/tmp.churn.lsd";
+
+		// pick random round to join
+		srand(loseed);
+		//int randround = randomNumGenZ(rounds);
+		int randround = rand() % rounds + 1;
+		warnx << "join round: " << randround << "\n";
+
+		// wait for all other peers to start exec phase
+		warnx << "listen interval: " << listenintval << "\n";
+		warnx << "waiting to start exec phase (" << listenintval << "s)...\n";
+		initsleep = 0;
+		delaycb(listenintval, 0, wrap(initsleepnow));
+		while (initsleep == 0) acheck();
+
+		// wait to join in randround
+		warnx << "waiting to join Chord (" << randround * gintval << "s)...\n";
+		gossipsleep = 0;
+		delaycb(randround * gintval, 0, wrap(gossipsleepnow));
+		while (gossipsleep == 0) acheck();
+
+		// join Chord
+		int step = 5;
+		int gap = 100;
+		int lastport = peers * step + bstrapport + gap;
+
+		// find next available port
+		std::string sbport = itostring(bstrapport);
+		std::string slport = itostring(lastport);
+		std::string myroot = churnlsdroot + "/" + slport;
+		while (stat(myroot.c_str(), &statbuf) == 0) {
+			lastport += 5;
+			slport = itostring(lastport);
+			myroot = churnlsdroot + "/" + slport;
+		}
+
+		mkdir(myroot.c_str(), 0775);
+
+		warnx << "joining Chord...\n";
+		std::string cmd = scripts + "/join_chord.sh " + sbport + " " + slport + " " + myroot;
+		warnx << cmd.c_str() << "\n";
+		system(cmd.c_str());
+
+		// wait sessionlen in Chord
+		warnx << "waiting in Chord (" << sessionlen << "s)...\n";
+		gossipsleep = 0;
+		delaycb(sessionlen, 0, wrap(gossipsleepnow));
+		while (gossipsleep == 0) acheck();
+
+		// leave
+		warnx << "leaving Chord...\n";
+		cmd = scripts + "/leave_chord.sh " + myroot;
+		warnx << cmd.c_str() << "\n";
+		system(cmd.c_str());
+
+		return 0;
+	}
 
 	std::vector<std::vector<POLY> > pmatrix;
 
@@ -1896,7 +1984,7 @@ main(int argc, char *argv[])
 	if (bcast == true) {
 		warnx << "broadcast exec...\n";
 		warnx << "broadcast interval: " << gintval << "\n";
-		warnx << "interval b/w inserts: " << initintval << "\n";
+		//warnx << "interval b/w inserts: " << initintval << "\n";
 		time(&rawtime);
 		warnx << "start exec ctime: " << ctime(&rawtime);
 		warnx << "start exec sincepoch: " << time(&rawtime) << "\n";
@@ -1998,6 +2086,7 @@ main(int argc, char *argv[])
 		}
 		printteamids();
 		warnx << "done broadcasting\n";
+		time(&rawtime);
 		warnx << "stop exec ctime: " << ctime(&rawtime);
 		warnx << "stop exec sincepoch: " << time(&rawtime) << "\n";
 		endgossipTime = getgtod();    
@@ -2407,7 +2496,6 @@ main(int argc, char *argv[])
 				printlistall();
 			}
 
-			/*
  			// do not do it! why?
 			// put everything in allT[0]
 			warnx << "merging by teamID into allT[0]...\n";
@@ -2419,7 +2507,6 @@ main(int argc, char *argv[])
 				warnx << "lists (after merging by teamID)\n";
 				printlistall();
 			}
-			*/
 
 			allT.clear();
 			// put everything in allT[0]
@@ -2456,8 +2543,10 @@ main(int argc, char *argv[])
 			int qid;
 			double totalninter = 0;
 			double estfreq = 0;
+			double estmaxfreq = 0;
 			double truefreq = 0;
 			double relerror = 0;
+			double maxrelerror = 0;
 			//double estcursim;
 			//double estminsim = 1;
 			double trueminsim = 0;
@@ -2499,7 +2588,7 @@ main(int argc, char *argv[])
 				bool lshmisses = true;
 
 				warnx << "calculating xpath query estimates and true results...\n";
-				warnx << "qid,querysig,sigmatches: est,sigmatches: true,sigmatches: rel error (%),freq (*teamsize): est,freq (*instances): true,freq: rel error (%),proxy lsh misses,query lsh misses,avg inter,query minsim,query avgsim,proxy minsim,proxy avgsim,query minsim > proxy minsim,teamIDs\n";
+				warnx << "qid,querysig,sigmatches: est,sigmatches: true,sigmatches: rel error (%),freq (*teamsize): est,freq max (*teamsize): est,freq (*instances): true,freq: rel error (%),freq max: rel error (%),proxy lsh misses,query lsh misses,avg inter,query minsim,query avgsim,proxy minsim,proxy avgsim,query minsim > proxy minsim,teamIDs\n";
 				for (id2sigs::iterator qitr = qid2querysig.begin(); qitr != qid2querysig.end(); qitr++) {
 					if (qitr->second.size() > 1)
 						warnx << "multiple queries for the same qid\n";
@@ -2544,7 +2633,7 @@ main(int argc, char *argv[])
 					if (sitr != qid2sigs.end()) {
 						//warnx << "found sigs for qid: " << qid << "\n";
 						// add up avg of different sigs and pick a random avg for same one
-						for (int i = 0; i < (int)sitr->second.size(); i++ ) {
+						for (int i = 0; i < (int)sitr->second.size(); i++) {
 							// find id corresponding to this qid in allsig2avg
 							id2id::iterator iditr = qid2id.find(qid);
 							if (iditr != qid2id.end()) {
@@ -2565,6 +2654,14 @@ main(int argc, char *argv[])
 								randcol = randomNumGenZ(range);
 								//warnx << "sig2avg: range: " << range << " randcol: " << randcol << "\n";
 								estfreq += saitr->second[randcol];
+
+								// find max freq
+								double maxavg = 0;
+								for (int j = 0; j < (int)saitr->second.size(); j++) {
+									if (maxavg < saitr->second[j])	
+										maxavg = saitr->second[j];
+								}
+								estmaxfreq += maxavg;
 								++estsigmatches;
 							} else {
 								warnx << "allsig2avg: where is the sig\n";
@@ -2649,6 +2746,11 @@ main(int argc, char *argv[])
 					printdouble("", estfreq);
 					warnx << ",";
 
+					// est max freq
+					estmaxfreq *= teamsize;
+					printdouble("", estmaxfreq);
+					warnx << ",";
+
 					// true totalfreq
 					truefreq *= ninstances;
 					printdouble("", truefreq);
@@ -2661,6 +2763,15 @@ main(int argc, char *argv[])
 						relerror = 0;
 					}
 					printdouble("", relerror);
+					warnx << ",";
+
+					// max freq rel error
+					if (truefreq != 0) {
+						maxrelerror = fabs(truefreq - estmaxfreq) / truefreq * 100;
+					} else {
+						maxrelerror = 0;
+					}
+					printdouble("", maxrelerror);
 					warnx << ",";
 
 					// proxy lsh misses
@@ -2737,6 +2848,7 @@ main(int argc, char *argv[])
 					//estminsim = 0;
 					estsigmatches = 0;
 					estfreq = 0;
+					estmaxfreq = 0;
 					proxylshmisses = 0;
 					querylshmisses = 0;
 					totalninter = 0;
@@ -3198,7 +3310,7 @@ readgossip(int fd)
 		if (msgtype == VXGOSSIP || msgtype == VXGOSSIPC) {
 			add2vecomapv(sigList, freqList, weightList);
 		} else if (msgtype == BCAST || msgtype == BCASTC) {
-			warnx << "TODO: addvecomapx() and merge\n";
+			// TODO: addvecomapx() and merge
 		// both XGossip and Broadcast use teamID
 		} else {
 			add2vecomapx(sigList, freqList, weightList, teamID);
@@ -5675,6 +5787,14 @@ lvecomap2vec(lvecomap teamvecomap, int listnum, std::vector<std::vector <POLY> >
 	}
 }
 
+std::string
+itostring(int num)
+{
+	std::ostringstream oss;
+	oss << num;
+	return oss.str();
+}
+
 // verified
 void
 printdouble(std::string fmt, double num)
@@ -5987,10 +6107,13 @@ usage(void)
 	warn << "XGossip:\n";
 	warn << "\t" << __progname << " -S dhash-sock -G g-sock -L log.gpsi -s sigdir -g -t 120 -T 1 -w 900\n"
 	     << "\t     -H -d 1122941 -j irrpoly-deg9.dat -B 50 -R 10 -I -E -P initfile -p\n\n";
+	warn << "Broadcast:\n";
+	warn << "[TODO]\n";
+	warn << "XGossip exec (churn peers):\n";
+	warnx << "\t" << __progname << " -c -L log.gpsi -t 240 -A 9555 -q 1000 -N 20 -o 20 -k 5 -W 300\n\n";
 	warn << "OPTIONS:\n\n"
              << "\tACTIONS (optional):\n"
 	     << "	-C		compress signatures (XGossip exec only)\n"
-	     << "	-c		discard out-of-round messages\n"
 	     << "	-H		generate chordIDs/POLYs using LSH when gossiping\n"
 					"\t\t\t(requires -g, -s, -d, -j, -I, -w, -F)\n"
 	     << "      	-m		use findMod instead of compute_hash\n"
@@ -6014,9 +6137,11 @@ usage(void)
 					"\t\t\t(after XGossip init state is complete)\n\n"
 
              << "\tNUMBERS:\n"
+	     << "	-A		<bootstrap port>\n"
 	     << "	-B		<bands for LSH>\n"
 					"\t\t\t(a.k.a. m groups)\n"
 	     << "	-d		<random prime number for LSH seed>\n"
+	     << "	-k		<session rounds for churn peers>\n"
 	     << "      	-N		<how many instances/nodes>\n"
 	     << "      	-n		<how many chordIDs>\n"
 	     << "      	-o		<how many rounds>\n"
@@ -6051,6 +6176,7 @@ usage(void)
 	     << "ACTIONS:\n"
 	     << "	-b		broadcast: no gossip\n"
 					"\t\t\t(use baseline broadcast protocol instead)\n"
+	     << "	-c		simulate churn: discard messages (requires -t, -A, -q, -N, -o, -W)\n"
 	     << "	-g		gossip (requires -S, -G, -s, -t)\n"
 	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j, -F)\n"
 					"\t\t\t(XGossip)\n"
