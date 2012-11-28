@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.125 2012/10/25 22:11:57 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.126 2012/11/28 06:37:20 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -31,7 +31,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.125 2012/10/25 22:11:57 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.126 2012/11/28 06:37:20 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -70,7 +70,7 @@ int compress = 0;
 int peers = 0;
 int teamsize = 5;
 // TODO: make cmd line arg
-int ninstances = 0;
+int ninstances = 1;
 double errorlimit = 100;
 int freqbyx = 1;
 int totalrxmsglen = 0;
@@ -1846,10 +1846,10 @@ main(int argc, char *argv[])
 
 	if (churn == true) {
 		//std::string myuser = getlogin();
-		std::string myuser = "vsfgd";
+		std::string myuser = "ec2-user";
 		std::string myhome = "/home/" + myuser;
 		std::string scripts = myhome + "/bin";
-		std::string churnlsdroot = myhome + "/tmp.churn.lsd";
+		std::string churnlsdroot = "/media/ephemeral0/tmp.churn.lsd";
 
 		// pick random round to join
 		srand(loseed);
