@@ -1,4 +1,4 @@
-/*	$Id: dhblock_noauth_srv.C,v 1.12 2012/03/29 23:16:39 vsfgd Exp vsfgd $	*/
+/*	$Id: dhblock_noauth_srv.C,v 1.13 2012/10/25 17:19:27 vsfgd Exp vsfgd $	*/
 
 #include <iostream>
 
@@ -91,7 +91,12 @@ dhblock_noauth_srv::real_store (chordID dbkey,
   // TODO: display only if not V/XGOSSIP
   //if (dprep.len() == 0) warnx << "Avoiding replica storage.\n";
 
-  if (resStatus == DHASH_CORRUPTHDR) {
+  //warnx << "resStatus: " << resStatus << "\n";
+
+  if (resStatus == DHASH_ERR) {
+    //warnx << "gossip: warning, status is DHASH_ERR\n";
+    cb (DHASH_ERR);
+  } else if (resStatus == DHASH_CORRUPTHDR) {
 			cb(DHASH_CORRUPTHDR);
 			blockID mykey (dbkey, DHASH_NOAUTH);
 			warnx << "Issuing repair...\n";
@@ -128,6 +133,17 @@ write_gossip(int fd, strbuf buf)
 {
 	// success (1), EAGAIN (0), other write error (-1)
 	int n = buf.tosuio()->output(fd);
+
+	// for simulating churn
+	/*
+	extern bool gdiscard;
+	if (gdiscard == true) {
+		warnx << "gossip: write_gossip: discarding msg due to churn\n";
+		fdcb(fd, selwrite, NULL);
+		close(fd);
+		return;
+	}
+	*/
 
 	if (n < 0) {
 		warnx << "gossip: write_gossip failed\n";
@@ -185,12 +201,19 @@ dhblock_noauth_srv::adjust_data (chordID key, str new_data, str prev_data,
 		warnx << "msgtype: " << msgtype << "\n";
 		str gElem(new_elems[0].cstr(), new_elems[0].len());
 
+		// for simulating churn
+		extern bool gdiscard;
+		if (gdiscard == true) {
+			warnx << "gossip: discarding msg due to churn\n";
+			resStatus = DHASH_ERR;
+			return "";
+		}
+
 		int fd = unixsocket_connect(gsock);
 		if (fd < 0) {
 			warnx << "gossip: Error connecting to "
 			      << gsock.cstr() << ": " << strerror(errno) << "\n";
-			// TODO: return different status?
-			resStatus = DHASH_OK;
+			resStatus = DHASH_ERR;
 			return "";
 		} else {
 			warnx << "gossip: opening socket\n";
