@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.126 2012/11/28 06:37:20 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.127 2012/11/28 17:05:04 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -15,6 +15,7 @@
 #include <math.h>
 
 #include <dirent.h>
+#include <libgen.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -31,7 +32,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.126 2012/11/28 06:37:20 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.127 2012/11/28 17:05:04 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -48,10 +49,13 @@ chordID thisID;
 static const char *dsock;
 static const char *gsock;
 static char *hashfile;
+static char *killfile;
 static char *idsfile;
 static char *irrpolyfile;
 static char *initfile;
 static char *logfile;
+static char *rootdir = "empty";
+int myhostnum = -1;
 std::vector<chordID> allIDs;
 std::vector<POLY> irrnums;
 std::vector<int> hasha;
@@ -82,6 +86,7 @@ bool bcast = false;
 bool vanilla = false;
 bool gossipdone = false;
 bool churn = false;
+bool killme = false;
 
 // paper:k, slides:bands
 int mgroups = 10;
@@ -977,13 +982,15 @@ main(int argc, char *argv[])
 {
 	bool usedummy = false;
 	bool useproxy = false;
-	int Gflag, Lflag, lflag, rflag, Sflag, sflag, Oflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, xflag, yflag, Zflag, Uflag, iflag;
+	int Gflag, Lflag, lflag, rflag, Sflag, sflag, Oflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, fflag, xflag, yflag, Zflag, Uflag, iflag;
 	int ch, gintval, initintval, waitintval, listenintval, nids, rounds, valLen, logfd;
 	int listnum;
 	int qid;
 	int bstrapport = 0;
 	int sessionlen = 0;
 	int sessionrounds = 0;
+	int killroundrange = 0;
+	int killround = 0;
 	double beginTime = 0.0;
 	double beginreadTime = 0.0;
 	double begingossipTime, endgossipTime, endTime, endreadTime, instime;
@@ -1003,6 +1010,7 @@ main(int argc, char *argv[])
 	std::string sigdir;
 	std::string xpathdir;
 	std::string inmergetype;
+	std::string cmd;
 	std::vector<std::string> initfiles;
 	std::vector<std::string> proxysigfiles;
 	std::vector<std::string> sigfiles;
@@ -1022,7 +1030,7 @@ main(int argc, char *argv[])
 	std::vector<std::vector<unsigned char> > outBitmap;
 
 
-	Gflag = Lflag = lflag = rflag = Sflag = sflag = Oflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = xflag = yflag = Zflag = Uflag = iflag = 0;
+	Gflag = Lflag = lflag = rflag = Sflag = sflag = Oflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = fflag = xflag = yflag = Zflag = Uflag = iflag = 0;
 	gintval = waitintval = listenintval = nids = 0;
 	initintval = -1;
 	rounds = -1;
@@ -1037,7 +1045,7 @@ main(int argc, char *argv[])
 	dummysig.push_back(1);
 
 	// parse arguments
-	while ((ch = getopt(argc, argv, "A:bB:CcD:d:EF:G:gHhIi:j:k:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:U:uVvW:w:X:x:y:Z:z")) != -1)
+	while ((ch = getopt(argc, argv, "A:bB:CcD:d:EF:f:G:gHhIi:j:K:k:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:U:uVvW:w:X:x:y:Z:z")) != -1)
 		switch(ch) {
 		case 'A':
 			bstrapport = strtol(optarg, NULL, 10);
@@ -1072,6 +1080,10 @@ main(int argc, char *argv[])
 			Fflag = 1;
 			hashfile = optarg;
 			break;
+		case 'f':
+			fflag = 1;
+			killfile = optarg;
+			break;
 		case 'I':
 			Iflag = 1;
 			break;
@@ -1098,6 +1110,9 @@ main(int argc, char *argv[])
 		case 'j':
 			jflag = 1;
 			irrpolyfile = optarg;
+			break;
+		case 'K':
+			killroundrange = strtol(optarg, NULL, 10);
 			break;
 		case 'k':
 			sessionrounds = strtol(optarg, NULL, 10);
@@ -1324,6 +1339,10 @@ main(int argc, char *argv[])
 		if (logfd < 0) fatal << "can't open log file " << logfile << "\n";
 		lseek(logfd, 0, SEEK_END);
 		errfd = logfd;
+
+		// set root dir
+		rootdir = dirname(logfile);
+		myhostnum = strtol(basename(rootdir), NULL, 10);
 	}
 
 	time(&rawtime);
@@ -1344,6 +1363,21 @@ main(int argc, char *argv[])
 		if ((initfp = fopen(initfile, acc.c_str())) == NULL) {
 			fatal << "can't open init file " << initfile << "\n";
 		}
+	}
+
+	// check if this proc should be killed
+	if (fflag == 1) {
+		if (stat(killfile, &statbuf) != 0)
+			fatal << "'" << killfile << "' does not exist" << "\n";
+
+		std::ifstream killstream;
+                killstream.open(killfile);
+                int hostnum;
+                while (killstream >> hostnum) {
+			if (hostnum == myhostnum) killme = true;
+                }
+                killstream.close();
+
 	}
 
 	// set up hash file: hash.dat
@@ -1818,6 +1852,11 @@ main(int argc, char *argv[])
 	}
 
 	warnx << "rcsid: " << rcsid << "\n";
+	warnx << "root dir: " << rootdir << "\n";
+	warnx << "my host num: " << myhostnum << "\n";
+	warnx << "will be killed: ";
+	if (killme == true) warnx << "yes\n";
+	else warnx << "no\n";
 	warnx << "host: " << host << "\n";
 	warnx << "pid: " << getpid() << "\n";
 	warnx << "peers: " << peers << "\n";
@@ -1830,6 +1869,14 @@ main(int argc, char *argv[])
 	warnx << "teamsize: " << teamsize << "\n";
 	warnx << "total rounds: " << rounds << "\n";
 	warnx << "round length: " << gintval << "\n";
+	warnx << "kill round range: " << killroundrange << "\n";
+	// pick random round to kill itself
+	if (killroundrange != 0) {
+		srand(loseed);
+		// TODO: verify range
+		killround = rand() % killroundrange + 1;
+		warnx << "kill round: " << killround << "\n";
+	}
 	if (Uflag == 1) warnx << "myID: " << thisID << "\n";
 	warnx << "compression: ";
 	if (compress == 1) warnx << "yes\n";
@@ -1888,7 +1935,7 @@ main(int argc, char *argv[])
 		mkdir(myroot.c_str(), 0775);
 
 		warnx << "joining Chord...\n";
-		std::string cmd = scripts + "/join_chord.sh " + sbport + " " + slport + " " + myroot;
+		cmd = scripts + "/join_chord.sh " + sbport + " " + slport + " " + myroot;
 		warnx << cmd.c_str() << "\n";
 		system(cmd.c_str());
 
@@ -2413,6 +2460,19 @@ main(int argc, char *argv[])
 			warnx << " txseq: " << txseq.back() << "\n";
 			roundtxmsglen = 0;
 			txseq.push_back(txseq.back() + 1);
+
+			if ((killme == true) && (killround == txseq.back())) {
+				warnx << "killing Chord processes...\n";
+				cmd = "kill -ABRT `cat " + std::string(rootdir) + "/pid.syncd`";
+				system(cmd.c_str());
+				cmd = "kill -ABRT `cat " + std::string(rootdir) + "/pid.lsd`";
+				system(cmd.c_str());
+				cmd = "kill -ABRT `cat " + std::string(rootdir) + "/pid.adbd`";
+				system(cmd.c_str());
+				warnx << "exiting gpsi...\n";
+				return 0;
+			}
+
 			warnx << "sleeping (xgossip)...\n";
 			gossipsleep = 0;
 			delaycb(gintval, 0, wrap(gossipsleepnow));
@@ -2498,6 +2558,7 @@ main(int argc, char *argv[])
 
  			// do not do it! why?
 			// put everything in allT[0]
+			/*
 			warnx << "merging by teamID into allT[0]...\n";
 			mergebyteamid();
 
@@ -2507,6 +2568,7 @@ main(int argc, char *argv[])
 				warnx << "lists (after merging by teamID)\n";
 				printlistall();
 			}
+			*/
 
 			allT.clear();
 			// put everything in allT[0]
@@ -6130,6 +6192,7 @@ usage(void)
 
              << "\tFILES:\n"
 	     << "      	-F		<hash funcs file>\n"
+	     << "      	-f		<killed hosts file>\n"
 	     << "      	-i		<chordIDs file>\n"
 	     << "      	-j		<irrpoly file>\n"
 	     << "	-L		<log file>\n"
@@ -6141,6 +6204,7 @@ usage(void)
 	     << "	-B		<bands for LSH>\n"
 					"\t\t\t(a.k.a. m groups)\n"
 	     << "	-d		<random prime number for LSH seed>\n"
+	     << "	-K		<range of rounds to kill itself>\n"
 	     << "	-k		<session rounds for churn peers>\n"
 	     << "      	-N		<how many instances/nodes>\n"
 	     << "      	-n		<how many chordIDs>\n"
