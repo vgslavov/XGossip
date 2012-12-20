@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.127 2012/11/28 17:05:04 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.128 2012/12/19 21:55:14 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -32,7 +32,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.127 2012/11/28 17:05:04 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.128 2012/12/19 21:55:14 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -1873,8 +1873,18 @@ main(int argc, char *argv[])
 	// pick random round to kill itself
 	if (killroundrange != 0) {
 		srand(loseed);
-		// TODO: verify range
-		killround = rand() % killroundrange + 1;
+		// TODO: fix this mess
+		int range;
+		// b/w 1 and 10
+		if (killroundrange == 10) {
+			range = killroundrange - 1 + 1;
+		// b/w 10 and 20
+		} else if (killroundrange == 20) {
+			range = killroundrange - 10 + 1;
+		} else {
+			fatal << "wrong kill range\n";
+		}
+		killround = rand() % range + 1;
 		warnx << "kill round: " << killround << "\n";
 	}
 	if (Uflag == 1) warnx << "myID: " << thisID << "\n";
