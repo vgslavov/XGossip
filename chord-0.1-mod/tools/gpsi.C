@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.129 2012/12/20 18:47:54 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.130 2012/12/20 19:08:36 vsfgd Exp vsfgd $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -32,7 +32,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.129 2012/12/20 18:47:54 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.130 2012/12/20 19:08:36 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -2648,6 +2648,7 @@ main(int argc, char *argv[])
 					warnx << "can't open results file" << initfiles[i].c_str() << "\n";
 					continue;
 				}
+				warnx << initfiles[i].c_str() << "\n";
 				if (loadresults(initfp, msgtype) == -1) warnx << "loadresults failed\n";
 				fclose(initfp);
 			}
