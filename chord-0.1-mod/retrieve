@@ -1,0 +1,35 @@
+./tools/gpsi.C:			dhash->insert(ID, (char *) value, valLen, wrap(store_cb), options, DHASH_NOAUTH);
+./tools/gpsi.C:			dhash->insert(ID, (char *) value, valLen, wrap(store_cb), NULL, DHASH_NOAUTH);
+./tools/gpsi.C:		dhash->retrieve(keyID, DHASH_NOAUTH, wrap(fetch_cb), sigdata, options);
+./tools/gpsi.C:		dhash->retrieve(keyID, DHASH_NOAUTH, wrap(fetch_cb), sigdata);
+./tools/gpsi.C:	warn << "\t" << __progname << " -Q -S dhash-sock -s sigdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 5 -R 10 -Z 4\n\n";
+./tools/gpsi.C:	warn << "\t" << __progname << " -Q -S dhash-sock -x xpathdir -F hashfile -d 1122941 -j irrpoly-deg9.dat -B 10 -R 16\n\n";
+./tools/gpsi.C:	warn << "\t" << __progname << " -S dhash-sock -G g-sock -L log.gpsi -s sigdir -g -t 120 -q 165 -p\n\n";
+./tools/gpsi.C:	warn << "\t" << __progname << " -S dhash-sock -G g-sock -L log.gpsi -s sigdir -g -t 120 -T 1 -w 900\n"
+./tools/psi.C:        	dhash->insert(ID, (char *) value, valLen, wrap(store_cb), options, DHASH_NOAUTH);
+./tools/psi.C:	        dhash->insert(ID, (char *) value, valLen, wrap(store_cb), NULL, DHASH_NOAUTH);
+./tools/psi.C:                dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb));
+./tools/psi.C:    	dhash->retrieve(keyID, DHASH_NOAUTH, wrap(fetch_cb), sigdata, options);
+./tools/psi.C:    	dhash->retrieve(keyID, DHASH_NOAUTH, wrap(fetch_cb), sigdata);
+./tools/psi.C:    dhash->retrieve(keyID, DHASH_NOAUTH, wrap(fetch_cb), sigdata, options);
+./tools/psi.C:                  dhash->retrieve(rootNodeID, DHASH_NOAUTH, wrap(fetch_cb));
+./tools/gis_chordID.C:	//dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb));
+./tools/gis_chordID.C:            //dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb));
+./tools/gis_chordID.C:	//dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb));
+./tools/gis_chordID.C:            //dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb));
+./tools/gis_chordID.C:	//dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb));
+./tools/gis_chordID.C:    //dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb));
+./tools/push_sum.C:			dhash->insert(ID, (char *) value, valLen, wrap(store_cb), options, DHASH_NOAUTH);
+./tools/push_sum.C:			dhash->insert(ID, (char *) value, valLen, wrap(store_cb), NULL, DHASH_NOAUTH);
+./tools/push_sum.C:		dhash->retrieve(keyID, DHASH_NOAUTH, wrap(fetch_cb), sigdata, options);
+./tools/push_sum.C:		dhash->retrieve(keyID, DHASH_NOAUTH, wrap(fetch_cb), sigdata);
+./tools/push_sum.C:	warn << "usage: " << __progname << " [-h] [-S dhash-sock] [-G g-sock] [-L logfile] [-f | -l | -g [-i interval in sec]]\n";
+./tools/dbm_noauth.C:  dhash->insert (compute_hash (key, strlen(key)), 
+./tools/dbm_noauth.C:  dhash->seteofcb (wrap (eofhandler));
+./tools/dbm.C:    dhash->insert ((char *)data[i], datasize, wrap (store_cb, getusec ()));
+./tools/dbm.C:  dhash->seteofcb (wrap (eofhandler));
+./tools/filestore.C:  dhash->insert (ID, buf, len, wrap(&insert_cb));
+./tools/filestore.C:    dhash->retrieve(ID, wrap(&gotblock_cb, 
+./tools/filestore.C:    dhash->retrieve(ID, wrap(&gotindirect_cb, 
+./tools/filestore.C:    dhash->retrieve(ID, wrap(&list_cb));
+./tools/filestore.C:    dhash->retrieve(ID, wrap(&gotinode_cb));

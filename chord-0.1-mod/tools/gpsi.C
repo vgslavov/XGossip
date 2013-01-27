@@ -1,4 +1,4 @@
-/*	$Id: gpsi.C,v 1.130 2012/12/20 19:08:36 vsfgd Exp vsfgd $	*/
+/*	$Id: gpsi.C,v 1.131 2013/01/27 00:48:15 vsfgd Exp $	*/
 
 #include <algorithm>
 #include <cmath>
@@ -32,7 +32,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.130 2012/12/20 19:08:36 vsfgd Exp vsfgd $";
+static char rcsid[] = "$Id: gpsi.C,v 1.131 2013/01/27 00:48:15 vsfgd Exp $";
 extern char *__progname;
 
 dhashclient *dhash;

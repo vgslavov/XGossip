@@ -1,4 +1,4 @@
-/*	$Id: push_sum.C,v 1.6 2009/07/09 16:05:29 vsfgd Exp vsfgd $ */
+/*	$Id: push_sum.C,v 1.7 2009/08/04 02:59:53 vsfgd Exp vsfgd $ */
 
 #include <cmath>
 #include <ctime>
@@ -21,7 +21,7 @@
 
 #define DEBUG 1
 
-//static char rcsid[] = "$Id: push_sum.C,v 1.6 2009/07/09 16:05:29 vsfgd Exp vsfgd $";
+//static char rcsid[] = "$Id: push_sum.C,v 1.7 2009/08/04 02:59:53 vsfgd Exp vsfgd $";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -250,7 +250,7 @@ main(int argc, char *argv[])
 			s = sum.back()/2;
 			w = weight.back()/2;
 			std::cout << "gossiping: (s/2, w/2) = (" << s << ", " << w << ")\n";
-			makeKeyValue(&value, valLen, key, s, w, GOSSIP);
+			makeKeyValue(&value, valLen, key, s, w, XGOSSIP);
 			status = insertDHT(ID, value, valLen, MAXRETRIES);
 			cleanup(value);
 
@@ -427,7 +427,7 @@ listen_gossip(void)
 {
 	unlink(gsock);
 	int fd = unixsocket(gsock);
-	if (fd < 0) fatal << "Error creating GOSSIP socket" << strerror (errno) << "\n";
+	if (fd < 0) fatal << "Error creating XGOSSIP socket" << strerror (errno) << "\n";
 
 	// make socket non-blocking
 	make_async(fd);
@@ -480,6 +480,7 @@ read_gossip(int fd)
 	//std::cout << "read from socket: KEY = " << gKey << ", VALUE (s, w) = ("
 	//	  << s << ", " << w << ")\n";
 
+	// XXX: increment seq when you receive or sent?
 	if (sum.empty() || weight.empty()) {
 		sum.push_back(s);
 		weight.push_back(w);

@@ -1,0 +1,604 @@
+#include <chord.h>
+#include <dhash.h>
+#include <dhash_common.h>
+
+#include "dhblock_noauth.h"
+#include "dhblock_noauth_srv.h"  
+#include "dhblock_noauth.h"
+
+#include "locationtable.h"
+#include "location.h"
+
+// Added by Praveen Rao
+#include "../utils/utils.h"
+
+// "fake" key to merkle on.. low 32 bits are hash of the block contents
+inline static u_int32_t
+mhashdata (str data)
+{
+  // get the low bits: xor of the marshalled words
+  u_int32_t *d = (u_int32_t *)data.cstr ();
+  u_int32_t hash = 0;
+  for (unsigned int i = 0; i < data.len ()/4; i++) 
+    hash ^= d[i];
+  
+  return hash;
+}
+
+// add new_data to existing key
+// returns NULL unless new_data added new sub-blocks
+str 
+merge_data (chordID key, str new_data, str prev_data)
+{
+  vec<str> new_elems = dhblock_noauth::get_payload (new_data.cstr (), 
+						    new_data.len ());
+  
+  vec<str> old_elems;
+  if (prev_data.len ()) 
+    old_elems = dhblock_noauth::get_payload (prev_data.cstr (), 
+					     prev_data.len ());
+
+  qhash<bigint, bool, hashID> old_hashes;
+  for (u_int i = 0; i < old_elems.size (); i++) {
+    old_hashes.insert (compute_hash (old_elems[i].cstr (), 
+				     old_elems[i].len ()),
+		       true);
+  }
+  
+  u_int pre_merge_size = old_elems.size ();
+  //look through the new data for sub blocks we don't have
+  for (u_int i = 0; i < new_elems.size (); i++) {
+    if (!old_hashes[compute_hash (new_elems[i].cstr (),
+				  new_elems[i].len ())]) {
+      //a new block, append it to old_elems
+      old_elems.push_back (new_elems[i]);
+    }
+  }
+    
+  if (old_elems.size () == pre_merge_size) {
+    return prev_data;
+  }
+
+  //otherwise, delete the old data block and insert the new marshalled one
+  str marshalled_block = dhblock_noauth::marshal_block (old_elems);
+  
+  return marshalled_block;
+}
+
+
+dhblock_noauth_srv::dhblock_noauth_srv (ptr<vnode> node, 
+					ptr<dhashcli> cli,
+					str desc, 
+					str dbname, str dbext, cbv donecb) :
+  dhblock_replicated_srv (node, cli, desc, dbname, dbext, DHASH_NOAUTH, donecb)
+{
+}
+
+
+void
+dhblock_noauth_srv::real_store (chordID dbkey,
+    str old_data, str new_data, cb_dhstat cb)
+{
+  dhash_stat resStatus = DHASH_OK;
+  //str dprep = merge_data (dbkey, new_data, old_data);
+
+  str dprep = adjust_data (dbkey, new_data, old_data, resStatus);
+  if (dprep.len() == 0) warnx << "Avoiding replica storage.\n";
+
+	if (resStatus == DHASH_CORRUPTHDR) {
+			cb(DHASH_CORRUPTHDR);
+			blockID mykey (dbkey, DHASH_NOAUTH);
+			warnx << "Issuing repair...\n";
+			real_repair(mykey, node->my_location(), NULL, NULL, NULL);
+	}
+	else if (resStatus == DHASH_NOTFIRST) {
+      //warnx << "Not the first peer\n";
+      cb(DHASH_NOTFIRST);
+  }
+  else if (resStatus == DHASH_FULL) {
+      //warnx << "Value list if full\n";
+      cb(DHASH_FULL);
+  }
+	else if (resStatus == DHASH_RETRYINSERT) {
+			cb(DHASH_RETRYINSERT);
+	}
+  else if (dprep != old_data) { //new data added something
+		//warnx << "DB key: " << dbkey << "\n";
+    chordID kdb = id_to_dbkey (dbkey);
+    // put the key in the merkle tree; kick out the old key
+    if (old_data.len ()) {
+      u_int32_t hash = mhashdata (old_data);
+      db->update (kdb, node->my_location (), hash, false);
+      db->remove (kdb, hash, wrap (this, &dhblock_noauth_srv::after_delete, 
+				   dbkey, dprep, cb));
+    } else
+      after_delete (dbkey, dprep, cb, ADB_OK);
+  } else {
+    // Don't need to do anything.
+    cb (DHASH_OK);
+  }
+}
+
+// Added by Praveen Rao
+str
+dhblock_noauth_srv::adjust_data (chordID key, str new_data, str prev_data,
+                                 dhash_stat& resStatus)
+{
+	const char *LEAFNODE = "node.leaf";
+	const char *NONLEAFNODE = "node.nonleaf";
+	const char *ROOTNODE = "node.root";
+	
+	static chordID LEAF = compute_hash(LEAFNODE, strlen(LEAFNODE));
+	static chordID NONLEAF = compute_hash(NONLEAFNODE, strlen(NONLEAFNODE));
+	static chordID ROOT = compute_hash(ROOTNODE, strlen(ROOTNODE));
+	
+
+	vec<str> old_elems;
+	// First get all the different entries
+	if (prev_data.len()) {
+		old_elems = dhblock_noauth::get_payload(prev_data.cstr(),
+            prev_data.len());
+	}
+
+	// Get the entry to be inserted
+	vec<str> new_elems = dhblock_noauth::get_payload(new_data.cstr(),
+        new_data.len());
+
+
+    // if new_elems.size() > 1, then we need to merge old and new as before!!!!
+    // we should use the header to get rid of old data,
+    // otherwise just merge the entries
+		if (new_elems.size() > 1) {
+    	warnx << "NEW: " << new_elems.size() << " OLD: " << old_elems.size() << "\n";
+		}
+    /*
+		bool exists = false;
+	  for (int i = 0; i < (int) old_elems.size(); i++) {
+			if (old_elems[i].len() == 72) {
+				exists = true;
+        warnx << "Contains header at " << i << "\n";
+				break;
+      }
+		}
+		if (!exists) {
+			warnx << "Header missing...\n";
+    }
+		*/
+
+    if (new_elems.size() > 1) {
+        // If old is empty, just copy the new
+				warnx << "Merging replicas...\n";
+        if (old_elems.size() == 0) {
+            old_elems = new_elems;
+        }
+        else {
+            str currKey, currValue;
+            Interval currInt;
+            getKeyValue(old_elems[0], currKey, currValue);
+            getInterval(currValue, currInt);
+			
+            str newKey, newValue;
+            Interval newInt;
+            getKeyValue(new_elems[0], newKey, newValue);
+            getInterval(newValue, newInt);
+
+            chordID cID;
+            str2chordID(currKey, cID);
+            
+            // merge
+	    if (newInt == currInt) {
+	      warnx << "Performing a node merge...\n";
+	      for (int k = 1; k < (int) new_elems.size(); k++) {
+		str newKey = "";
+		std::vector<POLY> newSig;
+		newSig.clear();
+		getKeyValue(new_elems[k].cstr(), newKey, newSig);
+		
+		bool found = false;
+		for (int l = 1; l < (int) old_elems.size(); l++) {
+		  str oldKey = ""; 
+		  std::vector<POLY> oldSig;
+		  oldSig.clear();
+		  
+		  getKeyValue(old_elems[l].cstr(), oldKey, oldSig);
+		  if (newKey == oldKey) { 
+		    found = true;
+		    lcm(oldSig, newSig);
+		    char *value;
+		    int valLen;
+		    makeKeyValue(&value, valLen, oldKey, oldSig, NONE);
+		    old_elems[l] = str(value, valLen);
+		    cleanup(value);
+
+		    break;
+		  }
+		}
+
+		// Not found -- add it
+		if (found == false) {
+		  if ((int) old_elems.size() <= MAXENTRIES) {
+		    old_elems.push_back(new_elems[k]);
+		  }
+		  else {
+		    warnx << "Node already FULL..\n";
+		  }
+		}
+	      }
+	    }
+            else if (newInt.rn * currInt.rd < newInt.rd * currInt.rn &&
+		     newInt.level == currInt.level) {
+	      warnx << "Replacing old node by new node contents...\n";
+	      old_elems = new_elems;
+            }
+            else if (newInt != currInt && 
+                     newInt.level > currInt.level) { // ROOT NODE
+	      old_elems = new_elems;
+            }
+	    else {
+	      assert(0);
+	    }
+        }
+
+				//warnx << "key: " << key << " # of entries: " << old_elems.size() << "\n";
+        str marshalled_block = dhblock_noauth::marshal_block(old_elems);
+  
+        return marshalled_block;
+    }
+
+
+    // Otherwise, we need to use the type field and update the node accordingly.
+		
+    // Let's look at the new list
+    // First look at the type
+
+    InsertType type;
+    memcpy(&type, new_elems[0].cstr(), sizeof(type));
+		//warnx << "ADJUST key: " << key << " " << old_elems.size() << " TYPE: " << type << "\n";
+    // get rid of the type field, and only have the key and value
+    str newElem(new_elems[0].cstr()+sizeof(type), new_elems[0].len()-sizeof(type));
+
+		//if (type == JUSTAPPEND) {
+		//	warnx << "Appending...\n";
+		//}
+    // Updates or replaces a particular (sig,ptr) pair
+    if (type == UPDATE || type == UPDATEIFPRESENT || 
+	type == UPDATEVAL || type == UPDATEVALIFPRESENT ||
+	type == REPLACESIG) {
+				// Make sure that header already exists,
+				// otherwise the node is useless!!!
+				if (old_elems.size() == 0) {
+					resStatus = DHASH_CORRUPTHDR;
+					return "";
+				}
+
+        assert(new_elems.size() == 1);
+        str newKey, childKey;
+        std::vector<POLY> newSig, childSig;
+        bool isUpdate = false;
+        
+        newKey = "";
+        newSig.clear();
+
+        getKeyValue(newElem.cstr(), newKey, newSig);
+
+	// Check if newKey is a ChordID if node is non-leaf
+        str currKey, currValue;
+        Interval currInt;
+        getKeyValue(old_elems[0], currKey, currValue);
+        getInterval(currValue, currInt);
+
+	// If level > 0 but key resembles a docid -- BAD
+	if (currInt.level > 0 && strstr(newKey.cstr(), "#")) {
+	  warnx << "Invalid child node pointer...\n";
+	  resStatus = DHASH_RETRYINSERT;
+	}
+	else if (currInt.level == 0 && strstr(newKey.cstr(), "#") && currInt.random == -1) {
+	  warnx << "ROOT is being split... So retry.\n";
+	  resStatus = DHASH_RETRYINSERT;
+	}
+	else {		
+                
+	  // skip the header
+	  for (int i = 1; i < (int) old_elems.size(); i++) {
+            childKey = "";
+            childSig.clear();
+	    
+            getKeyValue(old_elems[i].cstr(), childKey, childSig);
+            
+            if (childKey == newKey) {
+	      
+                if (type == UPDATE  || type == UPDATEIFPRESENT) {
+                    lcm(childSig, newSig);
+                }
+								else if (type == UPDATEVAL || type == UPDATEVALIFPRESENT) {
+		    					updateMBR(childSig, newSig);
+								}
+                else if (type == REPLACESIG) {
+                    //warnx << "Replacing entry in parent after split...\n";
+                    childSig = newSig;
+                }
+                else {
+                    assert(0);
+                }
+                
+                isUpdate = true;
+                
+                char *value;
+                int valLen;
+                makeKeyValue(&value, valLen, childKey, childSig, NONE);
+                old_elems[i] = str(value, valLen);
+                cleanup(value);
+                
+                // Can break after this step, but will leave it like that.
+            }
+        }
+
+        if (!isUpdate) {
+
+            
+            if (type != UPDATEIFPRESENT) {
+                if ((int) old_elems.size() > MAXENTRIES) { 
+                  resStatus = DHASH_FULL; 
+                }
+                else {
+                  old_elems.push_back(newElem);
+                }
+            }
+            // For UPDATEIFPRESENT, don't add the entry -- because a split occurred
+            // and the parent has moved to another node
+        }
+				}
+
+    }
+    else if (type == UPDATEHDRLOCK || type == UPDATEHDR) { // header update
+        assert(new_elems.size() == 1);
+
+        if (type == UPDATEHDRLOCK && old_elems.size() == 0) {
+            old_elems.push_back(newElem);
+        }
+				else if (type == UPDATEHDR && old_elems.size() == 0) { // Don't allow
+					resStatus = DHASH_RETRYINSERT;
+				}
+        else {
+            // this is not the first peer, so relax and don't update
+            // the database
+            if (type == UPDATEHDRLOCK) {
+								//warnx << "HDR size: " << old_elems[0].len() << "\n";
+								// To take care of MAY BE TROUBLE warning
+                str currKey, currValue;
+                Interval currInt;
+                getKeyValue(old_elems[0], currKey, currValue);
+                getInterval(currValue, currInt);
+                
+                str newKey, newValue;
+                Interval newInt;
+                getKeyValue(newElem, newKey, newValue);
+                getInterval(newValue, newInt);
+								
+								//warnx << "CURR int: " << currInt.ln << " " << currInt.ld << " " << currInt.rn << " " << currInt.rd << " " << currInt.random << "\n";
+								//warnx << "NEW int: " << newInt.ln << " " << newInt.ld << " " << newInt.rn << " " << newInt.rd << " " << newInt.random << "\n";
+
+								resStatus = DHASH_NOTFIRST;
+								/*if (currInt == newInt && currInt.random == newInt.random) {
+               		// do nothing!
+								}
+								else {
+									resStatus = DHASH_NOTFIRST;
+								}*/
+            }
+            else {
+                str currKey, currValue;
+                Interval currInt;
+                getKeyValue(old_elems[0], currKey, currValue);
+                getInterval(currValue, currInt);
+                
+                str newKey, newValue;
+                Interval newInt;
+                getKeyValue(newElem, newKey, newValue);
+                getInterval(newValue, newInt);
+				
+                //warnx << newKey << " CURR LEVEL: " << currInt.level << " NEW LEVEL: "
+                //      << newInt.level << "\n";
+				
+                // Can do some verification like change of node types
+                // type cannot change from leaf to non-leaf/root or
+                // from non-leaf to leaf/root
+
+								// ALL OKAY
+                if (newInt.ld == currInt.ld && newInt.ln == currInt.ln) {
+                
+                	// Update the interval
+                	if (newInt.rn * currInt.rd < newInt.rd * currInt.rn) {
+                  	  currInt.rn = newInt.rn;
+                  	  currInt.rd = newInt.rd;
+                	}
+                
+                	// Only for the root, the level can change (increase)
+               	 	chordID nodeType;
+               		str2chordID(currKey, nodeType);
+
+                	if (nodeType == ROOT) {
+                    if (currInt.level == 0 && newInt.level == 1) {
+											if (currInt.random == -1)
+												currInt.random = newInt.random;
+										}
+
+                    if (currInt.level < newInt.level) {
+                    	currInt.level = newInt.level;
+                    }
+
+										// Adjusting header to avoid docids to be inserted into non-leaf nodes
+										// and then changing it back to the original
+										if (newInt.level == currInt.level && currInt.level == 0) {
+											if (newInt.random == -1)
+												currInt.random = newInt.random;
+										}
+
+               	  }	
+                
+                	char *hdrVal;
+                	int hdrLen;
+                	makeKeyValue(&hdrVal, hdrLen, currKey, currInt);
+                
+                	// updating the header!!!
+                	old_elems[0] = str(hdrVal, hdrLen);
+                	cleanup(hdrVal);
+								}
+								else {
+									warnx << "Header inconsistency...\n";
+									resStatus = DHASH_CORRUPTHDR;
+								}
+            }
+        }
+    }
+    else if (type == SPLIT) { // splitting a node -- add and remove entries
+
+        //warnx << "SPLIT: " << key << " " << old_elems.size() << "\n";
+        
+        if ((int) old_elems.size() > MAXENTRIES) {
+
+            vec<str> update_elems;
+            str childSigStr;
+						str childKey;
+            
+            // Make sure to remove those specified in new_elems[k]
+
+            // Copy the header
+            update_elems.push_back(old_elems[0]);
+           
+						double beginTime = getgtod(); 
+            // Skip the header
+            for (int i = 1; i < (int) old_elems.size(); i++) {
+                childKey = "";
+                childSigStr = "";
+                
+                getKeyValue(old_elems[i].cstr(), childKey, childSigStr);
+                
+                const char *ptr = newElem.cstr();
+                bool isPresent = false;
+                //warnx << "Processing " << i << "\n"; 
+                while (ptr < newElem.cstr() + newElem.len()) {
+                    // Delete all those specified
+                    int entryLen;
+                    memcpy(&entryLen, ptr, sizeof(entryLen));
+                    ptr += sizeof(entryLen);
+                    str keyToDelete;
+                    str sigToDelete;
+                    
+                    //getKeyValue(ptr, keyToDelete, sigToDelete);
+                    getKeyValueSpecial(ptr, keyToDelete);
+                    
+                    //warnx << "Child key: " << childKey << " Key to delete: "
+                    //      << keyToDelete << "\n";
+                    
+                    if (childKey == keyToDelete) {
+                        //if (sigToDelete != childSigStr) {
+                        //    warnx << "We missed an update... Alert peer to refresh\n";
+                        //}
+                        isPresent = true;
+                        break;
+                    }
+                    
+                    ptr += entryLen;
+                }
+                
+                if (!isPresent) {
+                    update_elems.push_back(old_elems[i]);
+                }
+            }
+        
+						double endTime = getgtod(); 
+						int timeTaken = (int) ((endTime - beginTime) * 1000.0);
+						warnx << "Delete time: " << timeTaken << " msecs\n";
+            //warnx << "Size of UPDATE ELEMS: " << update_elems.size() << "\n";
+						//warnx << "key: " << key << " # of entries: " << update_elems.size() << "\n";
+            str marshalled_block = dhblock_noauth::marshal_block(update_elems);
+			
+            return marshalled_block;
+        }
+        else if (old_elems.size() == 1) {
+            // Only header present -- 
+            // Get all the keys and add them
+            //warnx << "SIZE IS ONE..." << key << "\n";
+            const char *ptr = newElem.cstr();
+            int count = 0;
+            while (ptr < newElem.cstr() + newElem.len()) {
+                int entryLen;
+                memcpy(&entryLen, ptr, sizeof(entryLen));
+                ptr += sizeof(entryLen);
+                str entryToAdd(ptr, entryLen);
+                //warnx << "Entry to add: " << entryToAdd << "\n";
+                // Add to existing list
+                old_elems.push_back(entryToAdd);
+                ptr += entryLen;
+                count++;
+            }
+            //warnx << "Inserted into new node " << count << "\n";
+        }
+        
+    }
+    else if (type == JUSTAPPEND) { // no need to check for FULL
+						//warnx << "Appending for real...\n";
+						if (old_elems.size() == 0) {
+							resStatus = DHASH_CORRUPTHDR;
+						}
+						else {
+            	old_elems.push_back(newElem);
+						}
+    }
+    else if (type > 0) { // regular value append - used by iindex
+        if ((int) old_elems.size() > MAXENTRIES) {
+            resStatus = DHASH_FULL;
+        }
+        else {
+            old_elems.push_back(new_elems[0]);
+        }
+        //warnx << "Incorrect type...\n";
+        //assert(0);
+    }
+    
+
+	//warnx << "key: " << key << " # of entries: " << old_elems.size() << "\n";
+	str marshalled_block = dhblock_noauth::marshal_block(old_elems);
+  
+    return marshalled_block;
+}
+
+
+void
+dhblock_noauth_srv::after_delete (chordID key, str data, cb_dhstat cb,
+				  adb_status err)
+{
+  assert (err == ADB_OK);
+  u_int32_t hash = mhashdata (data);
+
+  warn << node->my_ID () << " db write: " 
+       << "U " << key << " " << data.len ()  << "\n";
+  db_store (key, data, hash, cb); 
+  db->update (key, node->my_location (), hash, true);
+}
+
+
+// =====================================================
+
+void
+dhblock_noauth_srv::real_repair (blockID key, ptr<location> me, u_int32_t *myaux, ptr<location> them, u_int32_t *theiraux)
+{
+  ptr<repair_job> job;
+  if (!myaux) {
+    // We're missing, so fetch it.
+    job = New refcounted<rjrep> (key, me, mkref (this));
+    repair_add (job);
+  } else {
+    if (!theiraux) {
+      job = New refcounted<rjrep> (key, them, mkref (this));
+      repair_add (job);
+    } else if (*theiraux != *myaux) {
+      // No way of knowing who is newer, so let's swap.
+      job = New refcounted<rjrep> (key, me, mkref (this));
+      repair_add (job);
+      job = New refcounted<rjrep> (key, them, mkref (this));
+      repair_add (job);
+    }
+  }
+}

@@ -1,0 +1,65 @@
+# Praveen Rao
+Download gcc-4.0.2 from gcc website. or get from me.
+/home/rpraveen/gcc-4.0.2/configure   --prefix=/home/rpraveen/gcc  --enable-languages=c,c++
+
+
+download chord-0.1 and sfslite-0.8.16 from the Chord website. get the files
+from mid 2007.
+
+change the variable in  /usr/include/stat.h --- ununsed to unused1
+
+install berkeley dbxml-2.2.13 with db-4.3.29
+
+Configure command...
+
+../dist/configure --prefix=/home/rpraveen/bdb --enable-cxx --with-pthread=yes
+
+
+Set CC and CXX
+set LDFLAGS=/home/rpraveen/gcc/lib64
+/home/rpraveen/sfslite-0.8.16/configure --with-sfsmisc
+
+
+Chord-0.1
+
+/home/rpraveen/chord-0.1/configure --with-sfs=../sfslite --with-db=/home/rpraveen/bdb CC=/home/rpraveen/gcc/bin/gcc CXX=/home/rpraveen/gcc/bin/g++ LDFLAGS=-L/home/rpraveen/gcc/lib64
+
+DONT delete sfslite-0.8.16, since header in here are used...
+
+Files to change/add
+
+dhash/dhblock_noauth_srv.h
+dhash/dhblock_noauth_srv.C
+dhash/client.C
+svc/dhash_types.x
+tools/Makefile.in
+tools/Makefile.am
+tools/cache.h
+tools/invertedIndex.C
+tools/nodeparams.h
+tools/poly.h
+tools/psi.C
+tools/psi.h
+tools/utils.C
+tools/utils.h
+
+
+
+Compiling and building for Planet lab.
+
+1. Dynamically linked libraries don't work..
+2. Statically link them on i686 or i386 machines... like cy01
+3. For each g++ or ../libtool command make sure there are no .so
+4. if pthread is missing add /usr/lib/libpthread.a before -l options
+5. use ldd <exe name> to make sure there are no dlls..
+6. You need to build the executables in lsd and tools directory.
+
+
+
+To change retrieve timeout, modify sfs async/core.C selwait.tv...
+
+
+RUNNING on CACTUS
+SFSLITE as before...
+
+../chord-0.1/configure --with-sfs=../sfslitenew --with-db=/home/raopr/bdb CC=gcc CXX=g++ LDFLAGS='-L/usr/lib64 -lpthread'

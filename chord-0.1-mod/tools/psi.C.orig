@@ -1,0 +1,2233 @@
+// Psi - Peer-to-peer Signature Index. Twig Query processing in P2P Environments.
+// Author: Praveen Rao
+// University of Arizona/University of Missouri-Kansas City
+#include "psi.h"
+#include <chord.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <dhash_common.h>
+#include <dhashclient.h>
+#include <dhblock.h>
+#include <dhblock_keyhash.h>
+#include <sys/time.h>
+#include <string>
+#include <math.h>
+#include <iostream>
+#include "poly.h"
+#include "utils.h"
+#include <vector>
+#include <map>
+#include <utility>
+#include "utils.C"
+#include "nodeparams.h"
+#include "cache.h"
+
+dhashclient *dhash;
+int out;
+
+DHTStatus insertDocument(str&, std::vector<POLY>&, int, int, int, int, int);
+DHTStatus insertDocument(str&, std::vector<POLY>&, char *);
+str pickChild(vec<str>&, std::vector<POLY>&);
+void splitNode(vec<str>&, std::vector<int>&, std::vector<int>&,
+    std::vector<POLY>&);
+void getKey(str&, str&);
+void getKeyValue(str&, str&, str&);
+void makeKeyValue(char **, int&, str&, std::vector<POLY>&,
+    InsertType);
+void makeKeyValue(char **, int&, str&, Interval&,
+    InsertType);
+void makeKeyValue(char **, int&, vec<str>&, std::vector<int>&,
+    InsertType);
+DHTStatus insertDHT(chordID, char *, int, int = -1);
+
+DHTStatus performSplit(chordID, Interval&, chordID);
+
+DHTStatus performSplitRoot(chordID, Interval&);
+int pSim(std::vector<POLY>&, std::vector<POLY>&,
+    std::vector<POLY>&, bool);
+DHTStatus createEmptyIndex(chordID);
+
+//void queryProcess(std::vector<str>&, std::vector<POLY>&);
+//void queryProcess(str&, std::vector<std::vector<POLY> >&, int, int, int);
+void queryProcess(str&, std::vector<std::vector<POLY> >&);
+void verifyProcess(char *, std::vector<std::vector<POLY> >&, int);
+int getNumReplicas(int, int);
+
+DHTStatus insertStatus;
+vec<chordID> fullNodeIDs;
+std::vector<Interval> fullNodeInts;
+std::string INDEXNAME;
+
+// entries of a node
+vec<str> nodeEntries;
+
+bool insertError;
+bool retrieveError;
+
+// hash table statistics
+int numReads;
+int numWrites;
+int numDocs;
+int cacheHits;
+
+// pSim
+bool metric;
+
+// to avoid repeated node visits during query processing
+// can happen due to concurrent operations
+// can be avoided by periodic cleanup
+std::map<std::string, bool> listOfVisitedNodes;
+
+// Node split related stuff
+std::vector<int> group1, group2;
+std::vector<POLY> lcm1, lcm2;
+
+unsigned int seedForRand;
+
+// Hash table to store nodes that are full, just serves as a cache!!!
+std::map<std::string, bool> cacheOfFullNodes;
+
+// For verification
+std::map<int, std::vector<int> > docMatchList;
+
+// Data transfered
+int dataFetched = 0, dataStored = 0;
+
+// Fetch callback for NOAUTH...
+void
+fetch_cb (dhash_stat stat, ptr<dhash_block> blk, vec<chordID> path)
+{
+    out++;
+
+	if (stat != DHASH_OK) {
+		warnx << "Failed to fetch key...\n";
+		retrieveError = true;
+		return;
+	}
+
+    if (blk) {
+        strbuf buf;
+        
+#ifdef _DEBUG_
+        buf << " /times=";
+        for (u_int i = 0; i < blk->times.size (); i++)
+            buf << " " << blk->times[i];
+        buf << " /";
+        
+        buf << "hops= " << blk->hops << " errors= " <<  blk->errors
+            << "vretries= " << blk->retries << " ";
+		buf << " path: ";
+        for (u_int i=0; i < path.size (); i++) {
+            buf << path[i] << " ";
+        }
+        
+        buf << " : ";
+        
+#endif
+        if (blk->vData.size () > 0) {
+            //warn << blk->vData.size () << "\n";
+            
+            for (unsigned int i = 0; i < blk->vData.size (); i++) {
+                nodeEntries.push_back(blk->vData[i]);
+                dataFetched += nodeEntries[i].len();
+            }
+        }
+        else {
+            nodeEntries.push_back(blk->data);
+        }
+        
+        // Output hops
+        warnx << "HOPS: " << blk->hops << "\n";
+        numReads++;
+        
+#ifdef _DEBUG_ 
+        warnx << "Retrieve information: " << buf << "\n";
+#endif
+    }
+}
+
+void
+store_cb (dhash_stat status, ptr<insert_info> i)
+{
+    out++;
+
+    if (status == DHASH_NOTFIRST) {
+        insertStatus = NOTFIRST;
+    }
+    else if (status == DHASH_FULL) {
+        insertStatus = FULL;
+    }
+    else if (status != DHASH_OK) {
+        warnx << "Failed to store key...\n";
+        insertError = true;
+    }
+    else {
+        numWrites++;
+        warnx << "Key stored successfully...\n";
+    }
+}
+
+
+int main(int argc, char *argv[]) {
+	
+    if(argc < 7) {
+		std::cout << "Usage: " << argv[0]
+                  << " sockname " // argv[1]
+                  << " -[dD,iI,qQ,v,M,S] "  // argv[2]
+                  << " signaturefile|#oflevels|level " // argv[3]
+                  << " fanout|verifyqueryfile " // argv[4]
+                  << " count " // argv[5]
+                  << " docidtype [0=string,>0=int] " // argv[6]
+                  << " <metric=1|gcd=0> " // argv[7]
+                  << " <cache size> " // argv[8]
+                  << std::endl;
+		exit(1);
+	}
+
+	char *cmd = argv[2];
+	
+	if (!strcmp(cmd, "-v")) {
+		dhash = NULL;
+	}
+	else {
+		dhash = New dhashclient(argv[1]);
+	}
+    chordID ID;
+
+	// pSim metric
+	metric = argv[7] ? (bool) atoi(argv[7]) : false;
+		
+	// Cache size
+	cacheSize = argv[8] ? atoi(argv[8]) : 0;
+	freeSpace = cacheSize;
+	
+	// Initialize node types
+	LEAF = compute_hash(LEAFNODE, strlen(LEAFNODE));
+	NONLEAF = compute_hash(NONLEAFNODE, strlen(NONLEAFNODE));
+	ROOT = compute_hash(ROOTNODE, strlen(ROOTNODE));
+
+	int maxCount = atoi(argv[5]);
+	int randDelay = atoi(argv[4]);
+    int docidType = atoi(argv[6]);
+
+	//warnx << "Irreducible polynomial degree: " << irrPolyDegree << "\n";
+	warnx << "Fan out: " << MAXENTRIES << "\n";
+	
+	// Time measurement
+	double startTime = getgtod();
+	seedForRand = (unsigned int) startTime;
+	
+	numReads = numWrites = dataReadSize = cacheHits = 0;
+
+	// Compute the root node key for the tree
+	chordID rootNodeID;
+
+    if (!strcmp(cmd, "-d")) { // Single index
+		// Dump an index that has a root and a single leaf
+        INDEXNAME = "";
+        std::string root = INDEXNAME + std::string(ROOTNODEID);
+        rootNodeID = compute_hash(root.c_str(), root.length());
+        warnx << "Root node id for index " << INDEXNAME.c_str() << " : " << rootNodeID << "\n";
+  
+		DHTStatus stat = createEmptyIndex(rootNodeID);
+        if (stat == FAIL) {
+            warnx << "Creation of empty index failed...\n";
+        }
+    }
+    else if (!strcmp(cmd, "-D")) { // Multiple indexes
+        std::string elementFile = std::string(argv[3]);
+
+        FILE *fp = fopen(elementFile.c_str(), "r");
+        char elementName[128];
+        
+        if (fp) {
+            while (1) {
+
+                if (fscanf(fp, "%s", elementName) == EOF) break;
+
+                std::string eName(elementName);
+                
+                // Do not create for attributes
+                if (eName.find(ATTRSUFFIX, 0) == std::string::npos)
+                    continue;
+                                
+                INDEXNAME = std::string(elementName);
+                std::string root = INDEXNAME + std::string(ROOTNODEID);
+                rootNodeID = compute_hash(root.c_str(), root.length());
+                warnx << "Root node id for index " << INDEXNAME.c_str() << " : " << rootNodeID << "\n";
+                
+                DHTStatus stat = createEmptyIndex(rootNodeID);
+                if (stat == FAIL) {
+                    warnx << "Creation of empty index failed...\n";
+                }
+                warnx << "Sleeping 10 seconds\n";
+                
+                sleep (10);
+            }
+
+            fclose(fp);
+        }
+    }
+    else if (!strcmp(cmd, "-q")) {
+        INDEXNAME = "";
+        std::string root = INDEXNAME + std::string(ROOTNODEID);
+        rootNodeID = compute_hash(root.c_str(), root.length());
+        warnx << "Root node id for index " << INDEXNAME.c_str() << " : " << rootNodeID << "\n";
+          
+		double totalTime = 0;
+		// Cache tree nodes
+		nodeCache.clear();
+		lruCache.clear();
+		// Read the query signatures from a file
+		// Read the DHT from root to leaf
+		std::string queryFile(argv[3]);
+		FILE *qfp = fopen(queryFile.c_str(), "r");
+		assert(qfp);
+
+		int count = 1;
+		
+		while (count <= maxCount) {
+
+			// DON'T use readData to retrieve signatures from input files...
+			// since the size filed uses POLY as a basic unit and not byte...
+			// Format is <n = # of sigs><sig size><sig>... n times...
+			int numSigs;
+			if (fread(&numSigs, sizeof(numSigs), 1, qfp) != 1) {
+				break;
+			}
+			assert(numSigs > 0);
+
+			std::vector<std::vector<POLY> > listOfSigs;
+			listOfSigs.clear();
+			
+			for (int t = 0; t < numSigs; t++) {
+				POLY *buf;
+				int size;
+				if (fread(&size, sizeof(int), 1, qfp) != 1) {
+					assert(0);
+				}
+				
+				buf = new POLY[size];
+				assert(buf);
+				if (fread(buf, sizeof(POLY), size, qfp) != (size_t) size) {
+					assert(0);
+				}
+				
+				std::vector<POLY> sig;
+				sig.clear();
+				for (int i = 0; i < size; i++) {
+					sig.push_back(buf[i]);
+				}
+
+				listOfSigs.push_back(sig);
+				// free the allocated memory
+				delete[] buf;
+			}
+			
+			warnx << "******* Processing query " << count << " ********\n";
+			numReads = numWrites = dataReadSize = cacheHits = 0;
+			strbuf s;
+			s << rootNodeID;
+			str rootID(s);
+
+			warnx << "Number of signatures: " << listOfSigs.size() << "\n";
+			if ((int) listOfSigs.size() > MAXSIGSPERQUERY) {
+				warnx << "Skipping this query...\n";
+			}
+			else {
+				numDocs = 0;
+				listOfVisitedNodes.clear();
+				
+				double beginQueryTime = getgtod();
+				queryProcess(rootID, listOfSigs);
+				double endQueryTime = getgtod();
+				std::cout << "Query time: " << endQueryTime - beginQueryTime << std::endl;
+				totalTime += (endQueryTime - beginQueryTime);
+				warnx << "Num docs: " << numDocs << "\n";
+			}
+			
+#ifdef _DEBUG_
+			
+#endif
+			warnx << "Data read: " << dataFetched << "\n";
+            warnx << "Data write: " << dataStored << "\n";
+			warnx << "Num reads: " << numReads << "\n";
+			//warnx << " num writes: " << numWrites << "\n";
+			warnx << "Cache hits: " << cacheHits << "\n";
+			warnx << "******** Finished query processing *********\n\n\n";
+			count++;
+
+			if (count != maxCount + 1) {
+                warnx << "Sleeping...\n";
+                sleep(1 + (int) ((double) randDelay * (rand() / (RAND_MAX + 1.0))));
+			}
+		}
+		
+		fclose(qfp);
+		std::cout << "Time taken: " << totalTime << std::endl;
+	}
+    else if (!strcmp(cmd, "-Q")) {
+                  
+		double totalTime = 0;
+		// Cache tree nodes
+		nodeCache.clear();
+		lruCache.clear();
+		// Read the query signatures from a file
+		// Read the DHT from root to leaf
+		std::string queryFile(argv[3]);
+		FILE *qfp = fopen(queryFile.c_str(), "r");
+		assert(qfp);
+
+        // Open the tags files too...
+		std::string tagsFile = queryFile + std::string(TAGFILE);
+		
+		FILE *fpTags = fopen(tagsFile.c_str(), "r");
+		assert(fpTags);
+
+		// Open the tag depth file...
+		std::string tagDepth = queryFile + std::string(TAGDEPTH);
+		FILE *fpTagDepth = fopen(tagDepth.c_str(), "r");
+		assert(fpTagDepth);
+
+		int count = 1;
+		
+		while (count <= maxCount) {
+
+			// DON'T use readData to retrieve signatures from input files...
+			// since the size filed uses POLY as a basic unit and not byte...
+			// Format is <n = # of sigs><sig size><sig>... n times...
+			int numSigs;
+			if (fread(&numSigs, sizeof(numSigs), 1, qfp) != 1) {
+				break;
+			}
+			assert(numSigs > 0);
+
+			std::vector<std::vector<POLY> > listOfSigs;
+			listOfSigs.clear();
+			
+			for (int t = 0; t < numSigs; t++) {
+				POLY *buf;
+				int size;
+				if (fread(&size, sizeof(int), 1, qfp) != 1) {
+					assert(0);
+				}
+				
+				buf = new POLY[size];
+				assert(buf);
+				if (fread(buf, sizeof(POLY), size, qfp) != (size_t) size) {
+					assert(0);
+				}
+				
+				std::vector<POLY> sig;
+				sig.clear();
+				for (int i = 0; i < size; i++) {
+					sig.push_back(buf[i]);
+				}
+
+				listOfSigs.push_back(sig);
+				// free the allocated memory
+				delete[] buf;
+			}
+			
+			warnx << "******* Processing query " << count << " ********\n";
+			numReads = numWrites = dataReadSize = cacheHits = 0;
+
+            // Read the distinct tags
+			std::vector<std::string> distinctTags;
+			distinctTags.clear();
+
+			// Tag depth
+			std::vector<std::string> tagDepth;
+			tagDepth.clear();
+			
+			readTags(fpTags, distinctTags);
+			readTags(fpTagDepth, tagDepth);
+
+            // Pick the highest depth entry
+            int maxDepth = -1;
+            int maxDepthId = -1;
+            for (int p = 0; p < (int) tagDepth.size(); p++) {
+                if (atoi(tagDepth[p].c_str()) > maxDepth) {
+                    maxDepth = atoi(tagDepth[p].c_str());
+                    maxDepthId = p;
+                }
+            }
+            
+			
+            INDEXNAME = distinctTags[maxDepthId];
+
+            std::string root = INDEXNAME + std::string(ROOTNODEID);
+            rootNodeID = compute_hash(root.c_str(), root.length());
+            warnx << "Root node id for index " << INDEXNAME.c_str() << " : " << rootNodeID << "\n";
+
+            strbuf s;
+			s << rootNodeID;
+			str rootID(s);
+
+			warnx << "Number of signatures: " << listOfSigs.size() << "\n";
+			if ((int) listOfSigs.size() > MAXSIGSPERQUERY) {
+				warnx << "Skipping this query...\n";
+			}
+			else {
+				numDocs = 0;
+				listOfVisitedNodes.clear();
+				
+				double beginQueryTime = getgtod();
+				queryProcess(rootID, listOfSigs);
+				double endQueryTime = getgtod();
+				std::cout << "Query time: " << endQueryTime - beginQueryTime << std::endl;
+				totalTime += (endQueryTime - beginQueryTime);
+				warnx << "Num docs: " << numDocs << "\n";
+			}
+			
+#ifdef _DEBUG_
+			
+#endif
+			warnx << "Data read: " << dataFetched << "\n";
+            warnx << "Data write: " << dataStored << "\n";
+			warnx << "Num reads: " << numReads << "\n";
+			//warnx << " num writes: " << numWrites << "\n";
+			warnx << "Cache hits: " << cacheHits << "\n";
+			warnx << "******** Finished query processing *********\n\n\n";
+			count++;
+
+			if (count != maxCount + 1) {
+                warnx << "Sleeping...\n";
+                sleep(1 + (int) ((double) randDelay * (rand() / (RAND_MAX + 1.0))));
+			}
+		}
+		
+		fclose(qfp);
+        fclose(fpTags);
+        fclose(fpTagDepth);
+		std::cout << "Time taken: " << totalTime << std::endl;
+	}
+	else if (!strcmp(cmd, "-v")) {
+		// Read the query signatures from a file
+		// Read the DHT from root to leaf
+		std::string queryFile(argv[4]);
+		FILE *qfp = fopen(queryFile.c_str(), "r");
+		assert(qfp);
+
+		int count = 1;
+		while (count <= maxCount) {
+
+			// DON'T use readData to retrieve signatures from input files...
+			// since the size filed uses POLY as a basic unit and not byte...
+			// Format is <n = # of sigs><sig size><sig>... n times...
+			int numSigs;
+			if (fread(&numSigs, sizeof(numSigs), 1, qfp) != 1) {
+				break;
+			}
+			assert(numSigs > 0);
+
+			std::vector<std::vector<POLY> > listOfSigs;
+			listOfSigs.clear();
+			
+			for (int t = 0; t < numSigs; t++) {
+				POLY *buf;
+				int size;
+				if (fread(&size, sizeof(int), 1, qfp) != 1) {
+					assert(0);
+				}
+				
+				buf = new POLY[size];
+				assert(buf);
+				if (fread(buf, sizeof(POLY), size, qfp) != (size_t) size) {
+					assert(0);
+				}
+				
+				std::vector<POLY> sig;
+				sig.clear();
+				for (int i = 0; i < size; i++) {
+					sig.push_back(buf[i]);
+				}
+
+				listOfSigs.push_back(sig);
+				// free the allocated memory
+				delete[] buf;
+			}
+			
+			//if ((int) listOfSigs.size() > MAXSIGSPERQUERY) {
+			if (0) {
+				warnx << "Skipping query verification...\n";
+			}
+			else {
+				// Verify the query signature(s) with the data signatures!
+				verifyProcess(argv[3], listOfSigs, count);
+			}
+			//warnx << "******** Finished verifying queries *********\n\n\n";
+			count++;
+			
+		}
+
+		// print the docMatchList
+		for (std::map<int, std::vector<int> >::iterator itr = docMatchList.begin();
+             itr != docMatchList.end(); itr++) {
+			for (int i = 0; i < (int) itr->second.size(); i++) {
+				std::cout << itr->second[i] << " ";
+			}
+			std::cout << "\n";
+		}
+		
+		fclose(qfp);
+	}
+	else if (!strcmp(cmd, "-i")) {
+        INDEXNAME = "";
+        std::string root = INDEXNAME + std::string(ROOTNODEID);
+        rootNodeID = compute_hash(root.c_str(), root.length());
+        warnx << "Root node id for index " << INDEXNAME.c_str() << " : " << rootNodeID << "\n";
+  
+		// Insert new signatures
+		std::string dataFile(argv[3]);
+		FILE *sigfp = fopen(dataFile.c_str(), "r");
+		assert(sigfp);
+
+		int count = 1;
+		while (count <= maxCount) {
+
+			// DONT use readData to retrieve signatures from input files...
+			// since the size filed uses POLY as a basic unit and not byte...
+			// Read numSigs <it should be 1> for data signatures...
+			int numSigs;
+			if (fread(&numSigs, sizeof(int), 1, sigfp) != 1) {
+				break;
+			}
+            warnx << "NUM sigs: " << numSigs << "\n";
+			assert(numSigs == 1);
+			
+			int size;
+			
+			if (fread(&size, sizeof(int), 1, sigfp) != 1) {
+				assert(0);
+			}
+
+			warnx << "Signature size: " << size << "\n";
+
+			std::vector<POLY> sig;
+			sig.clear();
+			POLY e;
+			for (int i = 0; i < size; i++) {
+				if (fread(&e, sizeof(POLY), 1, sigfp) != 1) {
+					assert(0);
+				}
+				sig.push_back(e);
+			}
+
+            char docId[128];
+			// Read the document id
+            if (docidType > 0) {
+                int id;
+                if (fread(&id, sizeof(id), 1, sigfp) != 1) {
+                    assert(0);
+                }
+                sprintf(docId, "%d", id);
+            }
+            else {
+                int len;
+                // len of docid string includes \0
+                if (fread(&len, sizeof(len), 1, sigfp) != 1) {
+                    assert(0);
+                }
+                
+                if (fread(&docId, len, 1, sigfp) != 1) {
+                    assert(0);
+                }
+            }
+            
+            warnx << "**********************************************************\n";
+			warnx << "*            Inserting document " << docId << " ********\n";
+            warnx << "**********************************************************\n";
+			// ROOT node id			
+			strbuf s;
+			s << rootNodeID;
+			str rootID(s);
+			DHTStatus status;
+
+			warnx << "ROOT ID: " << rootID << "\n";
+#ifdef _DEBUG_
+			for (int l = 0; l < (int) sig.size(); l++) {
+				warnx << sig[l] << " ";
+			}
+			warnx << "\n";
+#endif
+			while (1) {
+
+                // Keep track of full nodes and their headers
+                fullNodeIDs.clear();
+                fullNodeInts.clear();
+                
+				status = insertDocument(rootID, sig, docId);
+
+				if (status == REINSERT) {
+					sleep(5);
+					warnx << "Reinsert in progress..., slept for 5 seconds...\n";
+				}
+				else {
+					break;
+				}
+			}
+			
+			if (status == SUCC) {
+				warnx << "***** Finished document insert successfully *******\n";
+			}
+			else if (status == FAIL) {
+				warnx << "*+*+*+* Document insert FAILED *+*+*+*\n";
+			}
+			else if (status == FULL) {
+				warnx << "*-*-*-* Index is full!!!! *-*-*-*\n";
+				break;
+			}
+			
+			count++;
+			
+			if (count != maxCount + 1) {
+                warnx << "Sleeping...\n";
+                sleep(1 + (int) ((double) randDelay * (rand() / (RAND_MAX + 1.0))));
+			}
+		}
+		
+		fclose(sigfp);
+        warnx << "Data read: " << dataFetched << "\n";
+        warnx << "Data write: " << dataStored << "\n";
+		warnx << "Number of documents inserted: " << count - 1 << "\n";
+		warnx << "Number of full nodes: " << cacheOfFullNodes.size() << "\n";
+		double finishTime = getgtod();
+		
+		std::cout << "Time taken: " << finishTime - startTime << std::endl;
+	}
+    else if (!strcmp(cmd, "-I")) {
+        INDEXNAME = "";
+        std::string root = INDEXNAME + std::string(ROOTNODEID);
+        rootNodeID = compute_hash(root.c_str(), root.length());
+        warnx << "Root node id for index " << INDEXNAME.c_str() << " : " << rootNodeID << "\n";
+  
+		// Insert new signatures
+		std::string dataFile(argv[3]);
+		FILE *sigfp = fopen(dataFile.c_str(), "r");
+		assert(sigfp);
+
+        // Open the tags files too...
+		std::string tagsFile = dataFile + std::string(TAGFILE);
+		
+		FILE *fpTags = fopen(tagsFile.c_str(), "r");
+		assert(fpTags);
+
+		// Open the tag depth file...
+		std::string tagDepth = dataFile + std::string(TAGDEPTH);
+		FILE *fpTagDepth = fopen(tagDepth.c_str(), "r");
+		assert(fpTagDepth);
+
+		int count = 1;
+		while (count <= maxCount) {
+
+			// DONT use readData to retrieve signatures from input files...
+			// since the size filed uses POLY as a basic unit and not byte...
+			// Read numSigs <it should be 1> for data signatures...
+			int numSigs;
+			if (fread(&numSigs, sizeof(int), 1, sigfp) != 1) {
+				break;
+			}
+            warnx << "NUM sigs: " << numSigs << "\n";
+			assert(numSigs == 1);
+			
+			int size;
+			
+			if (fread(&size, sizeof(int), 1, sigfp) != 1) {
+				assert(0);
+			}
+
+			warnx << "Signature size: " << size << "\n";
+
+			std::vector<POLY> sig;
+			sig.clear();
+			POLY e;
+			for (int i = 0; i < size; i++) {
+				if (fread(&e, sizeof(POLY), 1, sigfp) != 1) {
+					assert(0);
+				}
+				sig.push_back(e);
+			}
+
+            char docId[128];
+			// Read the document id
+            if (docidType > 0) {
+                int id;
+                if (fread(&id, sizeof(id), 1, sigfp) != 1) {
+                    assert(0);
+                }
+                sprintf(docId, "%d", id);
+            }
+            else {
+                int len;
+                // len of docid string includes \0
+                if (fread(&len, sizeof(len), 1, sigfp) != 1) {
+                    assert(0);
+                }
+                
+                if (fread(&docId, len, 1, sigfp) != 1) {
+                    assert(0);
+                }
+            }
+			
+            warnx << "**********************************************************\n";
+			warnx << "*            Inserting document " << docId << " ********\n";
+            warnx << "**********************************************************\n";
+
+            // Read the distinct tags
+			std::vector<std::string> distinctTags;
+			distinctTags.clear();
+
+			// Tag depth
+			std::vector<std::string> tagDepth;
+			tagDepth.clear();
+			
+			readTags(fpTags, distinctTags);
+			readTags(fpTagDepth, tagDepth);
+
+            // Each H-index based on tagname!
+            for (int ts = 1; ts < (int) distinctTags.size(); ts++) {
+
+                // Do not insert for attributes
+                if (distinctTags[ts].find(ATTRSUFFIX, 0) == std::string::npos)
+                    continue;
+                
+                INDEXNAME = distinctTags[ts];
+
+                std::string root = INDEXNAME + std::string(ROOTNODEID);
+                rootNodeID = compute_hash(root.c_str(), root.length());
+                warnx << "Root node id for index " << INDEXNAME.c_str() << " : " << rootNodeID << "\n";
+
+                // ROOT node id			
+                strbuf s;
+                s << rootNodeID;
+                str rootID(s);
+                DHTStatus status;
+
+                warnx << "ROOT ID: " << rootID << "\n";
+#ifdef _DEBUG_
+                for (int l = 0; l < (int) sig.size(); l++) {
+                    warnx << sig[l] << " ";
+                }
+                warnx << "\n";
+#endif
+                while (1) {
+
+                    // Keep track of full nodes and their headers
+                    fullNodeIDs.clear();
+                    fullNodeInts.clear();
+                
+                    status = insertDocument(rootID, sig, docId);
+
+                    if (status == REINSERT) {
+                        sleep(5);
+                        warnx << "Reinsert in progress... slept for 5 seconds...\n";
+                    }
+                    else {
+                        break;
+                    }
+                }
+			
+                if (status == SUCC) {
+                    warnx << "***** Finished document insert successfully *******\n";
+                }
+                else if (status == FAIL) {
+                    warnx << "*+*+*+* Document insert FAILED *+*+*+*\n";
+                }
+                else if (status == FULL) {
+                    warnx << "*-*-*-* Index is full!!!! *-*-*-*\n";
+                    break;
+                }
+			
+                count++;
+			
+                if (count != maxCount + 1) {
+                    warnx << "Sleeping...\n";
+                    sleep(1 + (int) ((double) randDelay * (rand() / (RAND_MAX + 1.0))));
+                }
+            }
+        }
+		
+		fclose(sigfp);
+        fclose(fpTags);
+        fclose(fpTagDepth);
+        
+        warnx << "Data read: " << dataFetched << "\n";
+        warnx << "Data write: " << dataStored << "\n";
+		warnx << "Number of documents inserted: " << count - 1 << "\n";
+		warnx << "Number of full nodes: " << cacheOfFullNodes.size() << "\n";
+		double finishTime = getgtod();
+		
+		std::cout << "Time taken: " << finishTime - startTime << std::endl;
+	}
+	else if (!strcmp(cmd, "-S")) {
+		// Insert new signatures
+		std::string dataFile(argv[3]);
+		FILE *sigfp = fopen(dataFile.c_str(), "r");
+		assert(sigfp);
+
+        std::string textHashFile = dataFile + std::string(TEXTHASHFILE);
+        FILE *fpTextHash = fopen(textHashFile.c_str(), "r");
+
+        std::string histFile = dataFile + std::string(HISTFILE);
+        FILE *fpHist = fopen(histFile.c_str(), "r");
+
+        assert(fpTextHash && fpHist);
+                                                        
+            
+		int count = 1;
+		while (count <= maxCount) {
+
+			// DONT use readData to retrieve signatures from input files...
+			// since the size filed uses POLY as a basic unit and not byte...
+			// Read numSigs <it should be 1> for data signatures...
+			int numSigs;
+			if (fread(&numSigs, sizeof(int), 1, sigfp) != 1) {
+				break;
+			}
+            warnx << "NUM sigs: " << numSigs << "\n";
+			assert(numSigs == 1);
+			
+			int size;
+			
+			if (fread(&size, sizeof(int), 1, sigfp) != 1) {
+				assert(0);
+			}
+
+			warnx << "Signature size: " << size << "\n";
+
+			std::vector<POLY> sig;
+			sig.clear();
+			POLY e;
+			for (int i = 0; i < size; i++) {
+				if (fread(&e, sizeof(POLY), 1, sigfp) != 1) {
+					assert(0);
+				}
+				sig.push_back(e);
+			}
+
+			// Read the document id
+			int docId;
+			if (fread(&docId, sizeof(docId), 1, sigfp) != 1) {
+				assert(0);
+			}
+
+            warnx << "**********************************************************\n";
+			warnx << "*            Inserting document " << docId << " ********\n";
+            warnx << "**********************************************************\n";
+
+            // First insert text hash
+            // Format
+            // #
+            // POLY num <POLY>...
+            int numPoly;
+            fread(&numPoly, sizeof(numPoly), 1, fpTextHash);
+
+            for (int i = 0; i < numPoly; i++) {
+                POLY keyPoly;
+
+                fread(&keyPoly, sizeof(keyPoly), 1, fpTextHash);
+
+                int size;
+                fread(&size, sizeof(size), 1, fpTextHash);
+
+                POLY temp;
+                std::vector<POLY> textHash;
+                textHash.clear();
+                
+                for (int j = 0; j < size; j++) {
+                    fread(&temp, sizeof(temp), 1, fpTextHash);
+
+                    textHash.push_back(temp);
+                }
+
+                // Now use keyPoly as key, and (textHash, signature, docId) as value
+                char chordkey[128];
+                sprintf(chordkey, "%u", keyPoly);
+
+                char *value;
+                int valLen;
+
+                makeKeyValue(&value, valLen, textHash, sig, docId, APPEND);
+                DHTStatus stat = insertDHT(compute_hash(chordkey, strlen(chordkey)),
+                    value, valLen);
+                cleanup(value);
+                
+                if (stat == SUCC) {
+                    warnx << "Text has successfully inserted\n";
+                }
+                else {
+                    warnx << "Failed to insert text hash for docid " << docId << "\n";
+                    
+                }
+            }
+
+
+            // Next insert value histogram
+            // Format
+            // #
+            // POLY num <float-left float-right count> ...
+            fread(&numPoly, sizeof(numPoly), 1, fpTextHash);
+
+            for (int i = 0; i < numPoly; i++) {
+                POLY keyPoly;
+
+                fread(&keyPoly, sizeof(keyPoly), 1, fpHist);
+
+                int size;
+                fread(&size, sizeof(size), 1, fpHist);
+
+                float left, right;
+                int count;
+
+                fread(&left, sizeof(left), 1, fpHist);
+                fread(&right, sizeof(right), 1, fpHist);
+                fread(&count, sizeof(count), 1, fpHist);
+
+
+                // Now use keyPoly as key, and (num-left-right-count, signature, docId) as value
+                
+            }
+			
+			count++;
+			
+			if (count != maxCount +  1) {
+                warnx << "Sleeping...\n";
+                sleep(1 + (int) ((double) randDelay * (rand() / (RAND_MAX + 1.0))));
+			}
+		}
+
+        fclose(sigfp);
+        fclose(fpTextHash);
+        fclose(fpHist);
+        
+        warnx << "Data write: " << dataStored << "\n";
+		warnx << "Number of documents inserted: " << count - 1 << "\n";
+		warnx << "Number of full nodes: " << cacheOfFullNodes.size() << "\n";
+		double finishTime = getgtod();
+		
+		std::cout << "Time taken: " << finishTime - startTime << std::endl;
+	}
+	else {
+		fatal("Invalid option\n");
+    }
+
+    //double finishTime = getgtod();
+		
+    //std::cout << "Time taken: " << finishTime - startTime << std::endl;
+    //amain(); Asynchronous interface, requires probably exit()
+    // from callbacks. eg. if (inflight == 0) exit(0);
+    return 0;
+}
+
+// Verification process, the set of correct matches...
+void verifyProcess(char *fileName, std::vector<std::vector<POLY> >& listOfSigs,
+    int queryid)
+{
+	int numMatches = 0;
+	FILE *sigfp = fopen(fileName, "r");
+
+	std::vector<POLY> oldSig;
+	std::vector<POLY> sig;
+	
+	int loopCount = 0;
+
+	while (1) {
+		int numSigs;
+		if (fread(&numSigs, sizeof(int), 1, sigfp) != 1) {
+			break;
+		}
+		assert(numSigs == 1);
+		
+		int size;
+		
+		if (fread(&size, sizeof(int), 1, sigfp) != 1) {
+			assert(0);
+		}
+
+		// clear old sig
+		sig.clear();
+		POLY e;
+		for (int i = 0; i < size; i++) {
+			if (fread(&e, sizeof(POLY), 1, sigfp) != 1) {
+				assert(0);
+			}
+			sig.push_back(e);
+		}
+
+		int docId;
+		if (fread(&docId, sizeof(docId), 1, sigfp) != 1) {
+			assert(0);
+		}
+
+		int dega = getDegree(sig);
+		
+		//warnx << "Deg a: " << dega << "\n";
+		for (int j = 0; j < (int) listOfSigs.size(); j++) {
+			std::vector<POLY> rem;
+			// Test for divisibility!!!
+			rem.clear();
+
+			int degb = getDegree(listOfSigs[j]);
+
+			//warnx << "Deg b: " << degb << "\n";
+			
+			if (dega >= degb) {
+				//remainder(rem, sig, listOfSigs[j]);
+				//double beginTime = getgtod();
+				remainder(rem, sig, listOfSigs[j]);
+				//double endTime = getgtod();
+				//std::cerr << "REM time: " << endTime - beginTime << "\n";
+			}
+
+			if (rem.size() == 1 && rem[0] == (POLY) 0) {
+				//warnx << "==== Found match ==== DOCID: " << docId << "\n";
+				//warnx << docId << "\n";
+				std::map<int, std::vector<int> >::iterator titr;
+				titr = docMatchList.find(loopCount);
+				
+				if (titr != docMatchList.end()) {
+					titr->second.push_back(queryid);
+					
+				}
+				else {
+					std::vector<int> e;
+					e.push_back(queryid);
+					docMatchList[loopCount] = e;
+				}
+				
+				numMatches++;
+				break;
+			}
+		}
+
+		// If any document if not matched, just add an empty entry
+		if (docMatchList.find(loopCount) == docMatchList.end()) {
+			std::vector<int> e;
+			docMatchList[loopCount] = e;
+		}
+		
+		loopCount++;
+	}
+
+	fclose(sigfp);
+}
+
+// Computes the similarity between two signatures
+int pSim(std::vector<POLY>& s1, std::vector<POLY>& s2,
+    std::vector<POLY>& mygcd, bool isMetric)
+{
+	int retVal;
+	if (isMetric) {
+        std::vector<POLY> mylcm;
+		mylcm.push_back((POLY) 0x1);
+		lcm(mylcm, s1);
+		lcm(mylcm, s2);
+		double val = (double) (INT_MAX-1) * getDegree(mygcd) / getDegree(mylcm);
+		retVal = (int) val;
+	}
+	else {
+		retVal = getDegree(mygcd);
+	}
+	//warnx << "PSim: " << retVal << "\n";
+	return retVal;
+}
+
+// Pick the best child
+// Tie-breaking strategies not EMPLOYED YET!!!
+str pickChild(vec<str>& nodeEntries, std::vector<POLY>& sig)
+{
+	std::vector<POLY> entrySig;
+	std::vector<POLY> gcdPoly;
+	int maxGCDDegree = -1;
+	int sigDegree, bestChildSigDegree = -1;
+	str bestChild = "NULL";
+	str childKey;
+
+	//warnx << "# of node entries for pick child: "
+	//			<< nodeEntries.size() << "\n";
+	
+	// The first entry has the nodetype/interval
+	for (int i = 1; i < (int) nodeEntries.size(); i++) {
+		childKey = "";
+		entrySig.clear();
+		getKeyValue(nodeEntries[i].cstr(), childKey, entrySig);
+
+		// degree of this signature
+		sigDegree = getDegree(entrySig);
+		
+		// First compute GCD with the entry to be inserted
+		gcdPoly.clear();
+		
+		// Compute GCD
+		gcdSpecial(gcdPoly, entrySig, sig);
+		
+        int deg = pSim(entrySig, sig, gcdPoly, metric);
+		//warnx << "Pick child degree: " << deg << "\n";
+		if (deg > maxGCDDegree) {
+			maxGCDDegree = deg;
+			bestChild = childKey;
+			bestChildSigDegree = sigDegree;
+		}
+		else if (deg == maxGCDDegree) {
+			// Choose the smallest degree signature.
+			// For split nodes, till they are fixed properly.
+			// tie breaker
+			if (sigDegree < bestChildSigDegree) {
+				bestChild = childKey;
+				bestChildSigDegree = sigDegree;
+			}
+		}
+	}
+
+	return bestChild;
+}
+
+
+// Split a node
+void splitNode(vec<str>& entries,
+    std::vector<int>& group1,
+    std::vector<int>& group2,
+    std::vector<POLY>& lcm1,
+    std::vector<POLY>& lcm2)
+{
+	std::vector<std::vector<POLY> > sigList;
+	vec<str> IDList;
+	
+	str ID, sigStr;
+	std::vector<POLY> s;
+
+    assert(entries.size() > 0);
+
+	// Read in the signatures
+	for (int i = 1; i < (int) entries.size(); i++) {
+		getKeyValue(entries[i], ID, sigStr);
+        //warnx << "Check id: " << ID << "\n";
+		IDList.push_back(ID);
+		s.clear();
+
+		POLY *sigPtr = (POLY *) sigStr.cstr();
+		for (int j = 0; j < (int) sigStr.len()/(int) sizeof(POLY); j++) {
+			s.push_back(sigPtr[j]);
+		}
+		sigList.push_back(s);
+	}
+
+	std::multimap<int, int> sortedSigList;
+	// Sort them based on degree
+	for (int i = 0; i < (int) sigList.size(); i++) {
+		int deg = getDegree(sigList[i]);
+        //warnx << "Check degree: " << deg << "\n";
+		sortedSigList.insert(std::pair<int, int>(deg, i));
+	}
+	
+	int seed1 = -1, seed2 = -1;
+	std::vector<POLY> gcdPoly;
+	int minDeg = INT_MAX;
+	
+	// Find the two most dissimilar
+	//for (int i = 0; i < sigList.size() - 1; i++) {
+	std::multimap<int, int>::iterator endItrI = sortedSigList.end();
+	endItrI--;
+	
+	for (std::multimap<int, int>::iterator itrI = sortedSigList.begin();
+         itrI != endItrI; itrI++) {
+		itrI++;
+		std::multimap<int, int>::iterator itrJ = itrI;
+		itrI--;
+		
+		for (; itrJ != sortedSigList.end(); itrJ++) {
+			gcdPoly.clear();
+			gcdSpecial(gcdPoly, sigList[itrI->second], sigList[itrJ->second]);
+
+			//int deg = getDegree(gcdPoly);
+			int deg = pSim(sigList[itrI->second], sigList[itrJ->second], gcdPoly,
+                metric);
+            //warnx << "Degree: " << deg << "\n";
+			if (deg < minDeg) {
+				seed1 = itrI->second;
+				seed2 = itrJ->second;
+				minDeg = deg;
+			}
+			
+			if (deg < 0) break;
+		}
+	}
+
+	group1.push_back(seed1+1);
+	group2.push_back(seed2+1);
+
+    //warnx << "SEED1 : " << seed1
+    //      << "  SEED2 : " << seed2
+    //      << "\n";
+	lcm1 = sigList[seed1];
+	lcm2 = sigList[seed2];
+
+	std::vector<POLY> gcd1, gcd2;
+	
+	//for (int i = 0; i < sigList.size(); i++) {
+	for (std::multimap<int, int>::iterator itr = sortedSigList.begin();
+         itr != sortedSigList.end(); itr++) {
+		if (itr->second == seed1 || itr->second == seed2) continue;
+
+		gcd1.clear();
+		gcd2.clear();
+		
+		gcdSpecial(gcd1, lcm1, sigList[itr->second]);
+		gcdSpecial(gcd2, lcm2, sigList[itr->second]);
+
+		//int deg1 = getDegree(gcd1);
+		//int deg2 = getDegree(gcd2);
+		int deg1 = pSim(lcm1, sigList[itr->second], gcd1, metric);
+		int deg2 = pSim(lcm2, sigList[itr->second], gcd2, metric);
+
+		if (deg1 > deg2) {
+			lcm(lcm1, sigList[itr->second]);
+			group1.push_back(itr->second+1);
+		}
+		else if (deg1 < deg2) {
+			lcm(lcm2, sigList[itr->second]);
+			group2.push_back(itr->second+1);
+		}
+		else {
+			if (group1.size() <= group2.size()) {
+				lcm(lcm1, sigList[itr->second]);
+				group1.push_back(itr->second+1);
+			}
+			else {
+				lcm(lcm2, sigList[itr->second]);
+				group2.push_back(itr->second+1);
+			}
+		}		
+	}
+	/*
+	// Print the two groups
+	warnx << "GROUP 1 \n";
+	for (int i = 0; i < (int) group1.size(); i++) {
+    warnx << group1[i] << " ";
+	}
+
+	warnx << "\n";
+	
+	warnx << "GROUP 2 \n";
+	for (int i = 0; i < (int) group2.size(); i++) {
+    warnx << group2[i] << " ";
+	}
+
+	warnx << "\n";
+	*/
+	return;
+}
+
+DHTStatus insertDHT(chordID ID, char *value, int valLen, int randomNum)
+{
+	warnx << "Storing key: " << ID << "\n";
+    dataStored += valLen;
+    int numTries = 0;
+    
+    do {    
+        out = 0;
+        insertError = false;
+        insertStatus = SUCC;
+        double beginTime = getgtod();    
+        dhash->insert(ID, (char *) value, valLen, wrap(store_cb), NULL, DHASH_NOAUTH);
+        while (out == 0) acheck();
+        double endTime = getgtod();    
+        std::cout << "Key insert time: " << endTime - beginTime << "\n";
+        if (!insertError) {
+          return insertStatus;
+        }
+        numTries++;
+
+        // If UPDATEHDRLOCK is used, then need to handle the error
+        if (insertError && randomNum >= 0) {
+            while (1) {
+                nodeEntries.clear();
+                // now fetch the node
+                out = 0;
+                retrieveError = false;
+                
+                dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb));
+                
+                while (out == 0) acheck();
+                
+                if (retrieveError) {
+                    warnx << "Failed to retrieve key during insertion...\n";
+                    continue;
+                }
+
+                // NOT FIRST, so just do as before
+                if (nodeEntries.size() > 1) {
+                    break;
+                }
+
+                // Check the random number
+                str nodeType, b;
+                Interval nodeInt;
+                
+                getKeyValue(nodeEntries[0], nodeType, b);
+                
+                getInterval(b, nodeInt);
+                // This peer is actually the first
+                if (nodeInt.random == randomNum) {
+                    insertError = false;
+                    return SUCC;
+                }
+            
+            }
+        }
+        
+        if (insertError && numTries == MAXRETRIES) {
+            warnx << "Error during INSERT operation...\n";
+            return FAIL;
+        }
+        warnx << "Sleeping 30 seconds...\n";
+        sleep(30);
+    } while (insertError);
+
+	return insertStatus;
+}
+
+
+// split the root node with only one peer authorized to do it
+DHTStatus performSplitRoot(chordID ID, Interval& oldInt)
+{
+    vec<str> entries;
+	
+    nodeEntries.clear();
+	// now fetch the node
+	out = 0;
+	retrieveError = false;
+	
+	dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb));
+
+	while (out == 0) acheck();
+
+	if (retrieveError) {
+		warnx << "Failed to retrieve key during insertion...\n";
+		return FAIL;
+	}
+
+	// Copy it -- currently no other solution
+	entries = nodeEntries;
+
+    // Already split!!! so don't do anything more...
+    if ((int) entries.size() <= MAXENTRIES) {
+        return FAIL;
+    }
+    
+	str nodeType, b;
+	Interval nodeInt;
+		
+    getKeyValue(entries[0], nodeType, b);
+
+	getInterval(b, nodeInt);
+
+    // Test the old header seen and what is seen now...
+    if (oldInt != nodeInt) {
+        return FAIL;
+    }
+
+	// split the node
+	group1.clear();
+	group2.clear();
+	lcm1.clear();
+	lcm2.clear();
+
+#ifdef _DEBUG_
+	// Printing the node
+	warnx << "------> ";
+	for (int i = 0; i < (int) entries.size(); i++) {
+		warnx << entries[i] << "        ";
+	}
+	warnx << "\n";
+#endif
+	
+	splitNode(entries, group1, group2, lcm1, lcm2);
+
+	// Original node ask it to delete the second part...
+	// The new node, make sure it does not have the first part...
+	// Then we can guarantee eventual correctness guarantee...
+			
+    // Key - already known
+	// Format of value - <type=SPLIT><interval><group1><group2>
+	Interval firstNodeInt, secondNodeInt, myInt;
+	firstNodeInt.ln = 0;
+	firstNodeInt.ld = 1;
+	firstNodeInt.rn = 1;
+	firstNodeInt.rd = 2;
+	firstNodeInt.level = nodeInt.level;
+	firstNodeInt.random = randomNumGen(RAND_MAX);
+
+	secondNodeInt.ln = 1;
+	secondNodeInt.ld = 2;
+	secondNodeInt.rn = 1;
+	secondNodeInt.rd = 1;
+	secondNodeInt.level = nodeInt.level;
+	secondNodeInt.random = randomNumGen(RAND_MAX);
+
+	myInt.ln = nodeInt.ln;
+	myInt.ld = nodeInt.ld;
+	myInt.rn = nodeInt.rn;
+	myInt.rd = nodeInt.rd;
+	myInt.level = nodeInt.level + 1;
+
+    // Key - new key from Interval -- includes level information
+	// for uniqueness
+	char tempBuf[128];
+	sprintf(tempBuf, "%s.%d.%d.%d", INDEXNAME.c_str(), firstNodeInt.level, firstNodeInt.ln, firstNodeInt.ld);
+	chordID firstNodeID;
+	firstNodeID = compute_hash(tempBuf, strlen(tempBuf));
+	strbuf s;
+	s << firstNodeID;
+	str firstChildID = str(s);
+			
+	char *value;
+	int valLen;
+
+	char *hdrVal;
+	int hdrLen;
+
+    strbuf s1;
+	s1 << NONLEAF;
+	str nonLeafType(s1);
+	makeKeyValue(&hdrVal, hdrLen, nonLeafType, firstNodeInt, UPDATEHDRLOCK);
+
+    warnx << "-------------- Performing Root Split ------------------\n";
+	// step 1: Create sibling node
+		
+	DHTStatus stat = insertDHT(firstNodeID, hdrVal, hdrLen, firstNodeInt.random);
+	cleanup(hdrVal);
+
+	if (stat == FAIL || stat == FULL) return FAIL;
+
+    // This peer has authority to finish the split
+    if (stat != NOTFIRST) {
+        // step 2: Insert contents to the newly created node...
+        makeKeyValue(&value, valLen, entries, group1, SPLIT);
+
+        stat = insertDHT(firstNodeID, value, valLen);
+        cleanup(value);
+
+        if (stat == FAIL || stat == FULL) return FAIL;
+
+        // step 3: Create the second node
+        sprintf(tempBuf, "%s.%d.%d.%d", INDEXNAME.c_str(), secondNodeInt.level, secondNodeInt.ln, secondNodeInt.ld);
+        chordID secondNodeID;
+        secondNodeID = compute_hash(tempBuf, strlen(tempBuf));
+
+        strbuf s2;
+        s2 << secondNodeID;
+        str secondChildID(s2);
+        
+        makeKeyValue(&hdrVal, hdrLen, nonLeafType, secondNodeInt, UPDATEHDR);
+        
+        		
+        DHTStatus stat = insertDHT(secondNodeID, hdrVal, hdrLen);
+        cleanup(hdrVal);
+        
+        if (stat == FAIL || stat == FULL) return FAIL;
+
+        // step 4: Insert contents to the newly created node...
+        makeKeyValue(&value, valLen, entries, group2, SPLIT);
+
+        stat = insertDHT(secondNodeID, value, valLen);
+        cleanup(value);
+
+        if (stat == FAIL || stat == FULL) return FAIL;
+        
+        // step 5: Next delete all the contents from the original node
+        std::vector<int> group3 = group1;
+        for (int i = 0; i < (int) group2.size(); i++) {
+            group3.push_back(group2[i]);
+        }
+        makeKeyValue(&value, valLen, entries, group3, SPLIT);
+        
+        stat = insertDHT(ID, value, valLen);
+        cleanup(value);
+        
+        if (stat == FAIL || stat == FULL) return FAIL;
+
+
+        // step 6: Now add links to the two new children
+        makeKeyValue(&value, valLen, firstChildID, lcm1, UPDATE);
+        stat = insertDHT(ID, value, valLen);
+        cleanup(value);
+        if (stat == FAIL || stat == FULL) return FAIL;
+        
+        makeKeyValue(&value, valLen, secondChildID, lcm2, UPDATE);
+        stat = insertDHT(ID, value, valLen);
+        cleanup(value);
+        if (stat == FAIL || stat == FULL) return FAIL;
+        
+        // step 7: Update the header of the original node
+        makeKeyValue(&hdrVal, hdrLen, nodeType, myInt, UPDATEHDR);
+        
+        stat = insertDHT(ID, hdrVal, hdrLen);
+        cleanup(hdrVal);
+        if (stat == FAIL || stat == FULL) return FAIL;
+    }
+    else if (stat == NOTFIRST) { // Will await header change
+        int waitInterval = 1;
+        vec<str> myNodeEntries;
+        
+        while (1) {
+            warnx << "Sleeping " << waitInterval << " seconds..\n";
+            sleep(waitInterval);
+            out = 0;
+            nodeEntries.clear();
+            retrieveError = false;
+            
+            dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb));
+            
+            while (out == 0) acheck();
+            
+            if (retrieveError) {
+                warnx << "Unable to read node " << ID << "\n";
+                return FAIL;
+            }
+            
+            //warnx << "Number of entries: " << nodeEntries.size() << "\n";
+
+            // Copy it -- currently no other solution
+            myNodeEntries.clear();
+            myNodeEntries = nodeEntries;
+
+            str a, b;
+            Interval mynodeInt;
+
+            //warnx << "# of node entries: " << myNodeEntries.size() << "\n";
+            
+            getKeyValue(myNodeEntries[0], a, b);
+            
+            getInterval(b, mynodeInt);
+
+            // Check the header for change
+            if (nodeInt == mynodeInt) {
+                waitInterval *= 2;    
+            }
+            else {
+                warnx << "------ Root header has changed ------\n";
+                break;
+            }
+            
+        }
+    }
+
+	return NODESPLIT;
+}
+
+// Perform non root node splits
+DHTStatus performSplit(chordID ID, Interval& oldInt, chordID pID)
+{
+    vec<str> entries;
+	
+    nodeEntries.clear();
+	// now fetch the node
+	out = 0;
+	retrieveError = false;
+	
+	dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb));
+
+	while (out == 0) acheck();
+
+	if (retrieveError) {
+		warnx << "Failed to retrieve key during insertion...\n";
+		return FAIL;
+	}
+
+	// Copy it -- currently no other solution
+	entries = nodeEntries;
+
+    // Already split!!! so don't do anything more...
+    if ((int) entries.size() <= MAXENTRIES) {
+        return FAIL;
+    }
+    
+	str nodeType, b;
+	Interval nodeInt;
+		
+    getKeyValue(entries[0], nodeType, b);
+
+	getInterval(b, nodeInt);
+
+    // Test the old header seen and what is seen now
+    if (oldInt != nodeInt) {
+        return FAIL;
+    }
+
+    // split the node
+	group1.clear();
+	group2.clear();
+	lcm1.clear();
+	lcm2.clear();
+
+#ifdef _DEBUG_
+	// Printing the node
+	warnx << "------> ";
+	for (int i = 0; i < (int) entries.size(); i++) {
+		warnx << entries[i] << "        ";
+	}
+	warnx << "\n";
+#endif
+	
+	splitNode(entries, group1, group2, lcm1, lcm2);
+
+	// Original node ask it to delete the second part...
+	// The new node, make sure it does not have the first part...
+	// Then we can guarantee eventual correctness guarantee...
+			
+	// Key - already known
+	// Format of value - <type=SPLIT><interval><group1><group2>
+	Interval myInt, mySiblingInt;
+	mySiblingInt.ln = nodeInt.ln + nodeInt.rn;
+	mySiblingInt.ld = nodeInt.ld + nodeInt.rd;
+	mySiblingInt.rn = nodeInt.rn;
+	mySiblingInt.rd = nodeInt.rd;
+	mySiblingInt.level = nodeInt.level;
+	mySiblingInt.random = randomNumGen(RAND_MAX);
+			
+	myInt.ln = nodeInt.ln;
+	myInt.ld = nodeInt.ld;
+	myInt.rn = mySiblingInt.ln;
+	myInt.rd = mySiblingInt.ld;
+	myInt.level = nodeInt.level;
+	myInt.random = nodeInt.random;
+
+	//warnx << "NODE LEVEL: " << nodeInt.level << "\n";
+	
+	// Key - new key from Interval -- includes level information
+	// for uniqueness
+	char tempBuf[128];
+	sprintf(tempBuf, "%s.%d.%d.%d", INDEXNAME.c_str(), mySiblingInt.level, mySiblingInt.ln, mySiblingInt.ld);
+	chordID siblingID;
+	siblingID = compute_hash(tempBuf, strlen(tempBuf));
+	strbuf s;
+	s << siblingID;
+	str newChildID = str(s);
+			
+	char *value;
+	int valLen;
+
+	char *hdrVal;
+	int hdrLen;
+
+
+    //warnx << "Size group1: " << group1.size() << "\n";
+    //warnx << "Size group2: " << group2.size() << "\n";
+    
+    warnx << "------ Performing Non Root Node Splitting -------\n";
+    
+    while (1) {
+        // step 1: Create sibling node
+		
+        makeKeyValue(&hdrVal, hdrLen, nodeType, mySiblingInt, UPDATEHDRLOCK);
+        DHTStatus stat = insertDHT(siblingID, hdrVal, hdrLen, mySiblingInt.random);
+        cleanup(hdrVal);
+
+        if (stat == FAIL || stat == FULL) return FAIL;
+
+        // This peer has authority to finish the split
+        if (stat != NOTFIRST) {
+
+            warnx << "I am the first!\n";
+        
+            // step 2: Insert contents to the newly created node...
+            makeKeyValue(&value, valLen, entries, group2, SPLIT);
+
+            stat = insertDHT(siblingID, value, valLen);
+            cleanup(value);
+
+            if (stat == FAIL || stat == FULL) return FAIL;
+        
+            // step 3: Now update parent entry
+            makeKeyValue(&value, valLen, newChildID, lcm2, UPDATE);
+            DHTStatus stat = insertDHT(pID, value, valLen);
+            cleanup(value);
+            if (stat == FAIL || stat == FULL) return FAIL;
+
+            // step 3.1: Update the original parent entry
+            strbuf o;
+            o << ID;
+            str myID = str(o);
+        
+            makeKeyValue(&value, valLen, myID, lcm1, REPLACESIG); 
+            stat = insertDHT(pID, value, valLen);
+            cleanup(value);
+        
+            if (stat == FAIL || stat == FULL) return FAIL;
+        
+
+            // step 4: Next delete the moved contents from the original node
+            makeKeyValue(&value, valLen, entries, group2, SPLIT);
+        
+            stat = insertDHT(ID, value, valLen);
+            cleanup(value);
+        
+            if (stat == FAIL || stat == FULL) return FAIL;
+        
+            // step 5: Update the header of the original node
+            makeKeyValue(&hdrVal, hdrLen, nodeType, myInt, UPDATEHDR);
+        
+            stat = insertDHT(ID, hdrVal, hdrLen);
+            cleanup(hdrVal);
+            if (stat == FAIL || stat == FULL) return FAIL;
+        }
+        else if (stat == NOTFIRST) { // Will await header change
+            int waitInterval = 1;
+            vec<str> myNodeEntries;
+            int attempts = 6; 
+            while (attempts) {
+                warnx << "Sleeping " << waitInterval << " seconds...\n";
+                sleep(waitInterval);
+                out = 0;
+                nodeEntries.clear();
+                retrieveError = false;
+            
+                dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb));
+            
+                while (out == 0) acheck();
+            
+                if (retrieveError) {
+                    warnx << "Unable to read node " << ID << "\n";
+                    return FAIL;
+                }
+            
+                warnx << "Number of entries: " << nodeEntries.size() << "\n";
+
+                // Copy it -- currently no other solution
+                myNodeEntries.clear();
+                myNodeEntries = nodeEntries;
+
+                str a, b;
+                Interval currInt;
+           
+                warnx << "# of node entries: " << myNodeEntries.size() << "\n";
+            
+                getKeyValue(myNodeEntries[0], a, b);
+            
+           
+                getInterval(b, currInt);
+
+                // Check the header for change
+                if (nodeInt == currInt) {
+                    waitInterval *= 2;    
+                }
+                else {
+                    warnx << "---- Non Root Node Header has changed -----\n";
+                    break;
+                }
+                attempts--;    
+            }
+            if (attempts < 0) {
+                continue; // RETRY to be first -- the peer that was first probably failed...
+            }
+            else {
+                break; // All well, so exit while loop
+            }
+        }
+    }
+	return SUCC;
+}
+
+
+// Inserts a document signature into a dynamic signature index.
+// Format of each node: <type/interval><key/ptr><key/ptr>...
+//
+// A few scenarios are taken into consideration --
+// a) Two clients (or more) read a full page and decide to split them
+// b) A client thinks a page has space and tries to insert, then
+//    in the mean time another client/s have already inserted keys and
+//    made it full, then the node that stores it can return an error,
+//    in which case, that node can be read again and verified and if it is
+//    full it will be split!!! so works fine...
+// c) if there is space and (a) and (b) are not true, then just insert!!!
+//
+// Note that we have an assumption that there is no merging and no deletion.
+// Once a node is created, it is never deleted.
+// Hence once two sets decide to part, they never come close!!!
+// This will be exploited to make matters simple!!!
+//
+// Periodically each peer containing a node should perform the "REFRESH PHASE"
+// where it quries it's child nodes and gets their latest lcm() and updates its
+// signature.
+//
+// Semantics:
+// (a) UPDATE - compute lcm with the existing key or adds a new one if absent
+// (b) SPLIT - if node is full -- then delete the passed elements
+//             if node is empty -- then add the passed elements
+//             otherwise -- do nothing (do some verification may be)
+// (c) UPDATEHDR - updates header -- if the level is at least as large as before and
+//                                   the right interval boundary is at least as small
+//                                   as before.
+DHTStatus insertDocument(str& nodeID, std::vector<POLY>& sig, char *docid)
+{
+	vec<str> myNodeEntries;
+	chordID ID;
+	str2chordID(nodeID, ID);
+
+    nodeEntries.clear();
+	// now fetch the node
+	out = 0;
+	retrieveError = false;
+	
+	dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb));
+
+	while (out == 0) acheck();
+
+	if (retrieveError) {
+		warnx << "Failed to retrieve key during insertion...\n";
+		return FAIL;
+	}
+
+	// Copy it -- currently no other solution
+	myNodeEntries = nodeEntries;
+
+	str a, b;
+	Interval nodeInt;
+	chordID nodeType;
+	warnx << "# of node entries: " << myNodeEntries.size() << "\n";
+	
+	getKeyValue(myNodeEntries[0], a, b);
+
+	str2chordID(a, nodeType);
+	getInterval(b, nodeInt);
+
+	DHTStatus status = FAIL;
+	
+	if (nodeType == LEAF) {
+        warnx << "------------- VISITING Leaf Node --------------\n";
+        
+		// Full
+		if ((int) myNodeEntries.size() > MAXENTRIES) {
+            fullNodeIDs.push_back(ID);
+            fullNodeInts.push_back(nodeInt);
+            status = NODESPLIT;
+		}
+		else {
+            // insert key
+            warnx << " +++++ Inserting signature into leaf node +++++\n";
+			char *value;
+			int valLen;
+			//char docidstr[128];
+			//sprintf(docidstr, "%d", docid);
+			//str dockey(docidstr, strlen(docidstr));
+            str dockey(docid, strlen(docid));
+			makeKeyValue(&value, valLen, dockey, sig, UPDATE);
+
+			DHTStatus stat = insertDHT(ID, value, valLen);
+			cleanup(value);
+			if (stat != SUCC) return FAIL;
+			status = SUCC;
+		}
+	}
+	else if (nodeType == NONLEAF || nodeType == ROOT) {
+		str childID = pickChild(myNodeEntries, sig);
+
+        if (nodeType == ROOT) {
+            warnx << "---------------- VISITING Root Node -----------------\n";
+        }
+        else {
+            warnx << "---------------- VISITING Non Leaf Node -----------------\n";
+        }
+		assert(childID != "NULL");
+		warnx << "===> Child picked for insertion: " << childID << "\n";
+		
+		status = insertDocument(childID, sig, docid);
+
+        //warnx << "Finished lower level insert...\n";
+        
+		if (status == FAIL || status == FULL) {
+			warnx << "Inserting failed...\n";
+			return status;
+		}
+		else if (status == REINSERT) {
+			return status;
+		}
+		else if (status == NODESPLIT) {
+            if (nodeType != ROOT && (int) myNodeEntries.size() > MAXENTRIES) {
+                fullNodeIDs.push_back(ID);
+                fullNodeInts.push_back(nodeInt);
+                //warnx << "Full size: " << fullNodeInts.size() << "\n";
+                status = NODESPLIT;
+            }
+            else {
+
+                // Split ROOT if reqd
+                if (nodeType == ROOT && (int) myNodeEntries.size() > MAXENTRIES) {
+                    performSplitRoot(ID, nodeInt);
+                }
+                
+                // Go thro the list of full nodes and split it
+                // Actually need to store the original headers
+                chordID pID = ID;
+                for (int i = 0; i < (int) fullNodeIDs.size(); i++) {
+                    performSplit(fullNodeIDs[i], fullNodeInts[i], pID);
+                    pID = fullNodeIDs[i];
+                }
+                status = REINSERT; // We will REINSERT from the root for now
+            }
+        }
+        else if (status == SUCC) {
+
+            warnx << "++++++ Updating parent node signature +++++ \n";
+            char *value;
+			int valLen;
+			makeKeyValue(&value, valLen, childID, sig, UPDATEIFPRESENT);
+            
+			DHTStatus stat = insertDHT(ID, value, valLen);
+			cleanup(value);
+            
+			if (stat == FAIL || stat == FULL) return FAIL;
+            
+			status = SUCC;
+        }
+    }
+	else {
+		warnx << "Corrupt node header... sleeping 30 secs\n";
+		sleep(30);
+		return FAIL;
+	}
+
+	return status;
+}
+
+// Query processing stage.
+void queryProcess(str &nodeID, std::vector<std::vector<POLY> >& listOfSigs)
+{
+	vec<str> entriesToProcess;
+	chordID ID;
+	str2chordID(nodeID, ID);
+
+	bool inCache;
+	int pinnedNodeId;
+
+	std::string nId = getString(nodeID);
+	if (listOfVisitedNodes.find(nId) != listOfVisitedNodes.end()) {
+		return;
+	}
+
+    // No cache used
+    if (cacheSize == 0) {
+        inCache = false;
+    }
+    else {
+        inCache = findInCache(nodeID, pinnedNodeId);
+    }
+    
+	// If not in cache, read from DHT
+	if (inCache) {
+		//warnx << "In cache...\n";
+		cacheHits++;
+		// Copy the entries
+		for (int i = 0; i < (int) nodeCache[pinnedNodeId].second.size(); i++) {
+			entriesToProcess.push_back(nodeCache[pinnedNodeId].second[i]);
+		}
+
+		listOfVisitedNodes[nId] = true;
+	}
+	else {
+		out = 0;
+		nodeEntries.clear();
+		retrieveError = false;
+		
+		double beginRetrieveTime = getgtod();
+		dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb));
+		
+		while (out == 0) acheck();
+		
+		if (retrieveError) {
+			warnx << "Unable to read node " << ID << "\n";
+			return;
+		}
+
+		double endRetrieveTime = getgtod();
+		listOfVisitedNodes[nId] = true;
+		
+		warnx << "Key retrieved: " << ID << "\n";
+		std::cout <<" Key retrieve time: "
+                  << endRetrieveTime - beginRetrieveTime << std::endl;
+		
+		warnx << "Number of entries: " << nodeEntries.size() << "\n";
+		entriesToProcess = nodeEntries;
+        // If cache is used
+        if (cacheSize > 0) {
+            // store in cache
+            std::vector<str> e;
+            for (int i = 0; i < (int) entriesToProcess.size(); i++) {
+                e.push_back(entriesToProcess[i]);
+            }
+            
+            bool found = findReplacement(nodeID, e, pinnedNodeId);
+            assert(found);
+        }
+	}
+	
+#ifdef _DEBUG_
+	for (int i = 0; i < (int) nodeEntries.size(); i++) {
+		dataReadSize += nodeEntries[i].len();
+	}
+
+#endif
+
+	str a, b;
+	Interval nodeInt;
+	chordID nodeType;
+	
+	getKeyValue(entriesToProcess[0], a, b);
+
+	str2chordID(a, nodeType);
+	getInterval(b, nodeInt);
+	
+	std::vector<POLY> rem;
+	std::vector<POLY> entrySig;
+	str childKey;
+
+	// Read the node and select those childptrs that are divided by
+	// sig...
+	for (int i = 1; i < (int) entriesToProcess.size(); i++) {
+		entrySig.clear();
+		getKeyValue(entriesToProcess[i].cstr(), childKey, entrySig);
+
+		//warnx << "Child key: " << childKey << "\n";
+		// Need to test for each signature in the listOfSigs...
+		// An implicit OR predicate is assumed...
+		int dega, degb;
+		dega = getDegree(entrySig);
+		//warnx << "Degree of entry: " << dega << "\n";	
+#ifdef _DEBUG_
+		warnx << "Deg a: " << dega << "\n";
+		for (int j = 0; j < (int) entrySig.size(); j++) {
+			warnx << entrySig[j] << " ";
+		}
+		warnx << "\n";
+#endif
+		
+		std::vector<std::vector<POLY> > newListOfSigs;
+		bool isDivides = false;
+		for (int q = 0; q < (int) listOfSigs.size(); q++) {
+			if (q == 0) {
+				newListOfSigs = listOfSigs;
+			}
+			// Test for divisibility!!!
+			rem.clear();
+			degb = getDegree(listOfSigs[q]);
+			//warnx << "Deg b: " << degb << "\n";
+			//double beginRemTime = getgtod();
+			if (dega >= degb) {
+				remainder(rem, entrySig, listOfSigs[q]);
+			}
+
+			//double endRemTime = getgtod();
+			//std::cout << "Division time: " << endRemTime - beginRemTime << "\n";
+			
+			if (rem.size() == 1 && rem[0] == (POLY) 0) {
+				//warnx << "Break point: " << q << "\n";
+				isDivides = true;
+				break;
+			}
+
+			// Mark as not to be checked again
+			newListOfSigs.erase(newListOfSigs.begin());
+		}
+
+		// If the division is successful, i.e., remainder = 0
+		if (isDivides) {
+			if (nodeType == LEAF) {
+				numDocs++;
+				warnx << "==== Found match. Docid = " << childKey << " =====\n";
+			}
+			else {
+				queryProcess(childKey, newListOfSigs);
+			}
+		}
+	}
+
+	// Unpin the page
+	unpinNode(pinnedNodeId);
+	return;
+}
+
+
+									 
+// Compute the number of replicas based on the current level and
+// maximum tree depth...
+int getNumReplicas(int level, int maxTreeDepth)
+{
+	return (maxTreeDepth - level);
+}
+
+ 
+// Create an empty index
+DHTStatus createEmptyIndex(chordID rootNodeID)
+{
+    Interval leafInt;
+    leafInt.ln = 0;
+    leafInt.ld = 1;
+    leafInt.rn = 1;
+    leafInt.rd = 1;
+    leafInt.level = 0;
+    leafInt.random = randomNumGen(RAND_MAX);
+
+    char tempBuf[128];
+    sprintf(tempBuf, "%s.%d.%d.%d", INDEXNAME.c_str(), leafInt.level, leafInt.ln,
+        leafInt.ld);
+    chordID leafID;
+    leafID = compute_hash(tempBuf, strlen(tempBuf));
+		
+    char *hdrVal;
+    int hdrLen;
+
+    strbuf lType;
+    lType << LEAF;
+    str leafType(lType);
+
+    makeKeyValue(&hdrVal, hdrLen, leafType, leafInt, UPDATEHDR);
+
+    // Leaf node
+    DHTStatus stat = insertDHT(leafID, hdrVal, hdrLen);
+    cleanup(hdrVal);
+    if (stat == FAIL || stat == FULL) return FAIL;
+
+    Interval rootInt;
+    rootInt.ln = 0;
+    rootInt.ld = 1;
+    rootInt.rn = 1;
+    rootInt.rd = 1;
+    rootInt.level = 1;
+    rootInt.random = randomNumGen(RAND_MAX);
+
+    strbuf rType;
+    rType << ROOT;
+    str rootType(rType);
+		
+    makeKeyValue(&hdrVal, hdrLen, rootType, rootInt, UPDATEHDR);
+    stat = insertDHT(rootNodeID, hdrVal, hdrLen);
+    cleanup(hdrVal);
+    if (stat == FAIL || stat == FULL) return FAIL;
+		
+    char *value;
+    int valLen;
+
+    std::vector<POLY> sig;
+    sig.push_back(0x1);
+
+    strbuf sBuf;
+    sBuf << leafID;
+    str leafIDStr(sBuf);
+		
+    makeKeyValue(&value, valLen, leafIDStr, sig, UPDATE);
+
+    // Root node
+    stat = insertDHT(rootNodeID, value, valLen);
+    cleanup(value);
+
+    if (stat == FAIL || stat == FULL) return FAIL;
+
+    return SUCC;
+}
+
+

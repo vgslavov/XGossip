@@ -1,0 +1,15 @@
+# how to add an app like push_sum.C to Chord's source distribution
+
+# place push_sum.C in ~/src/chord-0.1-vasil/tools
+
+vi ~/src/chord-0.1-vasil/tools/Makefile.am
+
+# append "push_sum" to $bin_PROGRAMS
+
+# add
+push_sum_SOURCES = push_sum.C
+push_sum_LDADD = ../dhash/libdhashclient.a  ../utils/libutil.a ../svc/libsvc.la  $(LDADD)
+
+cd ~/src/chord-0.1-vasil
+aclocal
+automake

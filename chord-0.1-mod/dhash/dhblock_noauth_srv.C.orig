@@ -1,0 +1,527 @@
+#include <chord.h>
+#include <dhash.h>
+#include <dhash_common.h>
+
+#include "dhblock_noauth.h"
+#include "dhblock_noauth_srv.h"  
+#include "dhblock_noauth.h"
+
+#include "locationtable.h"
+#include "location.h"
+
+#include "../tools/utils.h"
+#include "../tools/utils.C"
+#include "../tools/nodeparams.h"
+
+// "fake" key to merkle on.. low 32 bits are hash of the block contents
+inline static u_int32_t
+mhashdata (str data)
+{
+  // get the low bits: xor of the marshalled words
+  u_int32_t *d = (u_int32_t *)data.cstr ();
+  u_int32_t hash = 0;
+  for (unsigned int i = 0; i < data.len ()/4; i++) 
+    hash ^= d[i];
+  
+  return hash;
+}
+
+// add new_data to existing key
+// returns NULL unless new_data added new sub-blocks
+str 
+merge_data (chordID key, str new_data, str prev_data)
+{
+  vec<str> new_elems = dhblock_noauth::get_payload (new_data.cstr (), 
+						    new_data.len ());
+  
+  vec<str> old_elems;
+  if (prev_data.len ()) 
+    old_elems = dhblock_noauth::get_payload (prev_data.cstr (), 
+					     prev_data.len ());
+
+  qhash<bigint, bool, hashID> old_hashes;
+  for (u_int i = 0; i < old_elems.size (); i++) {
+    old_hashes.insert (compute_hash (old_elems[i].cstr (), 
+				     old_elems[i].len ()),
+		       true);
+  }
+  
+  u_int pre_merge_size = old_elems.size ();
+  //look through the new data for sub blocks we don't have
+  for (u_int i = 0; i < new_elems.size (); i++) {
+    if (!old_hashes[compute_hash (new_elems[i].cstr (),
+				  new_elems[i].len ())]) {
+      //a new block, append it to old_elems
+      old_elems.push_back (new_elems[i]);
+    }
+  }
+    
+  if (old_elems.size () == pre_merge_size) {
+    return prev_data;
+  }
+
+  //otherwise, delete the old data block and insert the new marshalled one
+  str marshalled_block = dhblock_noauth::marshal_block (old_elems);
+  
+  return marshalled_block;
+}
+
+
+dhblock_noauth_srv::dhblock_noauth_srv (ptr<vnode> node, 
+					ptr<dhashcli> cli,
+					str desc, 
+					str dbname, str dbext, cbv donecb) :
+  dhblock_replicated_srv (node, cli, desc, dbname, dbext, DHASH_NOAUTH, donecb)
+{
+}
+
+
+void
+dhblock_noauth_srv::real_store (chordID dbkey,
+    str old_data, str new_data, cb_dhstat cb)
+{
+  dhash_stat resStatus;
+  //str dprep = merge_data (dbkey, new_data, old_data);
+
+  str dprep = adjust_data (dbkey, new_data, old_data, resStatus);
+
+  if (dprep != old_data) { //new data added something
+    chordID kdb = id_to_dbkey (dbkey);
+    // put the key in the merkle tree; kick out the old key
+    if (old_data.len ()) {
+      u_int32_t hash = mhashdata (old_data);
+      db->update (kdb, node->my_location (), hash, false);
+      db->remove (kdb, hash, wrap (this, &dhblock_noauth_srv::after_delete, 
+				   dbkey, dprep, cb));
+    } else
+      after_delete (dbkey, dprep, cb, ADB_OK);
+  } else {
+    // Don't need to do anything.
+    cb (DHASH_OK);
+  }
+}
+
+// Adjust data contains the semantics for combining multiple insert operations
+// to the same key in the CHORD framework. All the node operations in
+// the signature index depends on this.
+//
+// Semantics:
+// (a) UPDATE - compute lcm with the existing key or adds a new one if absent
+// (b) SPLIT - if node is full -- then delete the passed elements
+//             if node is empty -- then add the passed elements
+//             otherwise -- do nothing (do some verification may be)
+// (c) UPDATEHDR - updates header -- if the level is at least as large as before and
+//                                   the right interval boundary is at least as small
+//                                   as before.
+str
+dhblock_noauth_srv::adjust_data (chordID key, str new_data, str prev_data,
+                                 dhash_stat& resStatus)
+{
+	const char *LEAFNODE = "node.leaf";
+	const char *NONLEAFNODE = "node.nonleaf";
+	const char *ROOTNODE = "node.root";
+	
+	LEAF = compute_hash(LEAFNODE, strlen(LEAFNODE));
+	NONLEAF = compute_hash(NONLEAFNODE, strlen(NONLEAFNODE));
+	ROOT = compute_hash(ROOTNODE, strlen(ROOTNODE));
+	
+	vec<str> old_elems;
+	// First get all the different entries
+	if (prev_data.len()) {
+		old_elems = dhblock_noauth::get_payload(prev_data.cstr(),
+																						prev_data.len());
+	}
+
+	// Get the entry to be inserted
+	vec<str> new_elems = dhblock_noauth::get_payload(new_data.cstr(),
+																									 new_data.len());
+
+	str newKey;
+	std::vector<POLY> newSig;
+	str childKey;
+	std::vector<POLY> childSig;
+
+	warnx << "NEWELEM SIZE: " << new_elems.size() << "\n";
+	//			<< " Size of old: " << old_elems.size() << "\n";
+	
+	// Essentially do a logical merge!!!
+	for (int k = 0; k < (int) new_elems.size(); k++) {
+		// Read the child ptr and the signature to insert
+		// format <size><childptr><size><signature>
+
+		bool isUpdate = false;
+
+		// Get the type of header
+		InsertType type;
+		memcpy(&type, new_elems[k].cstr(), sizeof(type));
+		const char *buf;
+
+		str newElement;
+
+		//warnx << "Step-1\n";
+		
+		if (type > 0) {
+
+			buf = new_elems[k].cstr();
+			newElement = new_elems[k];
+			
+			// Don't mess with the header!!!!
+			// Only if it is used by the syncd daemon
+			if (k == 0 && new_elems.size() > 1) {
+				if (old_elems.size() == 0) {
+					old_elems.push_back(new_elems[0]);
+					continue;
+				}
+				else {
+					// If the header is old, just discard the entire list
+					// Otherwise, just replace with the new one.
+					str currKey, currValue;
+					Interval currInt;
+					getKeyValue(old_elems[0], currKey, currValue);
+					getInterval(currValue, currInt);
+					
+					str newKey, newValue;
+					Interval newInt;
+					getKeyValue(newElement, newKey, newValue);
+					getInterval(newValue, newInt);
+
+				  chordID cID;
+					str2chordID(currKey, cID);
+
+					if (cID == ROOT || cID == NONLEAF || cID == LEAF) {
+
+					
+						// Can do some verification like change of node types
+						// type cannot change from leaf to non-leaf/root or
+						// from non-leaf to leaf/root
+						
+						// Update the interval
+						if (newInt.rn * currInt.rd < newInt.rd * currInt.rn) {
+							// Old elems should be replaced by new elems
+							old_elems = new_elems;
+							break;
+						}
+						else if (newInt.rn * currInt.rd > newInt.rd * currInt.rn) {
+							// Ignore the new contents since they are stale!!!
+							break;
+						}
+						continue;
+					}
+					else {
+						// do normal processing of every key
+					}
+				}
+			}
+		}
+		else {
+			assert(new_elems.size() == 1);
+			
+			buf = new_elems[k].cstr() + sizeof(type);
+			newElement = str(buf, new_elems[k].len() - sizeof(type));
+		}
+		//warnx << "Step0\n";
+		
+		if (type == UPDATE || type == REPLACE || type > 0) {
+			//warnx << "type : " << type << "\n";
+			
+			newKey = "";
+			newSig.clear();
+
+			//warnx << "Get new key...\n";
+			getKeyValue(buf, newKey, newSig);
+			
+			for (int i = 0; i < (int) old_elems.size(); i++) {
+				childKey = "";
+				childSig.clear();
+				//warnx << "Get old key...\n";
+				getKeyValue(old_elems[i].cstr(), childKey, childSig);
+
+				if (childKey == newKey) {
+					if (type == REPLACE) {
+						childSig = newSig;
+					}
+					else {
+						lcm(childSig, newSig);
+					}
+					isUpdate = true;
+
+					char *value;
+					int valLen;
+					makeKeyValue(&value, valLen, childKey, childSig, NONE);
+					old_elems[i] = str(value, valLen);
+					cleanup(value);
+
+					// Can break after this step, but will leave it like that.
+				}
+			}
+
+			if (!isUpdate) {
+				old_elems.push_back(newElement);
+			} 
+
+		}
+		else if (type == SPLITSPECIAL) {
+			assert(new_elems.size() == 1);
+
+			if ((int) old_elems.size() > MAXENTRIES) {
+				warnx << "Step2\n";
+				vec<str> update_elems;
+				str childSigStr;
+
+				// First skip the first entry
+				int firstEntryLen;
+				memcpy(&firstEntryLen, buf, sizeof(firstEntryLen));
+				buf += sizeof(firstEntryLen);
+				str firstEntry(buf, firstEntryLen);
+				buf += firstEntryLen;
+
+				//warnx << "Step3\n";
+				// Count the number of subsequent entries
+				const char *tempPtr = buf;
+				int count = 0;
+				while (tempPtr < new_elems[k].cstr() + new_elems[k].len()) {
+					//warnx << "Step4\n";
+					int entryLen;
+					memcpy(&entryLen, tempPtr, sizeof(entryLen));
+					tempPtr += sizeof(entryLen);
+					tempPtr += entryLen;
+					count++;
+				}
+				
+				//warnx << "COUNT: " << count << "\n";
+				
+				// Make sure to remove those specified in new_elems[k]
+				for (int i = 0; i < (int) old_elems.size(); i++) {
+					childKey = "";
+					childSigStr = "";
+					
+					getKeyValue(old_elems[i].cstr(), childKey, childSigStr);
+
+					const char *ptr = buf;
+					bool isPresent = false;
+
+					while (ptr < new_elems[k].cstr() + new_elems[k].len()) {
+						// Delete all those specified
+						int entryLen;
+						memcpy(&entryLen, ptr, sizeof(entryLen));
+						ptr += sizeof(entryLen);
+						str keyToDelete;
+						str sigToDelete;
+						
+						getKeyValue(ptr, keyToDelete, sigToDelete);
+
+						if (childKey == keyToDelete) {
+							if (sigToDelete != childSigStr) {
+								warnx << "We missed an update...Alert peer to refresh\n";
+							}
+							isPresent = true;
+							count--;
+							break;
+						}
+
+						ptr += entryLen;
+					}
+
+					if (!isPresent) {
+						update_elems.push_back(old_elems[i]);
+					}
+				}
+
+				// First time we are splitting -- then add the first entry that
+				// is stored
+				if (count == 0) {
+					update_elems.push_back(firstEntry);
+				}
+				
+				str marshalled_block = dhblock_noauth::marshal_block(update_elems);
+				
+				return marshalled_block;
+			}
+		}
+		else if (type == SPLIT) {
+			assert(new_elems.size() == 1);
+			
+			if ((int) old_elems.size() > MAXENTRIES) {
+
+				vec<str> update_elems;
+				str childSigStr;
+				
+				// Make sure to remove those specified in new_elems[k]
+				for (int i = 0; i < (int) old_elems.size(); i++) {
+					childKey = "";
+					childSigStr = "";
+					
+					getKeyValue(old_elems[i].cstr(), childKey, childSigStr);
+
+					const char *ptr = buf;
+					bool isPresent = false;
+											
+					while (ptr < new_elems[k].cstr() + new_elems[k].len()) {
+						// Delete all those specified
+						int entryLen;
+						memcpy(&entryLen, ptr, sizeof(entryLen));
+						ptr += sizeof(entryLen);
+						str keyToDelete;
+						str sigToDelete;
+						
+						getKeyValue(ptr, keyToDelete, sigToDelete);
+
+						//warnx << "Child key: " << childKey << " Key to delete: " << keyToDelete << "\n";
+						
+						if (childKey == keyToDelete) {
+							if (sigToDelete != childSigStr) {
+								warnx << "We missed an update...Alert peer to refresh\n";
+							}
+							isPresent = true;
+							break;
+						}
+
+						ptr += entryLen;
+					}
+
+					if (!isPresent) {
+						update_elems.push_back(old_elems[i]);
+					}
+				}
+
+				//warnx << "Size of UPDATE ELEMS: " << update_elems.size() << "\n";
+				str marshalled_block = dhblock_noauth::marshal_block(update_elems);
+				
+				return marshalled_block;
+			}
+			else if (old_elems.size() == 1) {
+				
+				// Only the header is present -- Can make an assumption for now
+				// that there are no corrupt nodes -- header is always the 0th entry!
+
+				// Get all the keys and add them
+				const char *ptr = buf;
+				int count = 0;
+				while (ptr < new_elems[k].cstr() + new_elems[k].len()) {
+					int entryLen;
+					memcpy(&entryLen, ptr, sizeof(entryLen));
+					ptr += sizeof(entryLen);
+					str entryToAdd(ptr, entryLen);
+					//warnx << "Entry to add: " << entryToAdd << "\n";
+					// Add to existing list
+					old_elems.push_back(entryToAdd);
+					ptr += entryLen;
+					count++;
+				}
+				//warnx << "Inserted into new node " << count << "\n";
+			}
+			// else do nothing!!! it is like a stale update
+
+			// Don't want to have more than one new_elems[]
+			break;
+		}
+		else if (type == UPDATEHDR) {
+			assert(new_elems.size() == 1);
+			
+			//warnx << "In update hdr...\n";
+			if (old_elems.size() == 0) {
+				old_elems.push_back(newElement);
+			}
+			else {
+				str currKey, currValue;
+				Interval currInt;
+				getKeyValue(old_elems[0], currKey, currValue);
+				getInterval(currValue, currInt);
+				
+				str newKey, newValue;
+				Interval newInt;
+				getKeyValue(newElement, newKey, newValue);
+				getInterval(newValue, newInt);
+				
+				/*
+				chordID thisNodeType;
+				str2chordID(currKey, thisNodeType);
+				if (thisNodeType == ROOT) {
+					warnx << "-----> ROOT \n";
+				}
+				else if (thisNodeType == NONLEAF) {
+					warnx << "-----> NONLEAF \n";
+				}
+				else if (thisNodeType == LEAF) {
+					warnx << "-----> LEAF \n";
+				}
+				else {
+					warnx << "-----> Something's wrong! \n";
+				}
+				*/
+				
+				// Can do some verification like change of node types
+				// type cannot change from leaf to non-leaf/root or
+				// from non-leaf to leaf/root
+				
+				// Update the interval
+				if (newInt.rn * currInt.rd < newInt.rd * currInt.rn) {
+					currInt.rn = newInt.rn;
+					currInt.rd = newInt.rd;
+				}
+
+				// Only for the root, the level can change (increase)
+				chordID nodeType;
+				str2chordID(currKey, nodeType);
+				if (nodeType == ROOT) {
+					//warnx << "CURR LEVEL: " << currInt.level << " NEW LEVEL: "
+					//<< newInt.level << "\n";
+					if (currInt.level < newInt.level) {
+						currInt.level = newInt.level;
+					}
+				}
+
+				char *hdrVal;
+				int hdrLen;
+				makeKeyValue(&hdrVal, hdrLen, currKey, currInt);
+
+				// updating the header!!!
+				old_elems[0] = str(hdrVal, hdrLen);
+				cleanup(hdrVal);
+			}
+		}
+	}
+
+	str marshalled_block = dhblock_noauth::marshal_block(old_elems);
+  
+  return marshalled_block;
+}
+
+
+void
+dhblock_noauth_srv::after_delete (chordID key, str data, cb_dhstat cb,
+				  adb_status err)
+{
+  assert (err == ADB_OK);
+  u_int32_t hash = mhashdata (data);
+
+  warn << node->my_ID () << " db write: " 
+       << "U " << key << " " << data.len ()  << "\n";
+  db_store (key, data, hash, cb); 
+  db->update (key, node->my_location (), hash, true);
+}
+
+
+// =====================================================
+
+void
+dhblock_noauth_srv::real_repair (blockID key, ptr<location> me, u_int32_t *myaux, ptr<location> them, u_int32_t *theiraux)
+{
+  ptr<repair_job> job;
+  if (!myaux) {
+    // We're missing, so fetch it.
+    job = New refcounted<rjrep> (key, me, mkref (this));
+    repair_add (job);
+  } else {
+    if (!theiraux) {
+      job = New refcounted<rjrep> (key, them, mkref (this));
+      repair_add (job);
+    } else if (*theiraux != *myaux) {
+      // No way of knowing who is newer, so let's swap.
+      job = New refcounted<rjrep> (key, me, mkref (this));
+      repair_add (job);
+      job = New refcounted<rjrep> (key, them, mkref (this));
+      repair_add (job);
+    }
+  }
+}

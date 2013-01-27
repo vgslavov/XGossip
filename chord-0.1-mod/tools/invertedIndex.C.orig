@@ -1,0 +1,1418 @@
+// Twig Query processing in P2P Environments.
+// Implements an inverted index similar to that proposed by 
+// Galanis etal.
+// Each node in the structural summary, index the path
+// from root till itself....
+// Author: Praveen Rao
+// University of Arizona
+#include "psi.h"
+#include <chord.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <dhash_common.h>
+#include <dhashclient.h>
+#include <dhblock.h>
+#include <dhblock_keyhash.h>
+#include <sys/time.h>
+#include <string>
+#include <math.h>
+#include <iostream>
+#include "poly.h"
+#include "utils.h"
+#include <vector>
+#include <map>
+#include <utility>
+#include "utils.C"
+#include "cache.h"
+#include "nodeparams.h"
+
+dhashclient *dhash;
+int out;
+
+void verifyProcess(char *, std::vector<std::vector<POLY> >&);
+
+void readPathTags(FILE *, std::vector<std::string>&, int&);
+void removeRedundantTags(std::vector<std::string>&);
+
+DHTStatus insertStatus;
+
+// entries of a node
+vec<str> nodeEntries;
+
+bool insertError;
+bool retrieveError;
+
+// hash table statistics
+int numReads;
+int numWrites;
+int numDocs;
+int cacheHits;
+
+unsigned int seedForRand;
+
+// Data transferred
+int dataFetched = 0, dataStored = 0;
+
+// Fetch callback for NOAUTH...
+void
+fetch_cb (dhash_stat stat, ptr<dhash_block> blk, vec<chordID> path)
+{
+    out++;
+
+	if (stat != DHASH_OK) {
+		warnx << "Failed to fetch key...\n";
+		retrieveError = true;
+		return;
+	}
+
+    if (blk) {
+#ifdef _DEBUG_
+        strbuf buf;
+        
+		buf << " /times=";
+        for (u_int i = 0; i < blk->times.size (); i++)
+            buf << " " << blk->times[i];
+        buf << " /";
+        
+        buf << "hops= " << blk->hops << " errors= " <<  blk->errors
+            << "vretries= " << blk->retries << " ";
+		buf << " path: ";
+        for (u_int i=0; i < path.size (); i++) {
+            buf << path[i] << " ";
+        }
+    
+        buf << " : ";
+
+#endif
+        if (blk->vData.size () > 0) {
+            //warn << blk->vData.size () << "\n";
+            for (unsigned int i = 0; i < blk->vData.size (); i++) {
+				nodeEntries.push_back(blk->vData[i]);
+                dataFetched += nodeEntries[i].len();
+            }
+        }
+		else {
+			nodeEntries.push_back(blk->data);
+        }
+        
+		// Output hops
+		warnx << "HOPS: " << blk->hops << "\n";
+		numReads++;
+		
+#ifdef _DEBUG_ 
+		warnx << "Retrieve information: " << buf << "\n";
+
+#endif
+	} 
+}
+
+void
+store_cb (dhash_stat status, ptr<insert_info> i)
+{
+  out++;
+  if (status == DHASH_FULL) {
+      insertStatus = FULL;
+  }
+  else
+  if (status != DHASH_OK) {
+      warnx << "Failed to store key...\n";
+      insertError = true;
+  }
+  else {
+      insertStatus = SUCC;
+      numWrites++;
+      warnx << "Key stored successfully...\n";
+  }
+}
+
+
+int main(int argc, char *argv[])
+{	
+    if(argc < 5) {
+		std::cout << "Usage: " << argv[0]
+                  << " sockname "
+                  << " -[iIqQ] "
+                  << " signaturefile "
+                  << " count "
+                  << " [num replicas] "
+                  << " [# of buckets] "
+                  << " [1 - leaf tag|2 - random tag] "
+                  << " <cache size> "
+                  << " <delay> "
+                  << std::endl;
+		exit(1);
+    }
+    
+    dhash = New dhashclient(argv[1]);
+    chordID ID;
+    char *cmd = argv[2];
+  
+    // Cache size
+	cacheSize = argv[8] ? atoi(argv[8]) : 1;
+	freeSpace = cacheSize;
+
+	// Time measurement
+	double startTime = getgtod();
+	seedForRand = (unsigned int) startTime;
+	
+	numReads = numWrites = dataReadSize = cacheHits = 0;
+
+	// Number of replicas
+	int numReplicas = argv[5] ? atoi(argv[5]) : 1;
+
+	// Bucket size
+	int numBuckets = argv[6] ? atoi(argv[6]) : 1;
+
+	// delay
+	int randDelay = argv[9] ? atoi(argv[9]) : 20;
+
+	// Tag pick mode
+	int tagPickMode = argv[7] ? atoi(argv[7]) : 1;
+	
+	if (!strcmp(cmd, "-q")) {
+		double totalTime = 0;
+		nodeCache.clear();
+		lruCache.clear();
+		
+		// Read the query signatures from a file
+		// Read the DHT from root to leaf
+		std::string queryFile(argv[3]);
+		FILE *qfp = fopen(queryFile.c_str(), "r");
+		assert(qfp);
+
+		// Open the tags files too...
+		std::string tagsFile = queryFile + std::string(TAGFILE);
+		
+		FILE *fpTags = fopen(tagsFile.c_str(), "r");
+		assert(fpTags);
+
+		// Open the tag depth file...
+		std::string tagDepth = queryFile + std::string(TAGDEPTH);
+		FILE *fpTagDepth = fopen(tagDepth.c_str(), "r");
+		assert(fpTagDepth);
+
+		int maxCount = argv[4] ? atoi(argv[4]) : 1;
+		
+		int count = 1;
+		
+		while (count <= maxCount) {
+
+			// DON'T use readData to retrieve signatures from input files...
+			// since the size filed uses POLY as a basic unit and not byte...
+			// Format is <n = # of sigs><sig size><sig>... n times...
+			int numSigs;
+			if (fread(&numSigs, sizeof(numSigs), 1, qfp) != 1) {
+				break;
+			}
+			assert(numSigs > 0);
+
+			std::vector<std::vector<POLY> > listOfSigs;
+			listOfSigs.clear();
+			
+			for (int t = 0; t < numSigs; t++) {
+				POLY *buf;
+				int size;
+				if (fread(&size, sizeof(int), 1, qfp) != 1) {
+					assert(0);
+				}
+				
+				buf = new POLY[size];
+				if (fread(buf, sizeof(POLY), size, qfp) != (size_t) size) {
+					assert(0);
+				}
+				
+				std::vector<POLY> sig;
+				sig.clear();
+				for (int i = 0; i < size; i++) {
+					sig.push_back(buf[i]);
+				}
+
+				listOfSigs.push_back(sig);
+				// free the allocated memory
+				delete[] buf;
+			}
+			
+			warnx << "******* Processing query " << count << " ********\n";
+			numReads = numWrites = dataReadSize = cacheHits = 0;
+			// Read the distinct tags
+			std::vector<std::string> distinctTags;
+			distinctTags.clear();
+
+			// Tag depth
+			std::vector<std::string> tagDepth;
+			tagDepth.clear();
+			
+			readTags(fpTags, distinctTags);
+			readTags(fpTagDepth, tagDepth);
+
+			//queryProcess(rootID, sig, -1, maxTreeDepth);
+			warnx << "Number of signatures: " << listOfSigs.size() << "\n";
+			if ((int) listOfSigs.size() > MAXSIGSPERQUERY) {
+				warnx << "Skipping this query...\n";
+			}
+			else {
+				double beginQueryTime = getgtod();
+				numDocs = 0;
+				//queryProcess(rootID, listOfSigs, -1, maxTreeDepth);
+				// keyId is from 1 to N
+				int keyId;
+
+				if (tagPickMode == 2) {
+					keyId = randomNumGen(distinctTags.size());
+				}
+				else if (tagPickMode == 1) {
+					// Pick the highest depth entry
+					int maxDepth = -1;
+					int maxDepthId = -1;
+					for (int p = 0; p < (int) tagDepth.size(); p++) {
+						if (atoi(tagDepth[p].c_str()) > maxDepth) {
+							maxDepth = atoi(tagDepth[p].c_str());
+							maxDepthId = p;
+						}
+					}
+								
+					keyId = maxDepthId + 1;
+				}
+				else {
+					assert(0);
+				}
+
+				// For each bucket, fetch the list of signatures...
+                //warnx << "Using tag: " << distinctTags[keyId-1].c_str() << "\n";
+                int b = 0;
+                bool isFull = false;
+				do {
+                    b++;
+					out = 0;
+					nodeEntries.clear();
+
+					//int replicaId = randomNumGen(numReplicas) - 1;
+                    int replicaId = 0;
+					char keyBuf[1028];
+					sprintf(keyBuf, "%s.%d.%d", distinctTags[keyId-1].c_str(), b, replicaId);
+					warnx << "Using tag.replica: " << keyBuf << "\n";
+
+                    chordID ID = compute_hash(keyBuf, strlen(keyBuf));
+
+					strbuf s;
+					s << ID;
+					str nodeID = str(s);
+					bool inCache;
+					int pinnedNodeId;
+
+                    if (cacheSize == 0) {
+                        inCache = false;
+                    }
+                    else {
+                        inCache = findInCache(nodeID, pinnedNodeId);
+                    }
+                    
+					if (inCache) {
+
+						//warnx << "In cache...\n";
+						cacheHits++;
+						// Copy the entries
+						for (int i = 0; i < (int) nodeCache[pinnedNodeId].second.size(); i++) {
+							nodeEntries.push_back(nodeCache[pinnedNodeId].second[i]);
+						}
+					}
+					else {
+						double beginRetrieve = getgtod();
+						str junk;
+						dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb), junk);
+				
+						while (out == 0) acheck();
+
+						double endRetrieve = getgtod();
+						warnx << "Key retrieved: " << ID << "\n";
+						std::cout << "Key retrieve time: " << endRetrieve - beginRetrieve << std::endl;
+
+                        if (cacheSize > 0) {
+                            // store in cache
+                            std::vector<str> e;
+                            for (int i = 0; i < (int) nodeEntries.size(); i++) {
+                                e.push_back(nodeEntries[i]);
+                            }
+                            
+                            bool found = findReplacement(nodeID, e, pinnedNodeId);
+                            assert(found);
+                        }
+                    }
+					
+#ifdef _DEBUG_
+					for (int i = 0; i < nodeEntries.size(); i++) {
+						dataReadSize += nodeEntries[i].len();
+					}
+#endif
+					std::vector<POLY> entrySig;
+					std::vector<POLY> rem;
+
+					warnx << "Number of values: " << nodeEntries.size() << "\n";
+				
+					// Now test the nodeEntries
+					for (int i = 0; i < (int) nodeEntries.size(); i++) {
+						int docidLen, docid;
+						int sigLen;
+						const char *buf = nodeEntries[i].cstr();
+
+						memcpy(&docidLen, buf, sizeof(int));
+						memcpy(&docid, buf + sizeof(int), docidLen);
+						//warnx << "Read docid: " << docid << "\n";
+						const char *sigBuf = buf + sizeof(int) + docidLen;
+						memcpy(&sigLen, sigBuf, sizeof(sigLen));
+						//warnx << "SIGLEN: " << sigLen << "\n";
+					
+						POLY *sigPtr = (POLY *) (sigBuf + sizeof(sigLen));
+					
+						entrySig.clear();
+						for (int i = 0; i < sigLen/(int) sizeof(POLY); i++) {
+							entrySig.push_back(sigPtr[i]);
+						}
+					
+						// Need to test for each signature in the listOfSigs...
+						// An implicit OR predicate is assumed...
+					
+						int dega, degb;
+						dega = getDegree(entrySig);
+						rem.clear();
+					
+						for (int q = 0; q < (int) listOfSigs.size(); q++) {
+							// Test for divisibility!!!
+							degb = getDegree(listOfSigs[q]);
+						
+							if (dega >= degb) {
+								remainder(rem, entrySig, listOfSigs[q]);
+							}
+	
+							if (rem.size() == 1 && rem[0] == 0) break;
+						
+							rem.clear();
+						}
+					
+						// If the division is successful, i.e., remainder = 0
+						if (rem.size() == 1 && rem[0] == 0) {
+							numDocs++;
+							//warnx << "==== Found match. Docid = " << docid << " =====\n";
+						}
+					}
+					unpinNode(pinnedNodeId);
+
+                    isFull = false;
+
+                    // If node is full, that means it could have another one following it
+                    if ((int) nodeEntries.size() > MAXENTRIES) {
+                        isFull = true;
+                    }
+				} while (isFull);				
+
+				double endQueryTime = getgtod();
+				std::cout << "Query time: " << endQueryTime - beginQueryTime << std::endl;
+				totalTime += (endQueryTime - beginQueryTime);
+				warnx << "Num docs: " << numDocs << "\n";
+			}
+
+#ifdef _DEBUG_
+			
+#endif
+			warnx << "Data read: " << dataFetched << "\n";
+            warnx << "Data write: " << dataStored << "\n";
+			warnx << "Num reads: " << numReads << "\n";
+			//warnx <<	" num writes: " << numWrites << "\n";
+			warnx << "Cache hits: " << cacheHits << "\n";
+			warnx << "******** Finished query processing *********\n\n\n";
+			count++;
+			if (1) {
+                sleep(1 + (int) ((double) randDelay * (rand() / (RAND_MAX + 1.0))));
+			}
+		}
+
+		// Close files
+		fclose(fpTags);
+		fclose(fpTagDepth);
+		
+		fclose(qfp);
+		std::cout << "Time taken: " << totalTime << std::endl;
+	}
+    else if (!strcmp(cmd, "-Q")) {
+		double totalTime = 0;
+		nodeCache.clear();
+		lruCache.clear();
+		
+		// Read the query signatures from a file
+		// Read the DHT from root to leaf
+		std::string queryFile(argv[3]);
+		FILE *qfp = fopen(queryFile.c_str(), "r");
+		assert(qfp);
+
+		// Open the tags files too...
+		std::string tagsFile = queryFile + std::string(TAGFILE);
+		
+		FILE *fpTags = fopen(tagsFile.c_str(), "r");
+		assert(fpTags);
+
+		// Open the tag depth file...
+		std::string tagDepth = queryFile + std::string(TAGDEPTH);
+		FILE *fpTagDepth = fopen(tagDepth.c_str(), "r");
+		assert(fpTagDepth);
+
+		int maxCount = argv[4] ? atoi(argv[4]) : 1;
+		
+		int count = 1;
+		
+		while (count <= maxCount) {
+
+			// DON'T use readData to retrieve signatures from input files...
+			// since the size filed uses POLY as a basic unit and not byte...
+			// Format is <n = # of sigs><sig size><sig>... n times...
+			int numSigs;
+			if (fread(&numSigs, sizeof(numSigs), 1, qfp) != 1) {
+				break;
+			}
+			assert(numSigs > 0);
+
+			std::vector<std::vector<POLY> > listOfSigs;
+			listOfSigs.clear();
+			
+			for (int t = 0; t < numSigs; t++) {
+				POLY *buf;
+				int size;
+				if (fread(&size, sizeof(int), 1, qfp) != 1) {
+					assert(0);
+				}
+				
+				buf = new POLY[size];
+				if (fread(buf, sizeof(POLY), size, qfp) != (size_t) size) {
+					assert(0);
+				}
+				
+				std::vector<POLY> sig;
+				sig.clear();
+				for (int i = 0; i < size; i++) {
+					sig.push_back(buf[i]);
+				}
+
+				listOfSigs.push_back(sig);
+				// free the allocated memory
+				delete[] buf;
+			}
+			
+			warnx << "******* Processing query " << count << " ********\n";
+			numReads = numWrites = dataReadSize = cacheHits = 0;
+			// Read the distinct tags
+			std::vector<std::string> distinctTags;
+			distinctTags.clear();
+
+			// Tag depth
+			std::vector<std::string> tagDepth;
+			tagDepth.clear();
+			
+			readTags(fpTags, distinctTags);
+			readTags(fpTagDepth, tagDepth);
+
+			//queryProcess(rootID, sig, -1, maxTreeDepth);
+			warnx << "Number of signatures: " << listOfSigs.size() << "\n";
+			if ((int) listOfSigs.size() > MAXSIGSPERQUERY) {
+				warnx << "Skipping this query...\n";
+			}
+			else {
+				double beginQueryTime = getgtod();
+				numDocs = 0;
+				//queryProcess(rootID, listOfSigs, -1, maxTreeDepth);
+				// keyId is from 1 to N
+				int keyId;
+
+				if (tagPickMode == 2) {
+					keyId = randomNumGen(distinctTags.size());
+				}
+				else if (tagPickMode == 1) {
+					// Pick the highest depth entry
+					int maxDepth = -1;
+					int maxDepthId = -1;
+					for (int p = 0; p < (int) tagDepth.size(); p++) {
+						if (atoi(tagDepth[p].c_str()) > maxDepth) {
+							maxDepth = atoi(tagDepth[p].c_str());
+							maxDepthId = p;
+						}
+					}
+								
+					keyId = maxDepthId + 1;
+				}
+				else {
+					assert(0);
+				}
+
+				// For each bucket, fetch the list of signatures...
+                //warnx << "Using tag: " << distinctTags[keyId-1].c_str() << "\n";
+                int b = 0;
+                bool isFull = false;
+				do {
+                    b++;
+					out = 0;
+					nodeEntries.clear();
+
+					//int replicaId = randomNumGen(numReplicas) - 1;
+                    int replicaId = 0;
+					char keyBuf[1028];
+					sprintf(keyBuf, "%s.%d.%d", ROOTNODE, b, replicaId);
+					warnx << "Using tag.replica: " << keyBuf << "\n";
+
+                    chordID ID = compute_hash(keyBuf, strlen(keyBuf));
+
+					strbuf s;
+					s << ID;
+					str nodeID = str(s);
+					bool inCache;
+					int pinnedNodeId;
+
+                    if (cacheSize == 0) {
+                        inCache = false;
+                    }
+                    else {
+                        inCache = findInCache(nodeID, pinnedNodeId);
+                    }
+                    
+					if (inCache) {
+
+						//warnx << "In cache...\n";
+						cacheHits++;
+						// Copy the entries
+						for (int i = 0; i < (int) nodeCache[pinnedNodeId].second.size(); i++) {
+							nodeEntries.push_back(nodeCache[pinnedNodeId].second[i]);
+						}
+					}
+					else {
+						double beginRetrieve = getgtod();
+						str junk;
+						dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb), junk);
+				
+						while (out == 0) acheck();
+
+						double endRetrieve = getgtod();
+						warnx << "Key retrieved: " << ID << "\n";
+						std::cout << "Key retrieve time: " << endRetrieve - beginRetrieve << std::endl;
+
+                        if (cacheSize > 0) {
+                            // store in cache
+                            std::vector<str> e;
+                            for (int i = 0; i < (int) nodeEntries.size(); i++) {
+                                e.push_back(nodeEntries[i]);
+                            }
+                            
+                            bool found = findReplacement(nodeID, e, pinnedNodeId);
+                            assert(found);
+                        }
+                    }
+					
+#ifdef _DEBUG_
+					for (int i = 0; i < nodeEntries.size(); i++) {
+						dataReadSize += nodeEntries[i].len();
+					}
+#endif
+					std::vector<POLY> entrySig;
+					std::vector<POLY> rem;
+
+					warnx << "Number of values: " << nodeEntries.size() << "\n";
+				
+					// Now test the nodeEntries
+					for (int i = 0; i < (int) nodeEntries.size(); i++) {
+						int docidLen, docid;
+						int sigLen;
+						const char *buf = nodeEntries[i].cstr();
+
+						memcpy(&docidLen, buf, sizeof(int));
+						memcpy(&docid, buf + sizeof(int), docidLen);
+						//warnx << "Read docid: " << docid << "\n";
+						const char *sigBuf = buf + sizeof(int) + docidLen;
+						memcpy(&sigLen, sigBuf, sizeof(sigLen));
+						//warnx << "SIGLEN: " << sigLen << "\n";
+					
+						POLY *sigPtr = (POLY *) (sigBuf + sizeof(sigLen));
+					
+						entrySig.clear();
+						for (int i = 0; i < sigLen/(int) sizeof(POLY); i++) {
+							entrySig.push_back(sigPtr[i]);
+						}
+					
+						// Need to test for each signature in the listOfSigs...
+						// An implicit OR predicate is assumed...
+					
+						int dega, degb;
+						dega = getDegree(entrySig);
+						rem.clear();
+					
+						for (int q = 0; q < (int) listOfSigs.size(); q++) {
+							// Test for divisibility!!!
+							degb = getDegree(listOfSigs[q]);
+						
+							if (dega >= degb) {
+								remainder(rem, entrySig, listOfSigs[q]);
+							}
+	
+							if (rem.size() == 1 && rem[0] == 0) break;
+						
+							rem.clear();
+						}
+					
+						// If the division is successful, i.e., remainder = 0
+						if (rem.size() == 1 && rem[0] == 0) {
+							numDocs++;
+							//warnx << "==== Found match. Docid = " << docid << " =====\n";
+						}
+					}
+					unpinNode(pinnedNodeId);
+
+                    isFull = false;
+
+                    // If node is full, that means it could have another one following it
+                    if ((int) nodeEntries.size() > MAXENTRIES) {
+                        isFull = true;
+                    }
+				} while (isFull);				
+
+				double endQueryTime = getgtod();
+				std::cout << "Query time: " << endQueryTime - beginQueryTime << std::endl;
+				totalTime += (endQueryTime - beginQueryTime);
+				warnx << "Num docs: " << numDocs << "\n";
+			}
+
+#ifdef _DEBUG_
+			
+#endif
+			warnx << "Data read: " << dataFetched << "\n";
+            warnx << "Data write: " << dataStored << "\n";
+			warnx << "Num reads: " << numReads << "\n";
+			//warnx <<	" num writes: " << numWrites << "\n";
+			warnx << "Cache hits: " << cacheHits << "\n";
+			warnx << "******** Finished query processing *********\n\n\n";
+			count++;
+			if (1) {
+                sleep(1 + (int) ((double) randDelay * (rand() / (RAND_MAX + 1.0))));
+			}
+		}
+
+		// Close files
+		fclose(fpTags);
+		fclose(fpTagDepth);
+		
+		fclose(qfp);
+		std::cout << "Time taken: " << totalTime << std::endl;
+	}
+	else if (!strcmp(cmd, "-T")) { // path signatures
+		double totalTime = 0;
+		nodeCache.clear();
+		lruCache.clear();
+		
+		// Read the query signatures from a file
+		// Read the DHT from root to leaf
+		std::string queryFile(argv[3]);
+		FILE *qfp = fopen(queryFile.c_str(), "r");
+		assert(qfp);
+
+		// Open the tags files too...
+		std::string tagsFile = queryFile + std::string(PATHTAGFILE);
+		
+		FILE *fpTags = fopen(tagsFile.c_str(), "r");
+		assert(fpTags);
+
+		// Open the tag depth file...
+		std::string tagDepth = queryFile + std::string(TAGDEPTH);
+		FILE *fpTagDepth = fopen(tagDepth.c_str(), "r");
+		assert(fpTagDepth);
+
+		int maxCount = argv[4] ? atoi(argv[4]) : 1;
+		
+		int count = 1;
+		
+		while (count <= maxCount) {
+
+			// DON'T use readData to retrieve signatures from input files...
+			// since the size filed uses POLY as a basic unit and not byte...
+			// Format is <n = # of sigs><sig size><sig>... n times...
+			int numSigs;
+			if (fread(&numSigs, sizeof(numSigs), 1, qfp) != 1) {
+				break;
+			}
+			assert(numSigs > 0);
+
+			std::vector<std::vector<POLY> > listOfSigs;
+			listOfSigs.clear();
+			
+			for (int t = 0; t < numSigs; t++) {
+				POLY *buf;
+				int size;
+				if (fread(&size, sizeof(int), 1, qfp) != 1) {
+					assert(0);
+				}
+				
+				buf = new POLY[size];
+				if (fread(buf, sizeof(POLY), size, qfp) != (size_t) size) {
+					assert(0);
+				}
+				
+				std::vector<POLY> sig;
+				sig.clear();
+				for (int i = 0; i < size; i++) {
+					sig.push_back(buf[i]);
+				}
+
+				listOfSigs.push_back(sig);
+				// free the allocated memory
+				delete[] buf;
+			}
+			
+			warnx << "******* Processing query " << count << " ********\n";
+			numReads = numWrites = dataReadSize = cacheHits = 0;
+			// Read the distinct tags
+			std::vector<std::string> distinctTags;
+			distinctTags.clear();
+
+			// Tag depth
+			std::vector<std::string> tagDepth;
+			tagDepth.clear();
+			
+			readTags(fpTags, distinctTags);
+			readTags(fpTagDepth, tagDepth);
+
+			// Remove some redundant tags due to attribute names
+			removeRedundantTags(distinctTags);
+			
+			//queryProcess(rootID, sig, -1, maxTreeDepth);
+			warnx << "Number of signatures: " << listOfSigs.size() << "\n";
+			if ((int) listOfSigs.size() > MAXSIGSPERQUERY) {
+				warnx << "Skipping this query...\n";
+			}
+			else {
+				double beginQueryTime = getgtod();
+				numDocs = 0;
+				//queryProcess(rootID, listOfSigs, -1, maxTreeDepth);
+				// keyId is from 1 to N
+				int keyId;
+
+				if (tagPickMode == 2) {
+					keyId = randomNumGen(distinctTags.size());
+				}
+				else if (tagPickMode == 1) {
+					// all the leaf tags are tested
+				}
+				else {
+					assert(0);
+				}
+
+				// For each bucket, fetch the list of signatures...
+			  //warnx << "Using tag: " << distinctTags[keyId-1].c_str() << "\n";
+				for (int i = 0; i < (int) distinctTags.size(); i++) {
+
+					// Skip any empty tags
+					if (distinctTags[i] == "") continue;
+					
+					for (int b = 0; b < numBuckets; b++) {
+						out = 0;
+						nodeEntries.clear();
+						
+						int replicaId = randomNumGen(numReplicas) - 1;
+						char keyBuf[1028];
+						sprintf(keyBuf, "%s.%d.%d", distinctTags[i].c_str(), b, replicaId);
+						warnx << "Using tag.replica: " << keyBuf << "\n";
+						
+						//chordID ID = compute_hash(distinctTags[keyId-1].c_str(),
+						//													distinctTags[keyId-1].size());
+						chordID ID = compute_hash(keyBuf, strlen(keyBuf));
+						
+						strbuf s;
+						s << ID;
+						str nodeID = str(s);
+						bool inCache;
+						int pinnedNodeId;
+						
+						inCache = findInCache(nodeID, pinnedNodeId);
+						
+						if (inCache) {
+							
+							//warnx << "In cache...\n";
+							cacheHits++;
+							// Copy the entries
+							for (int i = 0; i < (int) nodeCache[pinnedNodeId].second.size(); i++) {
+								nodeEntries.push_back(nodeCache[pinnedNodeId].second[i]);
+							}
+						}
+						else {
+							double beginRetrieve = getgtod();
+							str junk;
+							dhash->retrieve(ID, DHASH_NOAUTH, wrap(fetch_cb), junk);
+							
+							while (out == 0) acheck();
+							
+							double endRetrieve = getgtod();
+							warnx << "Key retrieved: " << ID << "\n";
+							std::cout << "Key retrieve time: " << endRetrieve - beginRetrieve << std::endl;
+							
+							if (cacheSize > 0) {
+                                // store in cache
+                                std::vector<str> e;
+                                for (int i = 0; i < (int) nodeEntries.size(); i++) {
+                                    e.push_back(nodeEntries[i]);
+                                }
+                                
+                                bool found = findReplacement(nodeID, e, pinnedNodeId);
+                                assert(found);
+							}
+                        }
+						
+#ifdef _DEBUG_
+						for (int i = 0; i < nodeEntries.size(); i++) {
+							dataReadSize += nodeEntries[i].len();
+						}
+#endif
+						std::vector<POLY> entrySig;
+						std::vector<POLY> rem;
+						
+						warnx << "Number of values: " << nodeEntries.size() << "\n";
+						
+						// Now test the nodeEntries
+						for (int i = 0; i < (int) nodeEntries.size(); i++) {
+							int docidLen, docid;
+							int sigLen;
+							const char *buf = nodeEntries[i].cstr();
+							
+							memcpy(&docidLen, buf, sizeof(int));
+							memcpy(&docid, buf + sizeof(int), docidLen);
+							//warnx << "Read docid: " << docid << "\n";
+							const char *sigBuf = buf + sizeof(int) + docidLen;
+							memcpy(&sigLen, sigBuf, sizeof(sigLen));
+							//warnx << "SIGLEN: " << sigLen << "\n";
+							
+							POLY *sigPtr = (POLY *) (sigBuf + sizeof(sigLen));
+							
+							entrySig.clear();
+							for (int i = 0; i < sigLen/(int) sizeof(POLY); i++) {
+								entrySig.push_back(sigPtr[i]);
+							}
+					
+							// Need to test for each signature in the listOfSigs...
+							// An implicit OR predicate is assumed...
+							
+							int dega, degb;
+							dega = getDegree(entrySig);
+							rem.clear();
+					
+							for (int q = 0; q < (int) listOfSigs.size(); q++) {
+								// Test for divisibility!!!
+								degb = getDegree(listOfSigs[q]);
+								
+								if (dega >= degb) {
+									remainder(rem, entrySig, listOfSigs[q]);
+								}
+								
+								if (rem.size() == 1 && rem[0] == 0) break;
+								
+								rem.clear();
+							}
+							
+							// If the division is successful, i.e., remainder = 0
+							if (rem.size() == 1 && rem[0] == 0) {
+								//numDocs++;
+								//warnx << "==== Found match. Docid = " << docid << " =====\n";
+							}
+						}
+						unpinNode(pinnedNodeId);
+					}
+				}
+
+				double endQueryTime = getgtod();
+				std::cout << "Query time: " << endQueryTime - beginQueryTime << std::endl;
+				totalTime += (endQueryTime - beginQueryTime);
+				warnx << "Num docs: " << numDocs << "\n";
+			}
+
+#ifdef _DEBUG_
+			
+#endif
+			warnx << "Data read: " << dataFetched << "\n";
+            warnx << "Data write: " << dataStored << "\n";
+			warnx << "Num reads: " << numReads << "\n";
+			//warnx <<	" num writes: " << numWrites << "\n";
+			warnx << "Cache hits: " << cacheHits << "\n";
+			warnx << "******** Finished query processing *********\n\n\n";
+			count++;
+			if (count % 1000 == 0) {
+				sleep(1);
+			}
+		}
+
+		// Close files
+		fclose(fpTags);
+		fclose(fpTagDepth);
+		
+		fclose(qfp);
+		std::cout << "Time taken: " << totalTime << std::endl;
+	}
+	else if (!strcmp(cmd, "-i")) {
+		// Insert new signatures
+		std::string dataFile(argv[3]);
+		FILE *sigfp = fopen(dataFile.c_str(), "r");
+		assert(sigfp);
+
+		// Open the tags files too...
+		std::string tagsFile = dataFile + std::string(TAGFILE);
+		
+		FILE *fpTags = fopen(tagsFile.c_str(), "r");
+		assert(fpTags);
+		
+		int maxCount = argv[4] ? atoi(argv[4]) : 1;
+
+		int dataSizeWrite = 0;
+		int count = 1;
+
+        // Keep track of full tags
+        std::map<std::string, bool> fullTags;
+		
+		while (count <= maxCount) {
+
+			// DONT use readData to retrieve signatures from input files...
+			// since the size filed uses POLY as a basic unit and not byte...
+			// Read numSigs <it should be 1> for data signatures...
+			int numSigs;
+			if (fread(&numSigs, sizeof(int), 1, sigfp) != 1) {
+				break;
+			}
+			assert(numSigs == 1);
+			
+			int size;
+			
+			if (fread(&size, sizeof(int), 1, sigfp) != 1) {
+				assert(0);
+			}
+
+			warnx << "Signature size: " << size << "\n";
+			
+			// value format <size><docid><size><sig>		 
+			int valLen = sizeof(int) + sizeof(count) + sizeof(int) + size * sizeof(POLY);
+			char *value = new char[valLen];
+
+			int docidLen = sizeof(count);
+			memcpy(value, &docidLen, sizeof(int));
+			memcpy(value + sizeof(docidLen), &count, sizeof(count));
+
+			// store the signature size (in bytes)...
+			int sigLen = size * sizeof(POLY);
+			memcpy(value + sizeof(int) + sizeof(count), &sigLen, sizeof(int));
+
+			char *sig = value + sizeof(int) + sizeof(count) + sizeof(int);
+			
+			// Read the signature...
+			if (fread(sig, sizeof(POLY), size, sigfp) != (size_t) size) {
+				assert(0);
+			}
+
+			// Read the docid
+			int docId;
+			if (fread(&docId, sizeof(docId), 1, sigfp) != 1) {
+				assert(0);
+			}
+			
+			// Rewrite the docid
+			memcpy(value + sizeof(docidLen), &docId, sizeof(docId));
+
+			
+			warnx << "******* Beginning insert document " << count << " ********\n";
+			// Read the distinct tags
+			std::vector<std::string> distinctTags;
+			distinctTags.clear();
+			
+			readTags(fpTags, distinctTags);
+			chordID ID;
+
+			//int bucketId = randomNumGen(numBuckets) - 1;
+            int bucketId = 0;
+
+			for (int i = 0; i < (int) distinctTags.size(); i++) {
+                bucketId = 0;
+                do {
+                    bucketId++;
+
+                    
+                    for (int j = 0; j < numReplicas; j++) {
+                        
+                        char keyBuf[1028];
+                        sprintf(keyBuf, "%s.%d.%d", distinctTags[i].c_str(), bucketId, j);
+
+                        // Check if it appears in the fullTags list
+                        if (fullTags.find(std::string(keyBuf)) != fullTags.end()) {
+                            warnx << "Tag full " << keyBuf << "\n";
+                            insertStatus = FULL;
+                            break;
+                        }
+
+                        warnx << "Inserting key " << keyBuf << "\n";
+                        ID = compute_hash(keyBuf, strlen(keyBuf));
+
+                        // To accomodate for key insert failures
+                        do {
+                            out = 0;
+                            insertError = false;
+                            insertStatus = SUCC;
+
+                            dataStored += valLen;
+                            
+                            dhash->insert(ID,	(char *) value, valLen,
+                                wrap(store_cb), NULL, DHASH_NOAUTH);
+                            while (out == 0) acheck();
+                            
+                            
+                            if (insertError) {
+                                warnx << "Failed to insert value for key " << keyBuf << "\n";
+                                sleep(10);
+                            }
+                        } while(insertError);
+                        
+                        if (insertStatus == FULL) {
+                            warnx << "List full....\n";
+                            fullTags[std::string(keyBuf)] = true;
+                            break;
+                        }
+                        
+                        dataSizeWrite += valLen;
+                    }
+                } while (insertStatus == FULL);
+			}
+
+			// free the space
+			delete[] value;
+			count++;
+
+			if (1) {
+                sleep(1 + (int) ((double) randDelay * (rand() / (RAND_MAX + 1.0))));
+			}
+
+		}
+
+		fclose(fpTags);
+		fclose(sigfp);
+
+		warnx << "Number of documents inserted: " << count - 1 << "\n";
+        
+		double finishTime = getgtod();
+	
+		std::cout << "Time taken: " << finishTime - startTime << std::endl;
+        warnx << "Data read: " << dataFetched << "\n";
+		warnx << "Data write: " << dataStored << "\n";
+	}
+	else if (!strcmp(cmd, "-I")) {
+		// Insert new signatures
+		std::string dataFile(argv[3]);
+		FILE *sigfp = fopen(dataFile.c_str(), "r");
+		assert(sigfp);
+
+		// Open the tags files too...
+		std::string tagsFile = dataFile + std::string(TAGFILE);
+		
+		FILE *fpTags = fopen(tagsFile.c_str(), "r");
+		assert(fpTags);
+		
+		int maxCount = argv[4] ? atoi(argv[4]) : 1;
+
+		int dataSizeWrite = 0;
+		int count = 1;
+
+        // Keep track of full tags
+        std::map<std::string, bool> fullTags;
+		
+		while (count <= maxCount) {
+
+			// DONT use readData to retrieve signatures from input files...
+			// since the size filed uses POLY as a basic unit and not byte...
+			// Read numSigs <it should be 1> for data signatures...
+			int numSigs;
+			if (fread(&numSigs, sizeof(int), 1, sigfp) != 1) {
+				break;
+			}
+			assert(numSigs == 1);
+			
+			int size;
+			
+			if (fread(&size, sizeof(int), 1, sigfp) != 1) {
+				assert(0);
+			}
+
+			warnx << "Signature size: " << size << "\n";
+			
+			// value format <size><docid><size><sig>		 
+			int valLen = sizeof(int) + sizeof(count) + sizeof(int) + size * sizeof(POLY);
+			char *value = new char[valLen];
+
+			int docidLen = sizeof(count);
+			memcpy(value, &docidLen, sizeof(int));
+			memcpy(value + sizeof(docidLen), &count, sizeof(count));
+
+			// store the signature size (in bytes)...
+			int sigLen = size * sizeof(POLY);
+			memcpy(value + sizeof(int) + sizeof(count), &sigLen, sizeof(int));
+
+			char *sig = value + sizeof(int) + sizeof(count) + sizeof(int);
+			
+			// Read the signature...
+			if (fread(sig, sizeof(POLY), size, sigfp) != (size_t) size) {
+				assert(0);
+			}
+
+			// Read the docid
+			int docId;
+			if (fread(&docId, sizeof(docId), 1, sigfp) != 1) {
+				assert(0);
+			}
+			
+			// Rewrite the docid
+			memcpy(value + sizeof(docidLen), &docId, sizeof(docId));
+
+			
+			warnx << "******* Beginning insert document " << count << " ********\n";
+			// Read the distinct tags
+			std::vector<std::string> distinctTags;
+			distinctTags.clear();
+			
+			readTags(fpTags, distinctTags);
+			chordID ID;
+
+			//int bucketId = randomNumGen(numBuckets) - 1;
+            int bucketId = 0;
+
+			//for (int i = 0; i < (int) distinctTags.size(); i++) {
+            for (int i = 0; i < 1; i++) {
+                bucketId = 0;
+                do {
+                    bucketId++;
+                    
+                    for (int j = 0; j < numReplicas; j++) {
+                        
+                        char keyBuf[1028];
+                        sprintf(keyBuf, "%s.%d.%d", ROOTNODE, bucketId, j);
+
+                        // Check if it appears in the fullTags list
+                        if (fullTags.find(std::string(keyBuf)) != fullTags.end()) {
+                            warnx << "Tag full " << keyBuf << "\n";
+                            insertStatus = FULL;
+                            break;
+                        }
+
+                        warnx << "Inserting key " << keyBuf << "\n";
+                        ID = compute_hash(keyBuf, strlen(keyBuf));
+
+                        // To accomodate for key insert failures
+                        do {
+                            out = 0;
+                            insertError = false;
+                            insertStatus = SUCC;
+
+                            dataStored += valLen;
+                            
+                            dhash->insert(ID,	(char *) value, valLen,
+                                wrap(store_cb), NULL, DHASH_NOAUTH);
+                            while (out == 0) acheck();
+                            
+                            
+                            if (insertError) {
+                                warnx << "Failed to insert value for key " << keyBuf << "\n";
+                                sleep(10);
+                            }
+                        } while(insertError);
+                        
+                        if (insertStatus == FULL) {
+                            warnx << "List full....\n";
+                            fullTags[std::string(keyBuf)] = true;
+                            break;
+                        }
+                        
+                        dataSizeWrite += valLen;
+                    }
+                } while (insertStatus == FULL);
+			}
+
+			// free the space
+			delete[] value;
+			count++;
+
+			if (1) {
+                sleep(1 + (int) ((double) randDelay * (rand() / (RAND_MAX + 1.0))));
+			}
+
+		}
+
+		fclose(fpTags);
+		fclose(sigfp);
+
+		warnx << "Number of documents inserted: " << count - 1 << "\n";
+		double finishTime = getgtod();
+	
+		std::cout << "Time taken: " << finishTime - startTime << std::endl;
+        warnx << "Data read: " << dataFetched << "\n";
+		warnx << "Data write: " << dataStored << "\n";
+	}
+	else if (!strcmp(cmd, "-P")) { // Path indexing
+		// Insert new signatures
+		std::string dataFile = std::string(argv[3]) + std::string(PATHFILE);
+		FILE *sigfp = fopen(dataFile.c_str(), "r");
+		assert(sigfp);
+
+		// Open the tags files too...
+		std::string tagsFile = std::string(argv[3]) + std::string(PATHTAGFILE);
+		
+		FILE *fpTags = fopen(tagsFile.c_str(), "r");
+		assert(fpTags);
+		
+		int maxCount = argv[4] ? atoi(argv[4]) : 1;
+
+		int dataSizeWrite = 0;
+		int count = 1;
+		
+		while (count <= maxCount) {
+
+			// DONT use readData to retrieve signatures from input files...
+			// since the size filed uses POLY as a basic unit and not byte...
+			// Read numSigs <it should be 1> for data signatures...
+			int numSigs;
+			if (fread(&numSigs, sizeof(int), 1, sigfp) != 1) {
+				break;
+			}
+			assert(numSigs == 1);
+			
+			int size;
+			
+			if (fread(&size, sizeof(int), 1, sigfp) != 1) {
+				assert(0);
+			}
+
+			warnx << "Signature size: " << size << "\n";
+			
+			// value format <size><docid><size><sig>		 
+			int valLen = sizeof(int) + sizeof(count) + sizeof(int) + size * sizeof(POLY);
+			char *value = new char[valLen];
+
+			int docidLen = sizeof(count);
+			memcpy(value, &docidLen, sizeof(int));
+			memcpy(value + sizeof(docidLen), &count, sizeof(count));
+
+			// store the signature size (in bytes)...
+			int sigLen = size * sizeof(POLY);
+			memcpy(value + sizeof(int) + sizeof(count), &sigLen, sizeof(int));
+
+			char *sig = value + sizeof(int) + sizeof(count) + sizeof(int);
+			
+			// Read the signature...
+			if (fread(sig, sizeof(POLY), size, sigfp) != (size_t) size) {
+				assert(0);
+			}
+
+			// Read the docid
+			int docId;
+			if (fread(&docId, sizeof(docId), 1, sigfp) != 1) {
+				assert(0);
+			}
+			
+			// Rewrite the docid
+			memcpy(value + sizeof(docidLen), &docId, sizeof(docId));
+
+			
+			warnx << "******* Beginning insert document " << count << " ********\n";
+			// Read the distinct tags
+			std::vector<std::string> distinctTags;
+			distinctTags.clear();
+		
+			// increment count when path tags are over	
+			readPathTags(fpTags, distinctTags, count);
+			chordID ID;
+
+			int bucketId = randomNumGen(numBuckets) - 1;
+
+			for (int i = 0; i < (int) distinctTags.size(); i++) {
+				for (int j = 0; j < numReplicas; j++) {
+					dataSizeWrite += valLen;
+					char keyBuf[1028];
+					sprintf(keyBuf, "%s.%d.%d", distinctTags[i].c_str(), bucketId, j);
+					//ID = compute_hash(distinctTags[i].c_str(), distinctTags[i].size());
+					ID = compute_hash(keyBuf, strlen(keyBuf));
+					out = 0;
+
+                    dataStored += valLen;
+                    
+					dhash->insert(ID,	(char *) value, valLen,
+												wrap(store_cb), NULL, DHASH_NOAUTH);
+					while (out == 0) acheck();
+				}
+			}
+
+			// free the space
+			delete[] value;
+
+			// counter is incremented inside readPathTags
+			//count++;
+			//if (count % 10 == 0) {
+			//	sleep(2);
+			//}
+		}
+
+		fclose(fpTags);
+		fclose(sigfp);
+
+		warnx << "Number of documents inserted: " << count - 1 << "\n";
+		double finishTime = getgtod();
+	
+		std::cout << "Time taken: " << finishTime - startTime << std::endl;
+		warnx << "Data write size: " << dataSizeWrite << "\n";
+	}
+	else {
+		fatal("Invalid option\n");
+  }
+
+	//double finishTime = getgtod();
+	
+	//std::cout << "Time taken: " << finishTime - startTime << std::endl;
+  //amain(); Asynchronous interface, requires probably exit()
+  // from callbacks. eg. if (inflight == 0) exit(0);
+  return 0;
+}
+
+// Remove redundant tags due to attribute names
+void removeRedundantTags(std::vector<std::string>& distinctTags)
+{
+	for (int i = 0; i < (int) distinctTags.size(); i++) {
+		std::string t = distinctTags[i] + ".attr";
+
+		for (int j = 0; j != i && j < (int) distinctTags.size(); j++) {
+			int pos = distinctTags[j].find(t);
+			
+			if (pos >= 0 && pos < (int) distinctTags[j].length()) {
+				distinctTags[i] = "";
+				break;
+			}
+		}
+	}
+}
+
+// Read the distinct tags
+void readPathTags(FILE *fp, std::vector<std::string>& distinctTags, int& count)
+{
+	char buf[128];
+	
+	while (1) {
+		if (fscanf(fp, "%s", buf) == EOF) break;
+
+	  if (strcmp(buf, ENDTAG) == 0) {
+			count++;
+			if (count % 10 == 0) {
+				sleep(2);
+			}
+			continue;
+		}
+		else if (strcmp(buf, BEGINTAG) == 0) {
+			continue;
+		}
+		else {
+			distinctTags.push_back(std::string(buf));
+			return;
+		}
+	}
+}
+

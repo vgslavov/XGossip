@@ -1,0 +1,959 @@
+head	1.7;
+access;
+symbols;
+locks
+	vsfgd:1.7; strict;
+comment	@ * @;
+
+
+1.7
+date	2009.08.04.02.59.53;	author vsfgd;	state Exp;
+branches;
+next	1.6;
+
+1.6
+date	2009.07.09.16.05.29;	author vsfgd;	state Exp;
+branches;
+next	1.5;
+
+1.5
+date	2009.07.08.23.52.19;	author vsfgd;	state Exp;
+branches;
+next	1.4;
+
+1.4
+date	2009.07.06.20.46.46;	author vsfgd;	state Exp;
+branches;
+next	1.3;
+
+1.3
+date	2009.07.01.14.24.51;	author vsfgd;	state Exp;
+branches;
+next	1.2;
+
+1.2
+date	2009.06.28.17.43.59;	author vsfgd;	state Exp;
+branches;
+next	1.1;
+
+1.1
+date	2009.06.24.13.15.14;	author vsfgd;	state Exp;
+branches;
+next	;
+
+
+desc
+@most code copied from psi.C
+@
+
+
+1.7
+log
+@main functionality of push_sum is implemented
+TODO:
+- log to file instead of stderr
+- better data structure
+- ?
+@
+text
+@/*	$Id: push_sum.C,v 1.6 2009/07/09 16:05:29 vsfgd Exp vsfgd $ */
+
+#include <cmath>
+#include <ctime>
+#include <fstream>
+#include <iostream>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <vector>
+
+#include <chord.h>
+#include <dhash_common.h>
+#include <dhashclient.h>
+#include <dhblock.h>
+
+#include "../utils/utils.h"
+#include "nodeparams.h"
+#include "push_sum.h"
+
+#define DEBUG 1
+
+//static char rcsid[] = "$Id: push_sum.C,v 1.6 2009/07/09 16:05:29 vsfgd Exp vsfgd $";
+extern char *__progname;
+
+dhashclient *dhash;
+int out;
+
+chordID maxID;
+static const char* dhash_sock;
+static const char* gsock;
+static const char* logfile;
+std::ofstream LogFile;
+
+void getKeyValue(str&, str&, double&, double&);
+void makeKeyValue(char **, int&, str&, double&, double&, InsertType);
+DHTStatus insertDHT(chordID, char *, int, int = MAXRETRIES, chordID = 0);
+void retrieveDHT(chordID ID, int, str&, chordID guess = 0);
+
+chordID randomID(void);
+void listen_gossip(void);
+void accept_connection(int);
+void read_gossip(int);
+void usage(void);
+
+DHTStatus insertStatus;
+
+// entries of a node
+vec<str> nodeEntries;
+
+bool insertError;
+bool retrieveError;
+
+vec<double> sum;
+//std::vector<double> sum;
+vec<double> weight;
+//std::vector<double> weight;
+vec<long int> seq;
+
+// hash table statistics
+int numReads;
+int numWrites;
+int numDocs;
+int cacheHits;
+
+// data transfered
+int dataFetched = 0, dataStored = 0;
+
+dhash_stat retrieveStatus;
+
+chordID myGuess;
+
+// retrieve TIMEOUT
+const int RTIMEOUT = 20;
+
+// copied from psi.C
+// Fetch callback for NOAUTH...
+void
+fetch_cb(dhash_stat stat, ptr<dhash_block> blk, vec<chordID> path)
+{
+	retrieveStatus = DHASH_OK;
+   	myGuess = 0;
+ 
+	if (stat != DHASH_OK) {
+		//warnx << "Failed to fetch key...\n";
+		if (stat == DHASH_DBERR) {
+			warnx << "PANIC time...\n";
+        	}
+		retrieveStatus = stat;
+		retrieveError = true;
+    		out++;
+        	return;
+	}
+
+	if (blk) {
+		strbuf buf;
+		
+#ifdef _DEBUG_
+		buf << " /times=";
+		for (u_int i = 0; i < blk->times.size (); i++)
+			buf << " " << blk->times[i];
+		buf << " /";
+		
+		buf << "hops= " << blk->hops << " errors= " <<  blk->errors
+		    << "vretries= " << blk->retries << " ";
+		///////////////////
+		buf << " path: ";
+		for (u_int i=0; i < path.size (); i++) {
+			buf << path[i] << " ";
+		}
+		
+		buf << " \n";
+		warnx << buf;
+#endif
+
+		myGuess = path.size() > 0 ? path[path.size() - 1] : 0;
+
+		if (blk->vData.size () > 0) {
+			//warn << blk->vData.size () << "\n";
+
+			for (unsigned int i = 0; i < blk->vData.size (); i++) {
+				nodeEntries.push_back(blk->vData[i]);
+				dataFetched += nodeEntries[i].len();
+			}
+		} else {
+		    nodeEntries.push_back(blk->data);
+		}
+		
+		// Output hops
+		warnx << "HOPS: " << blk->hops << "\n";
+		numReads++;
+		
+#ifdef _DEBUG_ 
+		warnx << "Retrieve information: " << buf << "\n";
+#endif
+	}
+	out++;
+}
+
+// copied from psi.C
+void
+store_cb(dhash_stat status, ptr<insert_info> i)
+{
+	if (status == DHASH_NOTFIRST) {
+		insertStatus = NOTFIRST;
+	} else if (status == DHASH_FULL) {
+		insertStatus = FULL;
+	} else if (status == DHASH_RETRYINSERT) {
+		insertStatus = RETRY;
+	} else if (status == DHASH_CORRUPTHDR) {
+		insertStatus = CORRUPTHDR;
+		// Trying again
+		//insertError = true;
+	} else if (status != DHASH_OK) {
+		warnx << "failed to store key...\n";
+		insertError = true;
+	} else {
+		numWrites++;
+		warnx << "key stored successfully...\n";
+	}
+	out++;
+}
+
+int
+main(int argc, char *argv[])
+{
+	double s, w;
+	int ch, intval, fflag, Gflag, gflag, Lflag, lflag, Sflag, valLen;
+	char *name;
+	char *value;
+	struct stat statbuf;
+	chordID ID;
+	DHTStatus status;
+
+	fflag = Gflag = gflag = Lflag = lflag = Sflag = intval = 0;
+	while ((ch = getopt(argc, argv, "fG:ghi:L:lS:")) != -1)
+		switch(ch) {
+		case 'f':
+			fflag = 1;
+			break;
+		case 'G':
+			Gflag = 1;
+			gsock = optarg;
+			break;
+		case 'g':
+			gflag = 1;
+			break;
+		case 'i':
+			intval = atoi(optarg);
+			break;
+		case 'L':
+			Lflag = 1;
+			logfile = optarg;
+			break;
+		case 'l':
+			lflag = 1;
+			break;
+		case 'S':
+			Sflag = 1;
+			dhash_sock = optarg;
+			break;
+		case 'h':
+		case '?':
+		default:
+			usage();
+			break;
+		}
+	argc -= optind;
+	argv += optind;
+
+	// required flags
+	if (Gflag == 0 || Sflag == 0 || Lflag == 0) usage();
+
+	// FIXME: make sure only one flag is set at a time
+	if (fflag == 0 && gflag == 0 && lflag == 0) usage();
+
+	// check intval bound
+	if (gflag == 1 && intval == 0) usage();
+
+	// check
+	LogFile.open(logfile);
+
+	if (stat(dhash_sock, &statbuf) != 0) fatal("socket does not exist\n");
+	dhash = New dhashclient(dhash_sock);
+
+	system("date");
+
+	if (gflag == 1) {
+		warnx << "starting to listen...\n";
+		listen_gossip();		
+		warnx << "starting to gossip...\n";
+		sleep(10);
+		srand(time(NULL));
+		sum.push_back(rand() % 100 + 1);
+		weight.push_back(1);
+		seq.push_back(0);
+		warnx << "\ninitial value: ";
+
+		while (1) {
+			ID = randomID();
+			strbuf z;
+			z << ID;
+			str key(z);
+
+			std::cout << "seq = " << seq.back() << ", s = " << sum.back()
+				  << ", w = " << weight.back() << ", avg (s/w) = "
+				  << sum.back()/weight.back() << "\n";
+				  
+			s = sum.back()/2;
+			w = weight.back()/2;
+			std::cout << "gossiping: (s/2, w/2) = (" << s << ", " << w << ")\n";
+			makeKeyValue(&value, valLen, key, s, w, GOSSIP);
+			status = insertDHT(ID, value, valLen, MAXRETRIES);
+			cleanup(value);
+
+			if (status != SUCC) fatal("insert FAILed\n");
+			else warnx << "insert SUCCeeded\n";
+			warnx << "waiting " << intval << " seconds...\n\n";
+			sleep(intval);
+			warnx << "current value: ";
+		}
+	} else if (fflag == 1) {
+		str junk("");
+		name = argv[3];
+		str2chordID(name, ID);
+		retrieveDHT(ID, RTIMEOUT, junk);
+
+		if (retrieveError) {
+			delete dhash;
+			fatal("Unable to read node ID\n");
+		}
+		str k;
+		getKeyValue(nodeEntries[0], k, s, w);
+		std::cout << "KEY: " << k << "\nVALUE (s, w): (" << s << ", " << w << ")\n";
+	} else if (lflag == 1) {
+		listen_gossip();		
+	} else
+		usage();
+
+	amain();
+	return 0;
+}
+
+// copied from psi.C
+DHTStatus
+insertDHT(chordID ID, char *value, int valLen, int STOPCOUNT, chordID guess)
+{
+	warnx << "insert operation on key: " << ID << "\n";
+	dataStored += valLen;
+	int numTries = 0;
+		
+	// Make sure the guess is a successor of ID
+	if (guess < ID) {
+		if (maxID - ID + guess < ID - guess) {
+		// nothing	
+		} else {
+			guess = 0;
+		}
+	} else {
+		if (maxID - guess + ID < guess - ID) {
+			guess = 0;	
+		}
+	}
+
+	do {    
+		out = 0;
+		insertError = false;
+		insertStatus = SUCC;
+		double beginTime = getgtod();    
+
+		if (guess > 0) {
+			ptr<option_block> options = New refcounted<option_block>();
+			options->flags = DHASHCLIENT_GUESS_SUPPLIED;
+			options->guess = guess;
+			dhash->insert(ID, (char *) value, valLen, wrap(store_cb), options, DHASH_NOAUTH);
+		} else {
+			dhash->insert(ID, (char *) value, valLen, wrap(store_cb), NULL, DHASH_NOAUTH);
+		}
+
+		while (out == 0) acheck();
+		double endTime = getgtod();    
+		std::cerr << "key insert time: " << endTime - beginTime << " secs\n";
+		// Insert was successful
+		if (!insertError) {
+			return insertStatus;
+		}
+		numTries++;
+		warnx << "numTries: " << numTries << "\n";
+		 
+		if (insertError && numTries == STOPCOUNT) {
+			warnx << "Error during INSERT operation...\n";
+			return FAIL;
+		}
+					
+		// If error then don't use guess
+		//guess = 0;
+
+		//warnx << "Sleeping 10 seconds...\n";
+		//sleep(10);
+	} while (insertError);
+
+	return insertStatus;
+}
+
+// copied from psi.C
+void
+retrieveDHT(chordID keyID, int MAXWAIT, str& sigdata, chordID guess)
+{
+	if (((keyID >> 32) << 32) == 0) {
+		warnx << "Bad node id... Skipping retrieve...\n";
+		retrieveError = true;
+		return;
+	}
+
+	// Make sure the guess is a successor of keyID
+	if (guess < keyID) {
+		guess = 0;
+	}
+	nodeEntries.clear();
+	// now fetch the node
+	out = 0;
+	retrieveError = false;
+	//warnx << "Retrieve: " << keyID << " " << sigdata << "\n";	
+	//warnx << "Retrieve: " << keyID << "\n";
+	double beginTime = getgtod();
+	if (guess > 0) {
+		ptr<option_block> options = New refcounted<option_block>();
+		options->flags = DHASHCLIENT_GUESS_SUPPLIED;
+		options->guess = guess;
+		dhash->retrieve(keyID, DHASH_NOAUTH, wrap(fetch_cb), sigdata, options);
+	} else {
+		dhash->retrieve(keyID, DHASH_NOAUTH, wrap(fetch_cb), sigdata);
+	}
+	//double retrieveBegin = getgtod();
+	int numTries = 0;
+	while (out == 0) {
+		acheck();
+		/*double retrieveEnd = getgtod();
+		if (retrieveEnd - retrieveBegin > MAXWAIT) {
+		    retrieveError = true;
+            break;
+        }*/
+#ifdef _LIVE_
+        if (numTries == MAXRETRIEVERETRIES) {
+#else
+		if (numTries == 20) {
+#endif
+			retrieveError = true;
+			break;
+		}
+		numTries++;
+	}
+	double endTime = getgtod();
+	std::cerr << "Retrieve time: " << endTime - beginTime << std::endl;
+
+	// Extra check
+	if (!retrieveError && nodeEntries.size() == 0) {
+		warnx << "EMPTY contents...\n";
+		retrieveError = true;
+	}
+	//warnx << "# of node entries: " << nodeEntries.size() << "\n";
+}
+
+// TODO: verify randomness
+chordID
+randomID(void)
+{
+	char buf[16];
+	int j;
+	strbuf s;
+	chordID ID;
+
+	srand(time(NULL));
+	for (int i = 0; i < 40; i++) {
+		j = rand() % 16;
+		sprintf(buf, "%x", j);
+		s << buf;
+	}
+	str t(s);
+	str2chordID(t, ID);
+	return ID;
+}
+
+void
+listen_gossip(void)
+{
+	unlink(gsock);
+	int fd = unixsocket(gsock);
+	if (fd < 0) fatal << "Error creating GOSSIP socket" << strerror (errno) << "\n";
+
+	// make socket non-blocking
+	make_async(fd);
+
+	if (listen(fd, 5) < 0) {
+		fatal("Error from listen: %m\n");
+		close(fd);
+	}
+	fdcb(fd, selread, wrap(accept_connection, fd));
+}
+
+void
+accept_connection(int lfd)
+{
+	sockaddr_un sun;
+	bzero(&sun, sizeof(sun));
+	socklen_t sunlen = sizeof(sun);
+	// vs "struct sockaddr *"
+	int cs = accept(lfd, reinterpret_cast<sockaddr *> (&sun), &sunlen);
+	if (cs >= 0) warnx << "\taccepted connection on local socket\n";
+	//if (cs >= 0) warnx << "accepted connection. file descriptor = " << cs << "\n";
+	else if (errno != EAGAIN) fatal << "\taccept; errno = " << errno << "\n";
+	
+	fdcb(cs, selread, wrap(read_gossip, cs));
+}
+
+void
+read_gossip(int fd)
+{
+	strbuf buf;
+	str gKey;
+	int n;
+	double s, w;
+
+	n = buf.tosuio()->input(fd);
+	if (n < 0) fatal("read failed\n");
+
+	if (n == 0) {
+		fdcb(fd, selread, 0);
+		close(fd);
+		// what's the difference?
+		// exit(0);
+		return;
+	}
+	str gElem(buf);
+	getKeyValue(gElem.cstr(), gKey, s, w);
+
+	warnx << "\tread from socket: KEY = " << gKey << "\n";
+
+	//std::cout << "read from socket: KEY = " << gKey << ", VALUE (s, w) = ("
+	//	  << s << ", " << w << ")\n";
+
+	if (sum.empty() || weight.empty()) {
+		sum.push_back(s);
+		weight.push_back(w);
+		seq.push_back(1);
+	} else {
+		sum.push_back(sum.back() + s);
+		weight.push_back(weight.back() + w);
+		seq.push_back(seq.back() + 1);
+	}
+	// check if sum and weight vecs have the same size?
+}
+
+void
+usage(void)
+{
+	warn << "usage: " << __progname << " [-h] [-S dhash-sock] [-G g-sock] [-L logfile] [-f | -l | -g [-i interval in sec]]\n";
+	exit(0);
+}
+@
+
+
+1.6
+log
+@added getopt()
+gsock is now in the same dir as dhash-sock, adbd-sock, etc
+@
+text
+@d1 1
+a1 1
+/*	$Id: push_sum.C,v 1.5 2009/07/08 23:52:19 vsfgd Exp vsfgd $ */
+d5 1
+d24 1
+a24 1
+//static char rcsid[] = "$Id: push_sum.C,v 1.5 2009/07/08 23:52:19 vsfgd Exp vsfgd $";
+d32 3
+a34 1
+static const char* gsock = "/tmp/g-sock";
+d59 1
+d156 1
+a156 1
+		warnx << "Failed to store key...\n";
+d160 1
+a160 1
+		warnx << "Key stored successfully...\n";
+d169 1
+a169 1
+	int ch, intval, fflag, gflag, lflag, valLen;
+d176 2
+a177 2
+	fflag = gflag = lflag = intval = 0;
+	while ((ch = getopt(argc, argv, "fG:ghi:lS:")) != -1)
+d183 1
+d192 4
+d200 1
+d212 4
+d221 3
+d237 2
+d246 4
+a249 1
+			std::cout << "s_0=" << sum.back() << ", w_0=" << weight.back() << "\n";
+d252 1
+a252 1
+			std::cout << "Gossiping (s/2, w/2): (" << s << ", " << w << ")\n";
+d257 3
+a259 3
+			if (status != SUCC) fatal("Insert FAILed\n");
+			else warnx << "Insert SUCCeeded\n";
+			warnx << "waiting " << intval << " seconds...\n";
+d261 1
+d289 1
+a289 1
+	warnx << "Insert operation on key: " << ID << "\n";
+d323 1
+a323 1
+		std::cerr << "Key insert time: " << endTime - beginTime << " secs\n";
+d450 3
+a452 2
+	if (cs >= 0) warnx << "accepted connection. file descriptor = " << cs << "\n";
+	else if (errno != EAGAIN) fatal << "accept; errno = " << errno << "\n";
+d478 4
+a481 2
+	std::cout << "read from socket: KEY: " << gKey << ", VALUE (s, w): ("
+		  << s << ", " << w << ")\n";
+d486 1
+d490 1
+d492 1
+a492 8
+
+	// check if sum and weight vecs have the same size
+
+	std::cout << "current sum: " << sum.back() << ", current weight: "
+		  << weight.back() << "\n";
+
+	std::cout << "step t=" << sum.size() << ", avg s/w="
+		  << sum.back()/weight.back() << "\n";
+d498 1
+a498 1
+	warn << "usage: " << __progname << " [-h] [-S dhash-sock] [-G g-sock] [-f | -l | -g [-i interval in sec]]\n";
+@
+
+
+1.5
+log
+@before conversion to getopt()
+@
+text
+@d1 1
+a1 1
+/*	$Id: push_sum.C,v 1.4 2009/07/06 20:46:46 vsfgd Exp vsfgd $ */
+d23 1
+a23 1
+//static char rcsid[] = "$Id: push_sum.C,v 1.4 2009/07/06 20:46:46 vsfgd Exp vsfgd $";
+d31 1
+d39 1
+a39 1
+void startg(void);
+a51 2
+str gsock;
+
+d165 1
+a165 2
+	int intval, fflag, lflag, gflag, valLen;
+	char *cmd;
+d172 34
+a205 12
+	fflag = lflag = gflag = 0;
+	switch(argc) {
+	case 3:
+		lflag = 1;
+		break;
+	case 4:
+		fflag = 1;
+		gflag = 1;
+		break;
+	default:
+		usage();
+	}
+a206 1
+	dhash_sock = argv[1];
+a209 1
+	cmd = argv[2];
+d212 5
+a216 3
+	if (strcmp(cmd, "-g") == 0 && gflag) {
+		intval = atoi(argv[3]);
+		//startg();		
+d240 1
+a240 2
+		//amain();
+	} else if (strcmp(cmd, "-f") == 0 && fflag) {
+d253 2
+a254 3
+	} else if (strcmp(cmd, "-l") == 0 && lflag) {
+		startg();		
+		amain();
+d258 1
+d403 1
+a403 1
+startg(void)
+a416 2
+	// here or in main()?
+	//amain();
+a450 1
+	//warnx << "data read: " << buf << "\n";
+a453 2
+	//if (!sum.empty() && !weight.empty() && (s == sum.back()) && (w == weight.back())) return;
+
+d477 1
+a477 3
+	warn << "usage: " << __progname << " socket -f{etch} ID\n";
+	warn << "       " << __progname << " socket -g{ossip} [sec]\n";
+	warn << "       " << __progname << " socket -l{isten}\n";
+@
+
+
+1.4
+log
+@added unix sockets support
+push_sum creates a socket and starts listening
+dhblock_noauth_srv connects to that socket and dumps the gossip info
+@
+text
+@d1 1
+a1 1
+/*	$Id: push_sum.C,v 1.3 2009/07/01 14:24:51 vsfgd Exp vsfgd $ */
+d3 1
+d10 1
+d23 1
+a23 1
+//static char rcsid[] = "$Id: push_sum.C,v 1.3 2009/07/01 14:24:51 vsfgd Exp vsfgd $";
+d32 2
+a33 2
+void getKeyValue(str&, str&, int&);
+void makeKeyValue(char **, int&, str&, int&, InsertType);
+d51 6
+a56 1
+static str gsock = "/tmp/g-sock";
+d153 1
+a153 1
+		//warnx << "Failed to store key...\n";
+d157 1
+a157 1
+		//warnx << "Key stored successfully...\n";
+d165 2
+a166 1
+	int i, fflag, lflag, sflag, valLen;
+d174 1
+a174 1
+	fflag = lflag = sflag = 0;
+d176 1
+a176 2
+	case 4:
+		sflag = 1;
+d179 1
+a179 1
+	case 5:
+d181 1
+d194 3
+a196 1
+	if (strcmp(cmd, "-s") == 0 && sflag) {
+d198 2
+a199 2
+		i = rand() % 100 + 1;
+		warnx << "Inserting value: " << i << "\n";
+d201 20
+a220 11
+		ID = randomID();
+		strbuf s;
+		s << ID;
+		str key(s);
+
+		makeKeyValue(&value, valLen, key, i, GOSSIP);
+		status = insertDHT(ID, value, valLen, MAXRETRIES);
+		cleanup(value);
+
+		if (status != SUCC) fatal("Insert FAILed\n");
+		else warnx << "Insert SUCCeeded\n";
+d231 3
+a233 4
+		str a;
+		int b;
+		getKeyValue(nodeEntries[0], a, b);
+		warnx << "KEY: " << a << "\nVALUE: " << b << "\n";
+d236 1
+a239 1
+	amain();
+d287 1
+d390 1
+d398 2
+d420 3
+a422 1
+	int n = buf.tosuio()->input(fd);
+d424 2
+a425 1
+	if (n < 0) fatal("read\n");
+d430 2
+d434 24
+a457 1
+	warnx << "data read: " << buf << "\n";
+d463 3
+a465 3
+	warn << "usage: " << __progname << " socket -f ID [interval]\n";
+	warn << "       " << __progname << " socket -l [interval]\n";
+	warn << "       " << __progname << " socket -s [interval]\n";
+@
+
+
+1.3
+log
+@retrieveDHT and insertDHT work
+uses the new makeKeyValue and getKeyValue
+@
+text
+@d1 1
+a1 1
+/*	$Id: push_sum.C,v 1.2 2009/06/28 17:43:59 vsfgd Exp vsfgd $ */
+d17 1
+a17 1
+#include "psi.h"
+d21 1
+a21 1
+//static char rcsid[] = "$Id: push_sum.C,v 1.2 2009/06/28 17:43:59 vsfgd Exp vsfgd $";
+d35 6
+d49 2
+a66 2
+void usage(void);
+
+d158 1
+a158 4
+	int i, fflag, sflag, valLen;
+	double startTime, endTime;
+	struct stat statbuf;
+	char *buf;
+d162 1
+a164 1
+	time_t rawtime;
+d166 1
+a166 1
+	fflag = sflag = 0;
+d170 1
+d191 1
+a191 4
+		// TODO: generate truly random chordID
+		buf = ctime(&rawtime);
+		ID = compute_hash(buf, strlen(buf));
+
+a196 1
+		startTime = getgtod();
+a197 3
+		endTime = getgtod();
+		//warnx << "ID used: " << ID << "\n";
+		//std::cout << "Insert time: " << endTime - startTime << " secs" << std::endl;
+a205 1
+		startTime = getgtod();
+a211 3
+		endTime = getgtod();
+		//warnx << "ID used: " << ID << "\n";
+		//std::cout << "Retrieve time: " << endTime - startTime << " secs" << std::endl;
+d216 2
+d221 1
+a221 1
+	//amain();
+d344 66
+d414 1
+@
+
+
+1.2
+log
+@successful makeKeyValue() and insertDHT()
+@
+text
+@d1 1
+a1 1
+/*	$Id: push_sum.C,v 1.1 2009/06/24 13:15:14 vsfgd Exp vsfgd $ */
+d21 1
+a21 1
+//static char rcsid[] = "$Id: push_sum.C,v 1.1 2009/06/24 13:15:14 vsfgd Exp vsfgd $";
+d30 1
+d33 1
+d56 3
+d61 1
+d125 1
+d152 2
+a153 2
+	int i, valLen;
+	double startTime;
+d155 3
+a158 1
+	char *buf;
+d163 11
+a173 5
+	srand(time(NULL));
+	i = rand() % 100 + 1;
+	warnx << "random i (1-100): " << i << "\n";
+
+	if (argc < 2) usage();
+a175 1
+
+a176 1
+
+d179 1
+a179 2
+	startTime = getgtod();
+
+d182 43
+a224 13
+	// TODO: generate truly random chordID
+	buf = ctime(&rawtime);
+	ID = compute_hash(buf, strlen(buf));
+
+	strbuf s;
+	s << ID;
+	str key(s);
+
+	makeKeyValue(&value, valLen, key, i, GOSSIP);
+	status = insertDHT(ID, value, valLen, MAXRETRIES);
+	cleanup(value);
+
+	if (status != SUCC) fatal("insert FAILed\n");
+d230 1
+d290 59
+d352 2
+a353 1
+	warn << "usage: " << __progname << " socket [interval]\n";
+@
+
+
+1.1
+log
+@Initial revision
+@
+text
+@d1 1
+a1 1
+/*	$Id$ */
+d21 1
+a21 1
+//static char rcsid[] = "$Id$";
+d31 1
+a31 1
+DHTStatus insertDHT(chordID, char *, int, int = -1, int = MAXRETRIES, chordID = 0);
+d151 1
+a151 1
+	DHTStatus stat;
+d170 1
+a170 1
+	// TODO: generate random chordID
+d174 6
+a179 2
+	makeKeyValue(&value, valLen, GOSSIP);
+	stat = insertDHT(ID, value, valLen, -1, MAXRETRIES);
+d182 1
+a182 1
+	if (stat != SUCC) fatal("insert FAILed\n");
+d189 1
+a189 1
+insertDHT(chordID ID, char *value, int valLen, int randomNum, int STOPCOUNT, chordID guess)
+@

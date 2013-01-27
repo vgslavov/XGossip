@@ -1,0 +1,109 @@
+--[ compiling Chord on Fedora Core 11 (rothko)
+
+# source code needed (in /home/vsfgd/src)
+gcc-4.0.2.tar.gz
+db-4.3.29.tar.gz
+sfslite-0.8.16.tgz
+chord-0.1-vasil.tgz
+
+# edit .bashrc
+export CC="/usr/local/bin/gcc"
+export CXX="/usr/local/bin/g++"
+export LDFLAGS="-L/home/vsfgd/bdb/lib -lpthread"
+export CFLAGS="-I/home/vsfgd/bdb/include"
+export CXXFLAGS="$CFLAGS"
+export CPPFLAGS="$CXXFLAGS"
+# reload it
+source ~/.bashrc
+
+# untarring
+mkdir ~/src
+cp chord-0.1-vasil.tgz ~/src
+cp db-4.3.29.tar.gz ~/src
+cp gcc-4.0.2.tar.gz ~/src
+cp sfslite-0.8.16.tgz ~/src
+cd ~/src
+tar zxvf chord-0.1-vasil.tgz
+tar zxvf db-4.3.29.tar.gz
+tar zxvf gcc-4.0.2.tar.gz
+tar zxvf sfslite-0.8.16.tgz
+
+# compiling gcc
+# by default, gcc is in /usr/bin/gcc; gcc 4.0.2 will be placed in /usr/local/bin/gcc
+mkdir -p ~/build/gcc
+cd ~/build/gcc
+~/src/gcc-4.0.2/configure --enable-languages=c,c++
+make
+sudo make install
+
+# compiling sfslite
+mkdir ~/build/sfslite
+cd ~/build/sfslite
+~/src/sfslite-0.8.16/configure --with-sfsmisc
+make
+
+# the berkeley db from packages doesn't work
+#yum install db4
+#yum install db4-cxx
+#yum install db4-devel
+
+# build berkley db from source
+mkdir ~/bdb
+mkdir ~/build/db
+cd ~/build/db
+~/src/db-4.3.29/dist/configure --prefix=/home/vsfgd/bdb --enable-cxx --with-pthread=yes
+make
+make install
+
+# compiling chord
+mkdir ~/build/chord
+cd ~/build/chord
+# use absolute paths in the "--with-" arguments
+~/src/chord-0.1-vasil/configure --with-sfs=/home/vsfgd/build/sfslite --with-db=/home/vsfgd/bdb
+make
+
+--[ compiling Chord on 64-bit Fedora Core 8 (cactus)
+
+export LDFLAGS="-L/usr/local/lib64"
+mkdir ~/src
+cp /home/raopr/sfslite-0.8.16.tar.gz ~/src
+cp /home/raopr/chord-0.1.tar.gz ~/src
+cd ~/src
+tar zxvf sfslite-0.8.16.tar.gz
+tar zxvf chord-0.1.tar.gz
+mkdir -p ~/build/sfslite
+cd ~/build/sfslite
+~/src/sfslite-0.8.16/configure --with-sfsmisc
+make
+export LDFLAGS="-L/usr/local/lib64 -lpthread"
+mkdir ~/build/chord
+cd ~/build/chord
+~/src/chord-0.1/configure --with-sfs=../sfslite --with-db=/home/raopr/bdb
+make
+
+--[ compiling Chord on Mac OS X 10.5
+
+# sfslite requires gmp (from macports)
+port install gmp
+
+# sfslite requires dmalloc (from macports)
+port install dmalloc
+
+# for macports
+setenv CFLAGS "-I/opt/local/include"
+setenv LDFLAGS "-L/opt/local/lib"
+setenv CXXFLAGS $CFLAGS 
+setenv CPPFLAGS $CXXFLAGS 
+
+cd ~/build/sfslite
+~/src/sfslite-0.8.16/configure --with-mode=debug --enable-all
+make
+make install
+
+# chord requires berkeley db (from macports)
+port install db43
+
+#setenv LDFLAGS "$LDFLAGS -lpthread"
+cd ~/build/chord
+~/src/chord-0.1/configure --with-sfs=../sfslite --with-db=/opt/local
+make
