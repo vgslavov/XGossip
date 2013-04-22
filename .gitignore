@@ -1,0 +1,5 @@
+*.tgz
+*.tar.gz
+db-4.3.29
+gcc-4.0.2
+sfslite-0.8.16
