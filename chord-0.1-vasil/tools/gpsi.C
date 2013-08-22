@@ -114,6 +114,7 @@ id2chordIDs qid2teamIDs;
 // id, string
 typedef std::map<int, std::vector<std::string> > id2strings;
 id2strings qid2dtd;
+id2strings qid2txt;
 
 // strings, sig
 typedef std::map<std::string, std::vector<std::vector<POLY> > > string2sigs;
@@ -163,7 +164,7 @@ typedef std::map<POLY, std::vector<int> > poly2sig;
 void acceptconn(int);
 void addqid(int, std::vector<POLY>);
 bool addteamID(int, chordID);
-void add2querymap(std::vector<std::vector<POLY> >, std::vector<std::string>);
+void add2querymap(std::vector<std::vector<POLY> >, std::vector<std::string>, std::vector<std::string>);
 // XGossip
 void add2vecomapx(std::vector<std::vector <POLY> >, std::vector<double>, std::vector<double>, chordID);
 // VanillaXGossip
@@ -982,7 +983,7 @@ main(int argc, char *argv[])
 {
 	bool usedummy = false;
 	bool useproxy = false;
-	int Gflag, Lflag, lflag, rflag, Sflag, sflag, Oflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, fflag, xflag, yflag, Zflag, Uflag, iflag;
+	int Gflag, Lflag, lflag, rflag, Sflag, sflag, Oflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, fflag, xflag, yflag, Zflag, Uflag, iflag, aflag;
 	int ch, gintval, initintval, waitintval, listenintval, nids, rounds, valLen, logfd;
 	int listnum;
 	int qid;
@@ -1009,12 +1010,14 @@ main(int argc, char *argv[])
 	std::string proxysigdir;
 	std::string sigdir;
 	std::string xpathdir;
+	std::string xpathtxtdir;
 	std::string inmergetype;
 	std::string cmd;
 	std::vector<std::string> initfiles;
 	std::vector<std::string> proxysigfiles;
 	std::vector<std::string> sigfiles;
 	std::vector<std::string> xpathfiles;
+	std::vector<std::string> xpathtxtfiles;
 	std::vector<std::string> dtdList;
 	std::vector<std::vector<POLY> > proxysigList;
 	std::vector<std::vector<POLY> > sigList;
@@ -1023,6 +1026,7 @@ main(int argc, char *argv[])
 	std::vector<long double> lfreqList;
 	std::vector<long double> lweightList;
 	std::vector<std::vector<POLY> > queryList;
+	std::vector<std::string> querytxtList;
 	std::vector<POLY> sig;
 	std::vector<POLY> proxysig;
 	std::vector<POLY> querysig;
@@ -1030,7 +1034,7 @@ main(int argc, char *argv[])
 	std::vector<std::vector<unsigned char> > outBitmap;
 
 
-	Gflag = Lflag = lflag = rflag = Sflag = sflag = Oflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = fflag = xflag = yflag = Zflag = Uflag = iflag = 0;
+	Gflag = Lflag = lflag = rflag = Sflag = sflag = Oflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = fflag = xflag = yflag = Zflag = Uflag = iflag = aflag = 0;
 	gintval = waitintval = listenintval = nids = 0;
 	initintval = -1;
 	rounds = -1;
@@ -1045,10 +1049,14 @@ main(int argc, char *argv[])
 	dummysig.push_back(1);
 
 	// parse arguments
-	while ((ch = getopt(argc, argv, "A:bB:CcD:d:EF:f:G:gHhIi:j:K:k:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:U:uVvW:w:X:x:y:Z:z")) != -1)
+	while ((ch = getopt(argc, argv, "A:a:bB:CcD:d:EF:f:G:gHhIi:j:K:k:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:U:uVvW:w:X:x:y:Z:z")) != -1)
 		switch(ch) {
 		case 'A':
 			bstrapport = strtol(optarg, NULL, 10);
+			break;
+		case 'a':
+			aflag = 1;
+			xpathtxtdir = optarg;
 			break;
 		case 'B':
 			mgroups = strtol(optarg, NULL, 10);
@@ -1303,6 +1311,8 @@ main(int argc, char *argv[])
 
 	// sig or xpath are required when querying
 	if (Qflag == 1 && (sflag == 0 && xflag == 0)) usage();
+
+	if (xflag == 1 && aflag == 0) usage();
 
 	// TODO: handle sflag & Pflag
 	if (gflag == 1 && gintval == 0) usage();
@@ -1709,16 +1719,33 @@ main(int argc, char *argv[])
 	}
 
 	// reading or querying using XPath files
-	if ((rflag == 1 || Qflag == 1) && xflag == 1) {
+	if ((rflag == 1 || Qflag == 1) && xflag == 1 && aflag == 1) {
 		getdir(xpathdir, xpathfiles);
+		getdir(xpathtxtdir, xpathtxtfiles);
+
+		warnx << "reading queries from txt files...\n";
+		for (unsigned int i = 0; i < xpathtxtfiles.size(); i++) {
+			if (stat(xpathtxtfiles[i].c_str(), &statbuf) != 0)
+				fatal << "'" << xpathtxtfiles[i].c_str() << "' does not exist" << "\n";
+
+			warnx << "querytxtfile: " << xpathtxtfiles[i].c_str() << "\n";
+			std::ifstream querystream;
+			querystream.open(xpathtxtfiles[i].c_str());
+			std::string txt;
+			while (querystream >> txt) {
+				querytxtList.push_back(txt);
+			}
+			warnx << "NUM queries: " << querytxtList.size() << "\n";
+			querystream.close();
+		}
+
 		queryList.clear();
 		dtdList.clear();
-
-		warnx << "reading queries from files...\n";
+		warnx << "reading queries from sig files...\n";
 		for (unsigned int i = 0; i < xpathfiles.size(); i++) {
 			readquery(xpathfiles[i], queryList, dtdList);
 		}
-		add2querymap(queryList, dtdList);
+		add2querymap(queryList, querytxtList, dtdList);
 		/*
 		warnx << "calculating frequencies...\n";
 		beginTime = getgtod();    
@@ -1727,6 +1754,7 @@ main(int argc, char *argv[])
 		printdouble("calcfreq time (+sorting): ", endTime - beginTime);
 		warnx << "\n";
 		*/
+		std::string xpathtxt;
 		if (plist == 1) {
 			// both init phases use allT
 			//printlist(allT, 0, -1);
@@ -1745,8 +1773,20 @@ main(int argc, char *argv[])
 				} else {
 					warnx << "DTD missing\n";
 				}
+
+				xpathtxt = "";
+				id2strings::iterator titr = qid2txt.find(qid);
+				if (titr != qid2txt.end()) {
+					if (titr->second.size() != 1) {
+						warnx << "more than 1 txt query per QID\n";
+					}
+					xpathtxt = titr->second.back();
+				} else {
+					warnx << "txt query missing\n";
+				}
+
 				sig2str(querysig, sigbuf);
-				warnx << "QID: " << qid << " DTD: " << dtd.c_str() << " QUERYSIG: " << sigbuf << "\n";
+				warnx << "QID: " << qid << " DTD: " << dtd.c_str() << " QUERYSIG: " << sigbuf << " XPATH: " << xpathtxt.c_str() << "\n";
 			}
 			/*
 			for (unsigned int i = 0; i < queryList.size(); i++) {
@@ -4596,19 +4636,30 @@ validsig(std::vector<POLY> sig)
 }
 
 void
-add2querymap(std::vector<std::vector<POLY> > queryList, std::vector<std::string> dtdList)
+add2querymap(std::vector<std::vector<POLY> > queryList, std::vector<std::string> querytxtList, std::vector<std::string> dtdList)
 {
 	int qid = 0;
+	warnx << "add2querymap: queryList.size(): " << queryList.size() << "\n";
+	warnx << "add2querymap: querytxtList.size(): " << querytxtList.size() << "\n";
 	assert(queryList.size() == dtdList.size());
+	//assert(queryList.size() == querytxtList.size());
 
 	for (int i = 0; i < (int)queryList.size(); i++) {
 		queryMap.insert(std::pair<std::vector<POLY>, int>(queryList[i], qid));
 		id2strings::iterator itr = qid2dtd.find(qid);
 		if (itr != qid2dtd.end()) {
-			warnx << "add2querymap: qid already exists\n";
+			warnx << "add2querymap: qid already exists in qid2dtd\n";
 		} else {
 			qid2dtd[qid].push_back(dtdList[i]);
 		}
+
+		id2strings::iterator itr2 = qid2txt.find(qid);
+		if (itr2 != qid2txt.end()) {
+			warnx << "add2querymap: qid already exists in qid2txt\n";
+		} else {
+			qid2txt[qid].push_back(querytxtList[i]);
+		}
+
 		++qid;
 	}
 	warnx << "queries added: " << qid << "\n";
@@ -6199,10 +6250,11 @@ usage(void)
 					"\t\t\t(don't use)\n\n"
 
              << "\tDIRECTORIES:\n"
+	     << "	-a		<dir with xpath txt files>\n"
 	     << "	-D		<dir with files to be merged>\n"
 	     << "	-O		<dir with proxy sig>\n"
 	     << "	-s		<dir with sigs>\n"
-	     << "	-x		<dir with xpath files>\n\n"
+	     << "	-x		<dir with xpath sig files>\n\n"
 
              << "\tFILES:\n"
 	     << "      	-F		<hash funcs file>\n"
