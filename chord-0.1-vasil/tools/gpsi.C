@@ -68,6 +68,7 @@ int plist = 0;
 int gflag = 0;
 int Qflag = 0;
 int uflag = 0;
+int xpathqueryid = -1;
 // by default, don't discard out of round msgs
 int discardmsg = 0;
 int compress = 0;
@@ -191,7 +192,7 @@ void loginitstate(FILE *);
 int loadinitstate(FILE *);
 int loadresults(FILE *, InsertType &);
 int lshsig(vecomap, int, InsertType, int, int);
-int lshquery(sig2idmulti, int, InsertType, int);
+int lshquery(sig2idmulti, int, int, InsertType, int);
 int vanillaquery(sig2idmulti, int, InsertType, int);
 int make_team(chordID, chordID, std::vector<chordID> &);
 void mergelists(vecomap &);
@@ -478,7 +479,7 @@ int lshall(int listnum, std::vector<std::vector<T> > &matrix, unsigned int losee
 }
 
 int
-lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, int col = 0)
+lshquery(sig2idmulti queryMap, int queryid, int intval = -1, InsertType msgtype = INVALID, int col = 0)
 {
 	std::vector<std::vector<chordID> > matrix;
 	std::vector<chordID> minhash;
@@ -496,6 +497,7 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 	char *value;
 	int valLen, n, range, randcol, qid;
 	double beginTime, endTime, instime, totalinstime;
+	bool querysigfound = false;
 	str sigbuf;
 
 	matrix.clear();
@@ -509,6 +511,14 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 	for (sig2idmulti::iterator itr = queryMap.begin(); itr != queryMap.end(); itr++) {
 		querysig = itr->first;
 		qid = itr->second;
+
+		if (queryid == qid) {
+			querysigfound = true;
+		} else if (queryid != -1) {
+			// don't send the query, still looking for correct qid
+			continue;
+		}
+
 		id2strings::iterator ditr = qid2dtd.find(qid);
 		if (ditr != qid2dtd.end()) {
 			// TODO: assume 1 dtd per qid
@@ -657,6 +667,10 @@ lshquery(sig2idmulti queryMap, int intval = -1, InsertType msgtype = INVALID, in
 		minhash.clear();
 		delete myLSH;
 		++n;
+
+		// done, sent the single qid specified
+		if (querysigfound == true)
+			break;
 	}
 	return 0;
 }
@@ -983,7 +997,7 @@ main(int argc, char *argv[])
 {
 	bool usedummy = false;
 	bool useproxy = false;
-	int Gflag, Lflag, lflag, rflag, Sflag, sflag, Oflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, fflag, xflag, yflag, Zflag, Uflag, iflag, aflag;
+	int Gflag, Lflag, lflag, rflag, Sflag, sflag, Oflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, fflag, xflag, yflag, Zflag, Uflag, iflag, aflag, eflag;
 	int ch, gintval, initintval, waitintval, listenintval, nids, rounds, valLen, logfd;
 	int listnum;
 	int qid;
@@ -1011,6 +1025,7 @@ main(int argc, char *argv[])
 	std::string sigdir;
 	std::string xpathdir;
 	std::string xpathtxtdir;
+	std::string xpathtxtquery;
 	std::string inmergetype;
 	std::string cmd;
 	std::vector<std::string> initfiles;
@@ -1034,7 +1049,7 @@ main(int argc, char *argv[])
 	std::vector<std::vector<unsigned char> > outBitmap;
 
 
-	Gflag = Lflag = lflag = rflag = Sflag = sflag = Oflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = fflag = xflag = yflag = Zflag = Uflag = iflag = aflag = 0;
+	Gflag = Lflag = lflag = rflag = Sflag = sflag = Oflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = fflag = xflag = yflag = Zflag = Uflag = iflag = aflag = eflag = 0;
 	gintval = waitintval = listenintval = nids = 0;
 	initintval = -1;
 	rounds = -1;
@@ -1049,7 +1064,7 @@ main(int argc, char *argv[])
 	dummysig.push_back(1);
 
 	// parse arguments
-	while ((ch = getopt(argc, argv, "A:a:bB:CcD:d:EF:f:G:gHhIi:j:K:k:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:U:uVvW:w:X:x:y:Z:z")) != -1)
+	while ((ch = getopt(argc, argv, "A:a:B:bCcD:d:Ee:F:f:G:gHhIi:j:K:k:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:U:uVvW:w:X:x:y:Z:z")) != -1)
 		switch(ch) {
 		case 'A':
 			bstrapport = strtol(optarg, NULL, 10);
@@ -1083,6 +1098,10 @@ main(int argc, char *argv[])
 			break;
 		case 'E':
 			Eflag = 1;
+			break;
+		case 'e':
+			eflag = 1;
+			xpathtxtquery = optarg;
 			break;
 		case 'F':
 			Fflag = 1;
@@ -1794,6 +1813,24 @@ main(int argc, char *argv[])
 				warnx << "query" << i << ": " << sigbuf << "\n";
 			}
 			*/
+		}
+	}
+
+	if (eflag == 1) {
+		warnx << "xpath query string: " << xpathtxtquery.c_str() << "\n";
+		std::string xpathtxt;
+		for (id2strings::iterator itr = qid2txt.begin(); itr != qid2txt.end(); itr++) {
+			qid = itr->first;
+			xpathtxt = itr->second[0];
+			if (itr->second.size() > 1)
+				warnx << "more than 1 txt query per QID\n";
+
+			if (xpathtxt == xpathtxtquery) {
+				warnx << "found query: " << xpathtxt.c_str();
+				warnx << " QID: " << qid << "\n";
+				xpathqueryid = qid;
+				break;
+			}
 		}
 	}
 
@@ -2553,7 +2590,12 @@ main(int argc, char *argv[])
 			// xpath: LSH(proxysig)
 			if (xflag == 1 && Oflag == 1) {
 				warnx << "using xpath, LSH(proxysig)...\n";
-				lshquery(queryMap, initintval, QUERYXP);
+				if (eflag == 1) {
+					// use XPath text query
+					lshquery(queryMap, xpathqueryid, initintval, QUERYXP);
+				} else {
+					lshquery(queryMap, -1, initintval, QUERYXP);
+				}
 			// xpath: LSH(querysig)
 			} else if (xflag == 1 && Oflag == 0) {
 				warnx << "using xpath, LSH(querysig)...\n";
@@ -4274,7 +4316,7 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList, bool use
 
 	startTime = getgtod();
 	// open signatures
-	//warnx << "sigfile: " << sigfile.c_str() << "\n";
+	warnx << "sigfile: " << sigfile.c_str() << "\n";
 	sigfp = fopen(sigfile.c_str(), "r");
 	// change to if?
 	assert(sigfp);
@@ -4313,7 +4355,7 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList, bool use
 	std::vector<POLY> sig;
 	sig.clear();
 	POLY e;
-	//warnx << "Document signature (sorted): ";
+	warnx << "Document signature (sorted): ";
 	for (int i = 0; i < size; i++) {
 		if (fread(&e, sizeof(POLY), 1, sigfp) != 1) {
 			assert(0);
@@ -4323,7 +4365,7 @@ readsig(std::string sigfile, std::vector<std::vector <POLY> > &sigList, bool use
 	sort(sig.begin(), sig.end());
 	str buf;
 	sig2str(sig, buf);
-	//warnx << buf << "\n";
+	warnx << buf << "\n";
 	sigList.push_back(sig);
 	// map dtd to sig
 	if (useproxy == false) {
@@ -6264,6 +6306,9 @@ usage(void)
 	     << "	-L		<log file>\n"
 	     << "      	-P		<init phase file>\n"
 					"\t\t\t(after XGossip init state is complete)\n\n"
+
+             << "\tTEXT:\n"
+	     << "	-e		<xpath query string>\n\n"
 
              << "\tNUMBERS:\n"
 	     << "	-A		<bootstrap port>\n"
