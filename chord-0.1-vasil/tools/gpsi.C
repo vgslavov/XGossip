@@ -1855,7 +1855,7 @@ main(int argc, char *argv[])
 		totalT.push_back(allT);
 
 		warnx << "running xpath queries locally...\n";
-		warnx << "qid,dtd,querysig,sigmatches,totalfreq,minsim,avgsim\n";
+		warnx << "qid,dtd,querysig,querytxt,sigmatches,totalfreq,minsim,avgsim\n";
 		for (sig2idmulti::iterator qitr = queryMap.begin(); qitr != queryMap.end(); qitr++) {
 			querysig = qitr->first;
 			qid = qitr->second;
@@ -1902,10 +1902,22 @@ main(int argc, char *argv[])
 				warnx << "DTD missing\n";
 			}
 
+			std::string xpathtxt = "";
+			id2strings::iterator titr = qid2txt.find(qid);
+			if (titr != qid2txt.end()) {
+				if (titr->second.size() != 1) {
+					warnx << "more than 1 txt query per QID\n";
+				}
+				xpathtxt = titr->second.back();
+			} else {
+				warnx << "txt query missing\n";
+			}
+
 			warnx << qid << ",";
 			warnx << dtd.c_str() << ",";
 			sig2str(querysig, sigbuf);
 			warnx << sigbuf << ",";
+			warnx << xpathtxt.c_str() << ",";
 			warnx << sigmatches << ",";
 			printdouble("", totalfreq);
 			warnx << ",";
@@ -2746,7 +2758,7 @@ main(int argc, char *argv[])
 				bool lshmisses = true;
 
 				warnx << "calculating xpath query estimates and true results...\n";
-				warnx << "qid,querysig,sigmatches: est,sigmatches: true,sigmatches: rel error (%),freq (*teamsize): est,freq max (*teamsize): est,freq (*instances): true,freq: rel error (%),freq max: rel error (%),proxy lsh misses,query lsh misses,avg inter,query minsim,query avgsim,proxy minsim,proxy avgsim,query minsim > proxy minsim,teamIDs\n";
+				warnx << "qid,querysig,sigmatches: est,sigmatches: true,sigmatches: rel error (%),freq (*teamsize): est,freq max (*teamsize): est,freq: true,freq: rel error (%),freq max: rel error (%),freq (*instances): true,freq (*instances): rel error (%),proxy lsh misses,query lsh misses,avg inter,query minsim,query avgsim,proxy minsim,proxy avgsim,query minsim > proxy minsim,teamIDs\n";
 				for (id2sigs::iterator qitr = qid2querysig.begin(); qitr != qid2querysig.end(); qitr++) {
 					if (qitr->second.size() > 1)
 						warnx << "multiple queries for the same qid\n";
@@ -2882,12 +2894,10 @@ main(int argc, char *argv[])
 					// be careful with default arguments! (specify teamID)
 					run_query(tind, querysig, truesigmatches, truefreq, trueminsim, trueavgsim, msgtype, 0, useproxy);
 
-					// est sigmatches
-					// don't multiply by teamsize!
+					// est sigmatches: don't multiply by teamsize!
 					warnx << estsigmatches << ",";
 
-					// true sigmatches
-					// don't multiply by the number of instances!
+					// true sigmatches: don't multiply by the number of instances!
 					warnx << truesigmatches << ",";
 
 					// sigmatches rel error
@@ -2909,8 +2919,7 @@ main(int argc, char *argv[])
 					printdouble("", estmaxfreq);
 					warnx << ",";
 
-					// true totalfreq
-					truefreq *= ninstances;
+					// true totalfreq: don't multiply by # of instances!
 					printdouble("", truefreq);
 					warnx << ",";
 
@@ -2930,6 +2939,20 @@ main(int argc, char *argv[])
 						maxrelerror = 0;
 					}
 					printdouble("", maxrelerror);
+					warnx << ",";
+
+					// true totalfreq using instances
+					truefreq *= ninstances;
+					printdouble("", truefreq);
+					warnx << ",";
+
+					// freq rel error
+					if (truefreq != 0) {
+						relerror = fabs(truefreq - estfreq) / truefreq * 100;
+					} else {
+						relerror = 0;
+					}
+					printdouble("", relerror);
 					warnx << ",";
 
 					// proxy lsh misses
