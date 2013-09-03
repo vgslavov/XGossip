@@ -2611,7 +2611,7 @@ main(int argc, char *argv[])
 			// xpath: LSH(querysig)
 			} else if (xflag == 1 && Oflag == 0) {
 				warnx << "using xpath, LSH(querysig)...\n";
-				lshquery(queryMap, initintval, QUERYX);
+				lshquery(queryMap, xpathqueryid, initintval, QUERYX);
 			// sig: LSH(regularsig)
 			} else {
 				warnx << "using sig, LSH(sig)...\n";
