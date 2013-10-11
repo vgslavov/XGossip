@@ -1,0 +1,37 @@
+#!/bin/sh
+
+ssh umkc_rao1@planet5.berkeley.intel-research.net rm -rvf sig
+ssh umkc_rao1@cs-planetlab3.cs.surrey.sfu.ca rm -rvf sig
+ssh umkc_rao1@planet2.scs.cs.nyu.edu rm -rvf sig
+ssh umkc_rao1@planet6.berkeley.intel-research.net rm -rvf sig
+ssh umkc_rao1@planet1.scs.stanford.edu rm -rvf sig
+ssh umkc_rao1@ricepl-1.cs.rice.edu rm -rvf sig
+ssh umkc_rao1@planetlab2.cse.msu.edu rm -rvf sig
+ssh umkc_rao1@planetlab-1.calpoly-netlab.net rm -rvf sig
+ssh umkc_rao1@planetlab-2.calpoly-netlab.net rm -rvf sig
+ssh umkc_rao1@planlab1.cs.caltech.edu rm -rvf sig
+ssh umkc_rao1@planetlab-2a.ics.uci.edu rm -rvf sig
+ssh umkc_rao1@planetlab1.cs.umass.edu rm -rvf sig
+ssh umkc_rao1@node-1.mcgillplanetlab.org rm -rvf sig
+ssh umkc_rao1@planetlab-1a.ics.uci.edu rm -rvf sig
+ssh umkc_rao1@planlab2.cs.caltech.edu rm -rvf sig
+ssh umkc_rao1@mtuplanetlab2.cs.mtu.edu rm -rvf sig
+ssh umkc_rao1@planetlab2.cs.umass.edu rm -rvf sig
+ssh umkc_rao1@node-2.mcgillplanetlab.org rm -rvf sig
+ssh umkc_rao1@planetlab1.cs.ucla.edu rm -rvf sig
+ssh umkc_rao1@planetlab2.cs.wisc.edu rm -rvf sig
+ssh umkc_rao1@planetlab1.cs.wisc.edu rm -rvf sig
+ssh umkc_rao1@planetlab1.cs.uchicago.edu rm -rvf sig
+ssh umkc_rao1@planetlab3.cs.uchicago.edu rm -rvf sig
+ssh umkc_rao1@planetlab1.ifi.uio.no rm -rvf sig
+ssh umkc_rao1@planet2.pittsburgh.intel-research.net rm -rvf sig
+ssh umkc_rao1@planetlab2.cs.ucla.edu rm -rvf sig
+ssh umkc_rao1@planetlab1.cse.msu.edu rm -rvf sig
+ssh umkc_rao1@planet1.pittsburgh.intel-research.net rm -rvf sig
+ssh umkc_rao1@node2.lbnl.nodes.planet-lab.org rm -rvf sig
+ssh umkc_rao1@planet3.pittsburgh.intel-research.net rm -rvf sig
+ssh umkc_rao1@planetlab1.postel.org rm -rvf sig
+ssh umkc_rao1@planetlab2.cs.cornell.edu rm -rvf sig
+ssh umkc_rao1@planetlab2.ifi.uio.no rm -rvf sig
+ssh umkc_rao1@pli1-pa-5.hpl.hp.com rm -rvf sig
+ssh umkc_rao1@planetlab-3.cmcl.cs.cmu.edu rm -rvf sig

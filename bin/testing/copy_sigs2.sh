@@ -1,0 +1,37 @@
+#!/bin/sh
+
+sigs2hosts.sh actors.dtd
+sigs2hosts.sh apm_cim.dtd
+sigs2hosts.sh assetselect.dtd
+sigs2hosts.sh bib.dtd
+sigs2hosts.sh chordml.dtd
+sigs2hosts.sh club.dtd
+sigs2hosts.sh competency10.dtd
+sigs2hosts.sh customer.dtd
+sigs2hosts.sh dblp.dtd
+sigs2hosts.sh department.dtd
+sigs2hosts.sh ebay.dtd
+sigs2hosts.sh Feedback-1_1.dtd
+sigs2hosts.sh IML1.0.dtd
+sigs2hosts.sh Invoice.dtd
+sigs2hosts.sh lineitem.dtd
+sigs2hosts.sh movies.dtd
+sigs2hosts.sh nation.dtd
+sigs2hosts.sh obligor.dtd
+sigs2hosts.sh orders.dtd
+sigs2hosts.sh originator.dtd
+sigs2hosts.sh parts.dtd
+sigs2hosts.sh partsupp.dtd
+sigs2hosts.sh payment.dtd
+sigs2hosts.sh paymentschedule.dtd
+sigs2hosts.sh personal.dtd
+sigs2hosts.sh PersonName-1_1.dtd
+sigs2hosts.sh pets.dtd
+sigs2hosts.sh profile.dtd
+sigs2hosts.sh quote.dtd
+sigs2hosts.sh reed.dtd
+sigs2hosts.sh region.dtd
+sigs2hosts.sh SigmodRecord.dtd
+sigs2hosts.sh supplier.dtd
+sigs2hosts.sh viml-2-0.dtd
+sigs2hosts.sh viml.dtd

@@ -1,0 +1,348 @@
+head	1.1;
+access;
+symbols;
+locks
+	vsfgd:1.1; strict;
+comment	@# @;
+
+
+1.1
+date	2010.02.19.02.43.30;	author vsfgd;	state Exp;
+branches;
+next	;
+
+
+desc
+@initial check-in
+can kill gpsi, lsd, or all now
+can do cmd now
+@
+
+
+1.1
+log
+@Initial revision
+@
+text
+@#!/bin/sh
+
+# $Id$
+
+ACTIVEHOSTS="hosts.active"
+ALLHOSTS="hosts.all"
+BOOTSTRAPHOST="hosts.bootstrap"
+CURRTIME=`date +%Y%m%d%H%M%S`
+DOWNHOSTS="hosts.down"
+NOFILESHOSTS="hosts.nofiles"
+
+LOCALUSER="vsfgd"
+LOCALHOME="/home/$LOCALUSER"
+BUILDHOME="$LOCALHOME/build/gossip/psix.new.tar.gz"
+GPSIBIN="$LOCALHOME/build/gossip/psix.new/bin/gpsi"
+
+USER="umkc_rao1"
+REMOTEHOME="/home/$USER"
+PSIXHOME="$REMOTEHOME/raopr/psix.new"
+CONFIGPATH="$PSIXHOME/psix.config"
+KICKSTARTPATH="$PSIXHOME/scripts/kickstart"
+GPSIPATH="$PSIXHOME/bin/gpsi"
+SOCKPATH="$PSIXHOME/tmp/lsd-1"
+GPSICMD="$GPSIPATH -S $SOCKPATH/dhash-sock -G $SOCKPATH/g-sock -L $SOCKPATH/log.gpsi -s $REMOTEHOME/sig/ -g -i 120"
+
+ACTIVE=0
+ALL=0
+DO=0
+CONFIG=0
+DEBUG=0
+GET=0
+HOST=0
+INSTALL=0
+UPLOAD=0
+KILL=0
+LINE_NUM=0
+NUM=0
+OTHER=0
+PS=0
+REMOTEALL=0
+REMOTEPROC=0
+START=0
+TEST=0
+n=0
+
+cat $ALLHOSTS | grep -v ^# > ${ALLHOSTS}.tmp
+TOTALHOSTS=`wc -l < ${ALLHOSTS}.tmp`
+
+if [ $# -lt 2 -o $# -gt 3 ]; then
+	echo -e 1>&2 "Usage: $0\t[config]\t[all | active | host]"
+	echo -e 1>&2 "\t\t\t[do]\t\t[all | active | host] [cmd]"
+	echo -e 1>&2 "\t\t\t[get]\t\t[all | active | host] [gpsi | lsd]"
+	echo -e 1>&2 "\t\t\t[install]\t[all | active | host]"
+	echo -e 1>&2 "\t\t\t[upload]\t[all | active | host]"
+	echo -e 1>&2 "\t\t\t[kill]\t\t[all | active | host] [gpsi | lsd | all]"
+	echo -e 1>&2 "\t\t\t[ps]\t\t[all | active | host] [gpsi | lsd | all]"
+	echo -e 1>&2 "\t\t\t[start]\t\t[all | host]\t      [gpsi | lsd]"
+	echo -e 1>&2 "\t\t\t[test]\t\t[all | active | host]"
+	exit 127
+fi
+
+case "$1" in
+	(kill) KILL=1;;
+	(start) START=1;;
+	(ps) PS=1;;
+	(config) CONFIG=1;;
+	(install) INSTALL=1;;
+	(upload) UPLOAD=1;;
+	(test) TEST=1;;
+	(do) DO=1;;
+	(get) GET=1;;
+	(*) echo "not reached"; exit 127;;
+esac
+
+case "$2" in
+	(all) ALL=1; NUM=$TOTALHOSTS;;
+	(active) ACTIVE=1;;
+	(*) OTHER=1;;
+esac
+
+if [ $# -ne 3 -a $GET = 1 ]; then
+	echo "missing parameter"
+	exit 127
+elif [ $# -ne 3 -a $PS = 1 ]; then
+	echo "missing parameter"
+	exit 127
+elif [ $# -ne 3 -a $KILL = 1 ]; then
+	echo "missing parameter"
+	exit 127
+elif [ $# -ne 3 -a $DO = 1 ]; then
+	echo "missing parameter"
+	exit 127
+elif [ $# -ne 3 -a $START = 1 ]; then
+	echo "missing parameter"
+	exit 127
+fi
+
+if [  $# -eq 3 ]; then
+	case "$3" in
+		(gpsi) REMOTEPROC="gpsi";;
+		(lsd) REMOTEPROC="lsd";;
+		(all) REMOTEALL=1;;
+		#(*) echo "not reached"; exit 127;;
+		(*) CMD=$3;;
+	esac
+fi
+
+if [ $DEBUG = 1 ]; then
+	set -x
+fi
+
+if [ $START = 1 -a $REMOTEPROC = "lsd" ] ; then
+	# start on a random number of hosts or on one specific host
+	if [ $OTHER = 1 ] ; then
+		# random
+		if [ $2 -eq $2 2> /dev/null ] ; then
+			# choose random bootstrap
+			LINE_NUM=$(( $RANDOM % $TOTALHOSTS + 1 ))
+			BOOTSTRAP=`sed -n "${LINE_NUM}p" ${ALLHOSTS}.tmp`
+			echo -n "[$LINE_NUM] "
+			# one less because of bootstrap
+			NUM=`expr $2 - 1`;
+		# one host
+		else
+			BOOTSTRAP=$2
+			# while loop will never execute because NUM is init to 0
+		fi
+	# start on all
+	elif [ $ALL = 1 ] ; then
+		# choose host on last line of $ALLHOSTS
+		BOOTSTRAP=`sed -n "${NUM}p" ${ALLHOSTS}.tmp`
+		NUM=`expr $NUM - 1`;
+	fi
+
+	echo "BOOTSTRAP=$BOOTSTRAP"
+	echo
+	##echo "($LINE_NUM) killing psiX on $BOOTSTRAP..."
+	##echo
+	##ssh $USER@@$BOOTSTRAP killall -s ABRT lsd adbd syncd
+	echo "starting psiX on BOOTSTRAP..."
+	ssh $USER@@$BOOTSTRAP $KICKSTARTPATH $BOOTSTRAP &
+	#echo $BOOTSTRAP >> $ACTIVEHOSTS
+	echo $BOOTSTRAP > $BOOTSTRAPHOST
+	echo "sleeping for 30 seconds..."
+	sleep 30
+	echo
+
+	while [ $NUM -gt 0 ] ; do
+		# random
+		if [ $ALL = 0 ] ; then
+			LINE_NUM=$(( $RANDOM % $TOTALHOSTS + 1 ))
+			HOST=`sed -n "${LINE_NUM}p" ${ALLHOSTS}.tmp`
+			ret=`grep $HOST $ACTIVEHOSTS > /dev/null; echo $?`
+			if [ $HOST = $BOOTSTRAP ]; then
+		                ret=0
+        		fi
+			# FIXME: does HOST in while condition change?
+			# grep: if status is 0, host is found
+			while [ $ret -eq 0 ] ; do
+				LINE_NUM=$(( $RANDOM % $TOTALHOSTS + 1 ))
+				HOST=`sed -n "${LINE_NUM}p" ${ALLHOSTS}.tmp`
+				ret=`grep $HOST $ACTIVEHOSTS > /dev/null; echo $?`
+			done
+			echo -n "[$LINE_NUM] "
+		elif [ $ALL = 1 ] ; then
+			HOST=`sed -n "${NUM}p" ${ALLHOSTS}.tmp`
+			echo -n "[$NUM] "
+		fi
+
+		##echo "killing psiX on $HOST..."
+		##echo
+		##ssh $USER@@$HOST killall -s ABRT lsd adbd syncd
+		echo "$HOST (startlsd):"
+		ssh $USER@@$HOST $KICKSTARTPATH $BOOTSTRAP &
+		echo
+		echo $HOST >> $ACTIVEHOSTS
+		NUM=`expr $NUM - 1`
+	done
+else
+	if [ $ALL = 1 ] ; then
+		LIST=`cat ${ALLHOSTS}.tmp`
+	elif [ $OTHER = 1 ] ; then
+		LIST=$2
+	elif [ -f $ACTIVEHOSTS ] ; then
+		LIST=`cat ${ACTIVEHOSTS}`
+	else
+		echo "no active hosts"
+		exit 127
+	fi
+	
+	for i in $LIST; do
+		# skip commented hosts
+		if [ $(echo ${i} | grep ^# > /dev/null; echo $?) -eq 0 ]; then
+			continue
+		fi
+
+		echo -n $i
+
+		if [ $KILL = 1 ] ; then
+			echo ' (kill):'
+			if [ $REMOTEALL = 1 ] ; then
+				ssh $USER@@$i killall -s ABRT lsd adbd syncd gpsi &
+			elif [ $REMOTEPROC = "gpsi" ] ; then
+				ssh $USER@@$i killall -s ABRT gpsi &
+			elif [ $REMOTEPROC = "lsd" ] ; then
+				ssh $USER@@$i killall -s ABRT lsd adbd syncd &
+			else
+				echo "something is wrong"
+			fi
+			n=`expr $n + 1`;
+		elif [ $START = 1 -a $REMOTEPROC = "gpsi" ] ; then
+			echo " (start $REMOTEPROC): "
+			ssh $USER@@$i $GPSICMD &
+			n=`expr $n + 1`;
+			#echo "sleeping for 5 seconds..."
+			#sleep 5
+		elif [ $PS = 1 ] ; then
+			echo " (ps):"
+			if [ $REMOTEALL = 1 ] ; then
+				ssh $USER@@$i ps xw
+				ret="-10"
+				n=`expr $n + 1`;
+			elif [ $REMOTEPROC = "gpsi" ] ; then
+				# put 1st char in [] to exclude grep
+				ret=`ssh ${USER}@@${i} ps xw|grep [g]psi >/dev/null; echo $?`
+			elif [ $REMOTEPROC = "lsd" ] ; then
+				ret=`ssh ${USER}@@${i} ps xw|grep [l]sd >/dev/null; echo $?`
+			else
+				echo "something is wrong"
+			fi
+			# if host is responding
+			if [ $ret -eq 255 ]; then
+				echo "host is down"
+			elif [ $ret -eq 0 ]; then
+				echo "$REMOTEPROC is running"
+				n=`expr $n + 1`;
+			elif [ $ret -eq 1 ]; then
+				echo "$REMOTEPROC is not running"
+			# if REMOTEALL
+			elif [ $ret -eq -10 ]; then
+				echo -n ""
+			else
+				echo "something is wrong"
+			fi
+		elif [ $UPLOAD = 1 ] ; then
+			echo ' (upload):'
+			# upload the whole distribution
+			scp $BUILDHOME $USER@@$i:~/ &
+			# upload gpsi binary only
+			#scp $GPSIBIN $USER@@$i:$PSIXHOME/bin/ &
+			n=`expr $n + 1`;
+
+		elif [ $INSTALL = 1 ] ; then
+			echo ' (install):'
+			ssh $USER@@$i "mkdir -p raopr; mv psix.new.tar.gz raopr/; cd raopr; tar xvfz psix.new.tar.gz; mv psix.new.tar.gz ../; cd ..;" &
+			n=`expr $n + 1`;
+		elif [ $TEST = 1 ] ; then
+			# generic test
+			#ret=`ssh ${USER}@@${i} uname >/dev/null; echo $?`
+			# test for psiX binaries
+			ret=`ssh ${USER}@@${i} ls -l $KICKSTARTPATH >/dev/null; echo $?`
+			# test for psix.config
+			#ret=`ssh ${USER}@@${i} ls -l $CONFIGPATH >/dev/null; echo $?`
+			# test for sig
+			#ret=`ssh ${USER}@@${i} ls -l sig >/dev/null; echo $?`
+			echo " (test): ${ret}"
+			#if [ $ret -ne 255 ]; then
+			if [ $ret -eq 255 ]; then
+				echo "host is down"
+				echo $i >> $DOWNHOSTS-$CURRTIME
+			elif [ $ret -eq 2 ]; then
+				echo "host is missing psiX"
+				echo $i >> $NOFILESHOSTS-$CURRTIME
+			else
+				echo "host is up and no files are missing"
+				n=`expr $n + 1`;
+			fi
+		elif [ $DO = 1 ] ; then
+			echo ' (do):'
+			#ssh $USER@@$i uptime
+			#ssh $USER@@$i ls sig
+			#ssh $USER@@$i rm $PSIXHOME/tmp/lsd-1/log.gpsi &
+			ssh $USER@@$i $CMD
+			n=`expr $n + 1`;
+		elif [ $GET = 1 ] ; then
+			echo " (get $REMOTEPROC):"
+			scp $USER@@$i:$PSIXHOME/tmp/lsd-1/log.$REMOTEPROC $LOCALHOME/log/log.$i.$REMOTEPROC &
+			n=`expr $n + 1`;
+		elif [ $CONFIG = 1 ] ; then
+			echo ' (config):'
+			ssh $USER@@$i cat $CONFIGPATH
+			ssh $USER@@$i sed -i -e "s/MAXRETRIEVERETRIES\ 2/MAXRETRIEVERETRIES\ 2/g" $CONFIGPATH
+			ssh $USER@@$i sed -i -e "s/dhash.replica\ 12/dhash.replica\ 6/g" $CONFIGPATH
+			ssh $USER@@$i cat $CONFIGPATH
+			n=`expr $n + 1`;
+		fi
+		#echo -ne "\n"
+	done
+
+	# kill only all or active
+	if [ $KILL = 1 -a $OTHER = 0 ] ; then
+		BOOTSTRAP=`cat $BOOTSTRAPHOST`
+		echo "killing psiX on bootstrap ($BOOTSTRAP)..."
+		if [ $REMOTEALL = 1 ] ; then
+			ssh $USER@@$BOOTSTRAP killall -s ABRT lsd adbd syncd gpsi
+		elif [ $REMOTEPROC = "gpsi" ] ; then
+			ssh $USER@@$BOOTSTRAP killall -s ABRT gpsi
+		elif [ $REMOTEPROC = "lsd" ] ; then
+			ssh $USER@@$BOOTSTRAP killall -s ABRT lsd adbd syncd
+		else
+			echo "something is wrong"
+		fi
+		mv $ACTIVEHOSTS $ACTIVEHOSTS-$CURRTIME
+		mv $BOOTSTRAPHOST $BOOTSTRAPHOST-$CURRTIME
+	fi
+
+	echo "$n hosts successful"
+fi
+#set +x
+
+#rm ${ALLHOSTS}.tmp
+@
