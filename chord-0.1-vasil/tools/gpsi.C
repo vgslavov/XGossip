@@ -32,7 +32,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "$Id: gpsi.C,v 1.131 2013/01/27 00:48:15 vsfgd Exp $";
+static char rcsid[] = "v1.133";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -69,9 +69,6 @@ int gflag = 0;
 int Qflag = 0;
 int uflag = 0;
 int xpathqueryid = -1;
-// by default, don't discard out of round msgs
-int discardmsg = 0;
-int compress = 0;
 int peers = 0;
 int teamsize = 5;
 // TODO: make cmd line arg
@@ -88,6 +85,13 @@ bool vanilla = false;
 bool gossipdone = false;
 bool churn = false;
 bool killme = false;
+bool compress = false;
+
+// by default, accept msgs from any round
+// (different from consuming failed inserts!)
+bool accept_anyround = true;
+// by default, consume msgs which failed to send
+bool consume_failed_msgs = true;
 
 // paper:k, slides:bands
 int mgroups = 10;
@@ -1064,7 +1068,7 @@ main(int argc, char *argv[])
 	dummysig.push_back(1);
 
 	// parse arguments
-	while ((ch = getopt(argc, argv, "A:a:B:bCcD:d:Ee:F:f:G:gHhIi:j:K:k:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:U:uVvW:w:X:x:y:Z:z")) != -1)
+	while ((ch = getopt(argc, argv, "A:a:B:bCcD:d:Ee:F:f:G:gHhIi:Jj:K:k:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:U:uVvW:w:X:x:y:Z:z")) != -1)
 		switch(ch) {
 		case 'A':
 			bstrapport = strtol(optarg, NULL, 10);
@@ -1083,7 +1087,7 @@ main(int argc, char *argv[])
 			lfuncs = strtol(optarg, NULL, 10);
 			break;
 		case 'C':
-			compress = 1;
+			compress = true;
 			break;
 		case 'c':
 			churn = true;
@@ -1133,6 +1137,9 @@ main(int argc, char *argv[])
 			break;
 		case 't':
 			gintval = strtol(optarg, NULL, 10);
+			break;
+		case 'J':
+			consume_failed_msgs = false;
 			break;
 		case 'j':
 			jflag = 1;
@@ -1243,7 +1250,7 @@ main(int argc, char *argv[])
 
 	// print version
 	if (vflag == 1) {
-		warnx << "rcsid: " << rcsid << "\n";
+		warnx << rcsid << "\n";
 		exit(0);
 	}
 
@@ -1981,7 +1988,7 @@ main(int argc, char *argv[])
 	}
 	if (Uflag == 1) warnx << "myID: " << thisID << "\n";
 	warnx << "compression: ";
-	if (compress == 1) warnx << "yes\n";
+	if (compress) warnx << "yes\n";
 	else warnx << "no\n";
 	warnx << "churn: ";
 	if (churn == true) {
@@ -2150,7 +2157,7 @@ main(int argc, char *argv[])
 				continue;
 			}
 			warnx << "inserting ";
-			if (compress == 1) warnx << "BCASTC:\n";
+			if (compress) warnx << "BCASTC:\n";
 			else warnx << "BCAST:\n";
 
 			ID = allIDs[i];
@@ -2160,7 +2167,7 @@ main(int argc, char *argv[])
 			warnx << "ID" << i << ": " << ID;
 			warnx << " txseq: " << txseq.back() << "\n";
 
-			if (compress == 1) {
+			if (compress) {
 				compressedList.clear();
 				outBitmap.clear();
 				sigList.clear();
@@ -2305,13 +2312,13 @@ main(int argc, char *argv[])
 
 			if (gossipdone == false) {
 				warnx << "inserting ";
-				if (compress == 1) warnx << "VXGOSSIPC:\n";
+				if (compress) warnx << "VXGOSSIPC:\n";
 				else warnx << "VXGOSSIP:\n";
 
 				warnx << "txseq: " << txseq.back() << "\n";
 				warnx << "txID: " << ID << "\n";
 
-				if (compress == 1) {
+				if (compress) {
 					compressedList.clear();
 					outBitmap.clear();
 					sigList.clear();
@@ -2364,7 +2371,8 @@ main(int argc, char *argv[])
 					warnx << "error: insert FAILed\n";
 					// to preserve mass conservation:
 					// "send" msg to yourself (double freq)
-					multiplyfreq(totalT[0], 0, 2, 2);
+					if (consume_failed_msgs)
+						multiplyfreq(totalT[0], 0, 2, 2);
 				} else {
 					warnx << "insert SUCCeeded\n";
 				}
@@ -2460,7 +2468,7 @@ main(int argc, char *argv[])
 						// TODO: needed?
 						if (gflag == 1) {
 							warnx << "inserting ";
-							if (compress == 1) warnx << "XGOSSIPC:\n";
+							if (compress) warnx << "XGOSSIPC:\n";
 							else warnx << "XGOSSIP:\n";
 
 							warnx << "txseq: " << txseq.back() << "\n";
@@ -2489,7 +2497,7 @@ main(int argc, char *argv[])
 							str teamID(p);
 							warnx << "txID: " << ID << "\n";
 
-							if (compress == 1) {
+							if (compress) {
 								compressedList.clear();
 								outBitmap.clear();
 								sigList.clear();
@@ -2542,7 +2550,8 @@ main(int argc, char *argv[])
 								// to preserve mass conservation:
 								// "send" msg to yourself
 								// (double freq)
-								multiplyfreq(totalT[i], 0, 2, 2);
+								if (consume_failed_msgs)
+									multiplyfreq(totalT[i], 0, 2, 2);
 							} else {
 								warnx << "insert SUCCeeded\n";
 							}
@@ -3452,7 +3461,7 @@ readgossip(int fd)
 		n = seq - txseq.back();
 		if (n < 0) {
 			warnx << "warning: rxseq<txseq n: " << abs(n) << "\n";
-			if (discardmsg == 1) {
+			if (accept_anyround == false) {
 				if (abs(n) != 1) {
 					warnx << "warning: msg discarded\n";
 					return;
@@ -3460,7 +3469,7 @@ readgossip(int fd)
 			}
 		} else if (n > 0) {
 			warnx << "warning: rxseq>txseq n: " << n << "\n";
-			if (discardmsg == 1) {
+			if (accept_anyround == false) {
 				if (n != 1) {
 					warnx << "warning: msg discarded\n";
 					return;
@@ -6306,6 +6315,8 @@ usage(void)
 	warn << "OPTIONS:\n\n"
              << "\tACTIONS (optional):\n"
 	     << "	-C		compress signatures (XGossip exec only)\n"
+	     << "	-J		don't consume msgs which failed to send\n"
+					"\t\t\t(affects mass conservation)\n"
 	     << "	-H		generate chordIDs/POLYs using LSH when gossiping\n"
 					"\t\t\t(requires -g, -s, -d, -j, -I, -w, -F)\n"
 	     << "      	-m		use findMod instead of compute_hash\n"
