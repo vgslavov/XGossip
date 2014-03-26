@@ -32,7 +32,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "v1.133";
+static char rcsid[] = "v1.134";
 extern char *__progname;
 
 dhashclient *dhash;
