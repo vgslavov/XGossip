@@ -2005,7 +2005,9 @@ main(int argc, char *argv[])
 		std::string myuser = "ec2-user";
 		std::string myhome = "/home/" + myuser;
 		std::string scripts = myhome + "/bin";
-		std::string churnlsdroot = "/media/ephemeral0/tmp.churn.lsd";
+		std::string churnlsdroot = myhome + "/tmp.churn.lsd";
+		// for large # of peers on EC2
+		//std::string churnlsdroot = "/media/ephemeral0/tmp.churn.lsd";
 
 		// pick random round to join
 		srand(loseed);
@@ -6350,7 +6352,9 @@ usage(void)
 					"\t\t\t(a.k.a. m groups)\n"
 	     << "	-d		<random prime number for LSH seed>\n"
 	     << "	-K		<range of rounds to kill itself>\n"
+					"\t\t\t(simulate failures: random killing)"
 	     << "	-k		<session rounds for churn peers>\n"
+					"\t\t\t(simulate churn: join/leave)"
 	     << "      	-N		<how many instances/nodes>\n"
 	     << "      	-n		<how many chordIDs>\n"
 	     << "      	-o		<how many rounds>\n"
@@ -6385,7 +6389,7 @@ usage(void)
 	     << "ACTIONS:\n"
 	     << "	-b		broadcast: no gossip\n"
 					"\t\t\t(use baseline broadcast protocol instead)\n"
-	     << "	-c		simulate churn: discard messages (requires -t, -A, -q, -N, -o, -W)\n"
+	     << "	-c		simulate churn: discard messages (requires -t, -A, -q, -N, -o, -W, -k)\n"
 	     << "	-g		gossip (requires -S, -G, -s, -t)\n"
 	     << "	-H		generate chordIDs/POLYs using LSH (requires  -s, -d, -j, -F)\n"
 					"\t\t\t(XGossip)\n"
