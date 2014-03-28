@@ -40,16 +40,16 @@ for i in `ls $SRC` ; do
 	# j is a sig file
 	for j in `ls $SRC/$i` ; do
 		if [ $n -lt $FILESPERHOST ] ; then
-			cp $j $DST/$HOSTNUM/
-			#cp $SRC/$i/$j $DST/$HOSTNUM/
+			#cp $j $DST/$HOSTNUM/
+			cp $SRC/$i/$j $DST/$HOSTNUM/
 			n=`expr $n + 1`
 		else
 			HOSTNUM=`expr $HOSTNUM + 1`
 			if [ $HOSTNUM -gt $HOSTS ] ; then
 				HOSTNUM=1
 			fi
-			cp $j $DST/$HOSTNUM/
-			#cp $SRC/$i/$j $DST/$HOSTNUM/
+			#cp $j $DST/$HOSTNUM/
+			cp $SRC/$i/$j $DST/$HOSTNUM/
 			n=1
 		fi
 
