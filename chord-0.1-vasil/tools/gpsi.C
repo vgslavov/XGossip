@@ -30,7 +30,7 @@
 //#define _DEBUG_
 #define _ELIMINATE_DUP_
 
-static char rcsid[] = "v1.135";
+static char rcsid[] = "v1.140";
 extern char *__progname;
 
 dhashclient *dhash;
@@ -48,6 +48,7 @@ static const char *dsock;
 static const char *gsock;
 static char *hashfile;
 static char *killfile;
+static char *trueresultsfile;
 static char *idsfile;
 static char *irrpolyfile;
 static char *initfile;
@@ -129,6 +130,8 @@ typedef std::map<std::vector<POLY>, std::vector<double>, CompareSig> mapType;
 // sig, (<freq,weight> | <avg,avg,...>)
 typedef std::map<std::vector<POLY>, std::vector<long double>, CompareSig> lmapType;
 
+mapType querysig2trueresults;
+
 typedef std::vector<mapType> vecomap;
 typedef std::vector<lmapType> lvecomap;
 // use only for storing the sigs after reading them from files:
@@ -193,6 +196,7 @@ void listengossip(void);
 void loginitstate(FILE *);
 int loadinitstate(FILE *);
 int loadresults(FILE *, InsertType &);
+int loadtrueresults(FILE *);
 int lshsig(vecomap, int, InsertType, int, int);
 int lshquery(sig2idmulti, int, int, InsertType, int);
 int vanillaquery(sig2idmulti, int, InsertType, int);
@@ -999,7 +1003,7 @@ main(int argc, char *argv[])
 {
     bool usedummy = false;
     bool useproxy = false;
-    int Gflag, Lflag, lflag, rflag, Sflag, sflag, Oflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, fflag, xflag, yflag, Zflag, Uflag, iflag, aflag, eflag;
+    int Gflag, Lflag, lflag, rflag, Sflag, sflag, Oflag, zflag, vflag, Hflag, dflag, jflag, mflag, Iflag, Eflag, Pflag, Dflag, Mflag, Fflag, fflag, xflag, yflag, Zflag, Uflag, iflag, aflag, eflag, hflag;
     int ch, gintval, initintval, waitintval, listenintval, nids, rounds, valLen, logfd;
     int listnum;
     int qid;
@@ -1051,7 +1055,7 @@ main(int argc, char *argv[])
     std::vector<std::vector<unsigned char> > outBitmap;
 
 
-    Gflag = Lflag = lflag = rflag = Sflag = sflag = Oflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = fflag = xflag = yflag = Zflag = Uflag = iflag = aflag = eflag = 0;
+    Gflag = Lflag = lflag = rflag = Sflag = sflag = Oflag = zflag = vflag = Hflag = dflag = jflag = mflag = Eflag = Iflag = Pflag = Dflag = Mflag = Fflag = fflag = xflag = yflag = Zflag = Uflag = iflag = aflag = eflag = hflag = 0;
     gintval = waitintval = listenintval = nids = 0;
     initintval = -1;
     rounds = -1;
@@ -1066,7 +1070,7 @@ main(int argc, char *argv[])
     dummysig.push_back(1);
 
     // parse arguments
-    while ((ch = getopt(argc, argv, "A:a:B:bCcD:d:Ee:F:f:G:gHhIi:Jj:K:k:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:U:uVvW:w:X:x:y:Z:z")) != -1)
+    while ((ch = getopt(argc, argv, "A:a:B:bCcD:d:Ee:F:f:G:gHh:Ii:Jj:K:k:L:lMmN:n:O:o:P:pQq:R:rS:s:T:t:U:uVvW:w:X:x:y:Z:z")) != -1)
         switch(ch) {
         case 'A':
             bstrapport = strtol(optarg, NULL, 10);
@@ -1129,6 +1133,10 @@ main(int argc, char *argv[])
             break;
         case 'H':
             Hflag = 1;
+            break;
+        case 'h':
+            hflag = 1;
+            trueresultsfile = optarg;
             break;
         case 'T':
             initintval = strtol(optarg, NULL, 10);
@@ -1237,7 +1245,6 @@ main(int argc, char *argv[])
         case 'v':
             vflag = 1;
             break;
-        case 'h':
         case '?':
         default:
             usage();
@@ -1404,14 +1411,13 @@ main(int argc, char *argv[])
         if (stat(killfile, &statbuf) != 0)
             fatal << "'" << killfile << "' does not exist" << "\n";
 
-        std::ifstream killstream;
-                killstream.open(killfile);
-                int hostnum;
-                while (killstream >> hostnum) {
-            if (hostnum == myhostnum) killme = true;
-                }
-                killstream.close();
-
+            std::ifstream killstream;
+            killstream.open(killfile);
+            int hostnum;
+            while (killstream >> hostnum) {
+                if (hostnum == myhostnum) killme = true;
+            }
+            killstream.close();
     }
 
     // set up hash file: hash.dat
@@ -2759,6 +2765,21 @@ main(int argc, char *argv[])
             printdouble("loading files time: ", endTime - beginTime);
             warnx << "\n";
 
+            if (hflag == 1) {
+                FILE *truefp;
+                warnx << "loading true results file...\n";
+                beginTime = getgtod();    
+                if ((truefp = fopen(trueresultsfile, "r")) == NULL) {
+                    warnx << "can't open true results file" << trueresultsfile << "\n";
+                }
+                warnx << trueresultsfile << "\n";
+                if (loadtrueresults(truefp) == -1) warnx << "loadtrueresults failed\n";
+                fclose(truefp);
+                endTime = getgtod();    
+                printdouble("loading true results files time: ", endTime - beginTime);
+                warnx << "\n";
+            }
+
             if (msgtype == QUERYX || msgtype == QUERYXP) {
                 // from now on, work only with totalT
                 totalT.push_back(allT);
@@ -2900,8 +2921,22 @@ main(int argc, char *argv[])
                         gproxysig = proxysig;
                     }
 
+                    // query read signatures (takes a long time!)
                     // be careful with default arguments! (specify teamID)
-                    run_query(tind, querysig, truesigmatches, truefreq, trueminsim, trueavgsim, msgtype, 0, useproxy);
+                    if (sflag == 1)
+                        run_query(tind, querysig, truesigmatches, truefreq, trueminsim, trueavgsim, msgtype, 0, useproxy);
+                    // use true results from log file
+                    else if (hflag == 1) {
+                        mapType::iterator trueitr = querysig2trueresults.find(querysig);
+                        if (trueitr != querysig2trueresults.end()) {
+                            truesigmatches = (int)trueitr->second[0];
+                            truefreq = trueitr->second[1];
+                            trueminsim = trueitr->second[2];
+                            trueavgsim = trueitr->second[3];
+                        } else {
+                            warnx << "querysig: " << sigbuf << " not found\n";
+                        }
+                    }
 
                     // est sigmatches: don't multiply by teamsize!
                     warnx << estsigmatches << ",";
@@ -3848,6 +3883,81 @@ addteamID(int qid, chordID teamID)
 }
 
 int
+loadtrueresults(FILE *truefp)
+{
+    std::vector<POLY> querysig;
+    std::vector<std::string> tokens;
+    std::string linestr;
+    std::string dtd;
+    std::string querytxt;
+    str sigbuf;
+    int sigmatches = 0;
+    int qid = 0;
+    int n = 0;
+    double totalfreq = 0;
+    double minsim = 0;
+    double avgsim = 0;
+    ssize_t read;
+    char *line = NULL;
+    size_t len = 0;
+
+    while ((read = getline(&line, &len, truefp)) != -1) {
+        // skip 1st line (header):
+        // qid,dtd,querysig,querytxt,sigmatches,totalfreq,minsim,avgsim
+        if (n == 0) {
+            ++n;
+            continue;
+        }
+        linestr.clear();
+        linestr.assign(line);
+        tokens.clear();
+        tokenize(linestr, tokens, ",");
+        int toksize = tokens.size();
+        if (toksize != 9)
+            warnx << "warning: " << toksize << " fields read\n";
+
+        int i = 0;
+        qid = strtol(tokens[i++].c_str(), NULL, 10);
+        dtd = tokens[i++];
+        querysig.clear();
+        string2sig(tokens[i++], querysig);
+        querytxt = tokens[i++];
+        sigmatches = strtol(tokens[i++].c_str(), NULL, 10);
+        totalfreq = strtod(tokens[i++].c_str(), NULL);
+        minsim = strtod(tokens[i++].c_str(), NULL);
+        avgsim = strtod(tokens[i++].c_str(), NULL);
+
+        sig2str(querysig, sigbuf);
+
+        if (plist == 1) {
+            warnx << "qid: " << qid << " querysig: " << sigbuf << " querytxt: " 
+                  << querytxt.c_str() << " DTD: " << dtd.c_str()
+                  << " sigmatches: " << sigmatches;
+
+            printdouble(" totalfreq: ", totalfreq);
+            printdouble(" minsim: ", minsim);
+            printdouble(" avgsim: ", avgsim);
+            warnx << "\n";
+        }
+
+        mapType::iterator itr = querysig2trueresults.find(querysig);
+        if (itr != querysig2trueresults.end()) {
+            //warnx << "querysig: " << sigbuf << " already read\n";
+        } else {
+            querysig2trueresults[querysig].push_back((double)sigmatches);
+            querysig2trueresults[querysig].push_back(totalfreq);
+            querysig2trueresults[querysig].push_back(minsim);
+            querysig2trueresults[querysig].push_back(avgsim);
+        }
+        ++n;
+    }
+
+    if (line) free(line);
+
+    return n;
+}
+
+int
 loadresults(FILE *initfp, InsertType &msgtype)
 {
     chordID teamID;
@@ -4002,39 +4112,6 @@ loadresults(FILE *initfp, InsertType &msgtype)
         }
         ++n;
     }
-            /*
-            // list index
-            tind = strtol(tokens[1].c_str(), NULL, 10);
-            // strip "\n" from chordID
-            std::string t = tokens[toksize-1].substr(0,tokens[toksize-1].size()-1);
-            str z(t.c_str());
-            str2chordID(z, teamID);
-            warnx << "teamID(" << tind << ":" << tsize + tind << "): "
-                  << teamID << "\n";
-            teamindex[teamID].push_back(tsize + tind);
-            // done with previous team, add its vecomap
-            // (but don't do it for the very first index line)
-            if (n != 0) {
-                tmpvecomap.push_back(uniqueSigList);
-                totalT.push_back(tmpvecomap);
-                uniqueSigList.clear();
-                tmpvecomap.clear();
-            }
-            ++n;
-            continue;
-        }
-        string2sig(tokens[0], sig);
-        freq = strtod(tokens[1].c_str(), NULL);
-        weight = strtod(tokens[2].c_str(), NULL);
-        uniqueSigList[sig].push_back(freq);
-        uniqueSigList[sig].push_back(weight);
-    }
-
-    if (n != 0) {
-        tmpvecomap.push_back(uniqueSigList);
-        totalT.push_back(tmpvecomap);
-    }
-    */
 
     if (line) free(line);
     //warnx << "loadresults: teams added: " << n << "\n";
@@ -6293,7 +6370,7 @@ lprintlist(lvecomap teamvecomap, int listnum, int seq, bool hdr)
 void
 usage(void)
 {
-    warn << "Usage: " << __progname << " [-h] [actions...] [options...]\n";
+    warn << "Usage: " << __progname << " [actions...] [options...]\n";
     /*
     warn << "EXAMPLES:\n\n";
     warn << "Send signature query:\n";
@@ -6338,6 +6415,7 @@ usage(void)
          << "FILES:\n"
          << "   -F      <hash funcs file>\n"
          << "   -f      <killed hosts file>\n"
+         << "   -h      <true query results file>\n"
          << "   -i      <chordIDs file>\n"
          << "   -j      <irrpoly file>\n"
          << "   -L      <log file>\n"
