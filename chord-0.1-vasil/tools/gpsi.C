@@ -4303,8 +4303,8 @@ readquery(std::string queryfile, std::vector<std::vector <POLY> > &queryList, st
     startTime = getgtod();
     // open queries
     warnx << "queryfile: " << queryfile.c_str() << "\n";
-        qfp = fopen(queryfile.c_str(), "r");
-        assert(qfp);
+    qfp = fopen(queryfile.c_str(), "r");
+    assert(qfp);
     tokens.clear();
     tokenize(queryfile, tokens, "/");
     // remove ".qry" extension
