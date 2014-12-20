@@ -16,3 +16,7 @@ XGossip uses the [Chord DHT](http://en.wikipedia.org/wiki/Chord_(peer-to-peer)) 
 * Vasil Slavov. ``[A Study of Gossip Algorithms for Internet-Scale Cardinality Estimation of Distributed XML Data.](http://search.proquest.com/docview/1115315016/abstract/14127D5B0D8FB85F09/1?accountid=14589)" (**Master's thesis**), *ProQuest Dissertations and Theses*, 2012, pp. 82.
 
 * Vasil Slavov and Praveen Rao. ``[Towards Internet-Scale Cardinality Estimation of XPath Queries over Distributed XML Data.](https://research.microsoft.com/en-us/um/people/srikanth/netdb11/netdb11papers/netdb11-final1.pdf)" *Proceedings of the 6th International Workshop on Networking Meets Databases* (**NetDB 2011**), Athens, Greece, June 2011, pp. 1-8.
+
+## Acknowledgments
+This work was supported by the National
+Science Foundation under Grant No. 1115871, IBM Smarter Planet Faculty Innovation Award, University of Missouri Research Board, and Amazon Web Services (AWS) Education Research Grant.
